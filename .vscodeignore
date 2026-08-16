@@ -2,5 +2,3 @@ tests/**
 node_modules/**
 package-lock.json
 *.vsix
-*.md
-!FEATURES.md

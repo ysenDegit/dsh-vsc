@@ -50,7 +50,9 @@
   - HTML 先转义再渲染，保证内容安全。
 
 ### 4. Composer 输入区
-- Enter 发送，Shift+Enter 换行。
+- 发送方式可配置：
+  - `Enter` 发送，`Shift+Enter` 换行（默认）。
+  - 或反过来：`Shift+Enter` 发送，`Enter` 换行。
 - 输入框展开/收起：只有输入框向上展开，附近按钮位置不变。
 - 停止按钮使用 `■` 图标。
 - `@` 文件引用：输入 `@` 弹出当前工作区文件列表，实时过滤。
@@ -75,6 +77,7 @@
 - 会话显示模式：简洁 / 详细。
 - 字体大小：12–20 px。
 - 界面语言：中文 / English。
+- 发送方式：Enter 发送 / Shift+Enter 发送。
 - API Key：`DEEPSEEK_API_KEY`。
 - 可写 secret 字段编辑。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
@@ -111,6 +114,7 @@
 | `dsh-vsc.fontSize` | number | 13 | 聊天界面字体大小（px） |
 | `dsh-vsc.language` | string | zh | 插件界面语言：zh / en |
 | `dsh-vsc.autoOpenChat` | boolean | true | 检测到 dsh 已运行时，启动后自动打开工作区面板 |
+| `dsh-vsc.enterToSend` | boolean | true | Enter 键行为：true = Enter 发送；false = Shift+Enter 发送 |
 
 ---
 
