@@ -360,21 +360,12 @@ function getWebviewHtml(nonce) {
       </div>
       <div id="modelPopover" class="model-popover">
         <div class="model-popover-row">
-          <label>模型</label>
+          <label id="modelLabel">模型</label>
           <select id="modelSelect" title="选择模型"></select>
         </div>
         <div class="model-popover-row">
-          <label>推理</label>
+          <label id="effortLabel">推理</label>
           <select id="effortSelect" title="选择推理等级"></select>
-        </div>
-        <div class="model-custom-sep"></div>
-        <div class="model-popover-row">
-          <label>自定义</label>
-          <select id="customProviderSelect" title="自定义模型 provider"></select>
-        </div>
-        <div class="model-popover-row">
-          <input id="customModelInput" type="text" placeholder="输入模型名称">
-          <button id="customModelApplyBtn" class="primary" title="应用自定义模型">应用</button>
         </div>
         <span id="modelStatus" class="hint" style="margin-top:0"></span>
       </div>
@@ -457,10 +448,19 @@ function getWebviewHtml(nonce) {
       hiddenItemIds: {}
     };
 
+    // 消息删除是本地隐藏；跨 webview 重建（面板重开/HTML 刷新）时用 setState 恢复。
+    var persistedState = vscode.getState && vscode.getState();
+    if (persistedState && persistedState.hiddenItemIds) {
+      state.hiddenItemIds = persistedState.hiddenItemIds;
+    }
+
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
     var selectEl = $('sessionSelect');
     var inputEl = $('composerInput');
+    var composerInput = inputEl;
+    var newSessionBtn = $('newSessionBtn');
+    var refreshBtn = $('refreshBtn');
     var sendBtn = $('sendBtn');
     var stopBtn = $('stopBtn');
     var filePicker = $('filePicker');
@@ -483,9 +483,6 @@ function getWebviewHtml(nonce) {
     var permissionPopover = $('permissionPopover');
     var modelBtn = $('modelBtn');
     var modelPopover = $('modelPopover');
-    var customProviderSelect = $('customProviderSelect');
-    var customModelInput = $('customModelInput');
-    var customModelApplyBtn = $('customModelApplyBtn');
     var settingsBtn = $('settingsBtn');
     var settingsModal = $('settingsModal');
     var settingsContent = $('settingsContent');
@@ -568,6 +565,8 @@ function getWebviewHtml(nonce) {
         'permissionRunning': '会话运行中无法切换权限',
         'modelTitle': '模型与推理强度（当前：{label}）',
         'modelFallback': '模型 · 推理',
+        'modelLabel': '模型',
+        'effortLabel': '推理',
         'archiveTitle': '归档/关闭会话',
         'archiveMessage': '将归档会话「{title}」。归档后会从会话列表移除，但会话记录副本会保存到当前工作目录的 .dsh-vsc/archived-sessions/ 下。',
         'confirmArchive': '确认归档',
@@ -588,10 +587,15 @@ function getWebviewHtml(nonce) {
         'languageZh': '中文',
         'languageEn': 'English',
         'languageSwitchTitle': '点击切换到 {target}',
+        'baseUrlSection': '模型服务 Base URL',
+        'baseUrlLabel': 'DeepSeek API Base URL（可填写兼容 OpenAI 的第三方地址）',
+        'save': '保存',
+        'clear': '清除',
         'sendModeSection': '发送方式',
         'sendModeLabel': '输入框按键行为',
         'sendModeEnter': 'Enter 发送，Shift+Enter 换行',
         'sendModeShiftEnter': 'Shift+Enter 发送，Enter 换行',
+        'settingsWebNotice': 'LLM模型相关设置请移步web端',
         'loadEarlier': '加载更早',
         'loadingEarlier': '加载中…',
         'stats.ctxNone': '上下文:—',
@@ -659,6 +663,8 @@ function getWebviewHtml(nonce) {
         'permissionRunning': 'Cannot switch permission while session is running',
         'modelTitle': 'Model & Reasoning (current: {label})',
         'modelFallback': 'Model · Reasoning',
+        'modelLabel': 'Model',
+        'effortLabel': 'Reasoning',
         'archiveTitle': 'Archive/Close Session',
         'archiveMessage': 'Archive session "{title}"? It will be removed from the list and a copy will be saved to .dsh-vsc/archived-sessions/ in the current workspace.',
         'confirmArchive': 'Archive',
@@ -679,10 +685,15 @@ function getWebviewHtml(nonce) {
         'languageZh': '中文',
         'languageEn': 'English',
         'languageSwitchTitle': 'Click to switch to {target}',
+        'baseUrlSection': 'Model Service Base URL',
+        'baseUrlLabel': 'DeepSeek API Base URL (use any OpenAI-compatible endpoint)',
+        'save': 'Save',
+        'clear': 'Clear',
         'sendModeSection': 'Send Mode',
         'sendModeLabel': 'Input key behavior',
         'sendModeEnter': 'Enter to send, Shift+Enter for newline',
         'sendModeShiftEnter': 'Shift+Enter to send, Enter for newline',
+        'settingsWebNotice': 'LLM model settings: please use the web UI.',
         'loadEarlier': 'Load earlier',
         'loadingEarlier': 'Loading…',
         'stats.ctxNone': 'ctx:—',
@@ -735,6 +746,8 @@ function getWebviewHtml(nonce) {
       document.querySelector('#deleteModal .modal-header span').textContent = t('deleteTitle');
       permissionBtn.textContent = '权';
       modelBtn.textContent = '模';
+      $('modelLabel').textContent = t('modelLabel');
+      $('effortLabel').textContent = t('effortLabel');
       renderStatus();
       renderSessions();
       renderConversation();
@@ -1189,6 +1202,11 @@ function getWebviewHtml(nonce) {
       }
     }
 
+    function persistHidden() {
+      // vscode.setState 在该 webview 的生命周期内跨 HTML 重建持久化（VS Code 重启后清空）。
+      if (vscode.setState) vscode.setState({ hiddenItemIds: state.hiddenItemIds });
+    }
+
     function deleteConversationItem(item) {
       var items = state.conversation || [];
       var index = items.indexOf(item);
@@ -1209,6 +1227,7 @@ function getWebviewHtml(nonce) {
       } else if (item.id) {
         state.hiddenItemIds[itemHiddenKey(item)] = true;
       }
+      persistHidden();
       renderConversation();
     }
 
@@ -1339,9 +1358,6 @@ function getWebviewHtml(nonce) {
       modelBtn.disabled = status !== 'ready';
       modelSelectEl.disabled = status !== 'ready';
       effortSelectEl.disabled = status !== 'ready';
-      customProviderSelect.disabled = status !== 'ready';
-      customModelInput.disabled = status !== 'ready';
-      customModelApplyBtn.disabled = status !== 'ready';
     }
 
     function currentSession() {
@@ -1418,22 +1434,6 @@ function getWebviewHtml(nonce) {
 
     function toggleModelPopover() {
       modelPopover.classList.toggle('open');
-    }
-
-    function applyCustomModel() {
-      var name = customModelInput.value.trim();
-      if (!name) {
-        customModelInput.focus();
-        return;
-      }
-      var provider = customProviderSelect.value;
-      if (!provider) {
-        modelStatusEl.textContent = '请先在模型列表中选择 provider';
-        return;
-      }
-      post({ type: 'modelSelect', provider: provider, model: name });
-      customModelInput.value = '';
-      closeModelPopover();
     }
 
     function renderFilePicker(query) {
@@ -1550,6 +1550,8 @@ function getWebviewHtml(nonce) {
     }
 
     function renderAll() {
+      // 初始加载即按配置语言渲染按钮/占位符，而不是等用户切换语言才生效。
+      applyLanguage();
       renderStatus();
       renderSessions();
       renderConversation();
@@ -2092,7 +2094,6 @@ function getWebviewHtml(nonce) {
       renderModelButton();
       modelSelectEl.innerHTML = '';
       effortSelectEl.innerHTML = '';
-      customProviderSelect.innerHTML = '';
       modelStatusEl.textContent = '';
       if (!models) {
         var empty = document.createElement('option');
@@ -2106,21 +2107,6 @@ function getWebviewHtml(nonce) {
         return;
       }
       var groups = models.groups || [];
-      for (var i = 0; i < groups.length; i++) {
-        (function (g) {
-          var cp = document.createElement('option');
-          cp.value = g.id;
-          cp.textContent = g.name || g.id;
-          if (models.current && models.current.provider === g.id) cp.selected = true;
-          customProviderSelect.appendChild(cp);
-        })(groups[i]);
-      }
-      if (!groups.length) {
-        var customEmpty = document.createElement('option');
-        customEmpty.value = '';
-        customEmpty.textContent = '无可用 provider';
-        customProviderSelect.appendChild(customEmpty);
-      }
       for (var i = 0; i < groups.length; i++) {
         var g = groups[i];
         var optgroup = document.createElement('optgroup');
@@ -2458,46 +2444,13 @@ function getWebviewHtml(nonce) {
       sendModeSection.appendChild(sendModeField);
       settingsContent.appendChild(sendModeSection);
 
-      var credSection = document.createElement('div');
-      credSection.className = 'settings-section';
-      var credTitle = document.createElement('h3');
-      credTitle.textContent = t('apiKeys');
-      credSection.appendChild(credTitle);
-      var credentials = data.credentials || [];
-      for (var i = 0; i < credentials.length; i++) {
-        (function (cred) {
-          appendSettingsField(credSection, cred.label, cred.configured ? '已配置' : '未配置', 'cred-' + cred.ref, function (value) {
-            if (!value) return;
-            post({ type: 'credentialSave', ref: cred.ref, value: value });
-          }, function () {
-            post({ type: 'credentialUnset', ref: cred.ref });
-          });
-        })(credentials[i]);
-      }
-      settingsContent.appendChild(credSection);
-
-      var nsList = data.namespaces || [];
-      for (var j = 0; j < nsList.length; j++) {
-        (function (ns) {
-          var section = document.createElement('div');
-          section.className = 'settings-section';
-          var title = document.createElement('h3');
-          title.textContent = '设置命名空间：' + ns.ns;
-          section.appendChild(title);
-          var secrets = ns.secrets || [];
-          for (var k = 0; k < secrets.length; k++) {
-            (function (secret) {
-              appendSettingsField(section, ns.ns + '.' + secret.path.join('.'), secret.set ? '已配置' : '未配置', 'secret-' + ns.ns + '-' + secret.path.join('-'), function (value) {
-                if (!value) return;
-                post({ type: 'secretSave', ns: ns.ns, path: secret.path, value: value, expectedRevision: ns.revision });
-              }, function () {
-                post({ type: 'secretSave', ns: ns.ns, path: secret.path, value: '', expectedRevision: ns.revision });
-              });
-            })(secrets[k]);
-          }
-          settingsContent.appendChild(section);
-        })(nsList[j]);
-      }
+      var webNoticeSection = document.createElement('div');
+      webNoticeSection.className = 'settings-section';
+      var webNotice = document.createElement('div');
+      webNotice.className = 'hint';
+      webNotice.textContent = t('settingsWebNotice');
+      webNoticeSection.appendChild(webNotice);
+      settingsContent.appendChild(webNoticeSection);
     }
 
     // Events
@@ -2536,13 +2489,6 @@ function getWebviewHtml(nonce) {
     expandBtn.addEventListener('click', toggleExpand);
     modelBtn.addEventListener('click', function () {
       toggleModelPopover();
-    });
-    customModelApplyBtn.addEventListener('click', applyCustomModel);
-    customModelInput.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        applyCustomModel();
-      }
     });
     document.addEventListener('click', function (event) {
       if (event.target !== modelBtn && !modelPopover.contains(event.target)) closeModelPopover();

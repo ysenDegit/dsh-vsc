@@ -151,6 +151,12 @@ class ChatViewProvider {
         case 'secretSave':
           await this.saveSecret(msg.ns, msg.path, msg.value, msg.expectedRevision)
           break
+        case 'baseUrlSave':
+          await this.saveBaseUrl(msg.value)
+          break
+        case 'baseUrlClear':
+          await this.clearBaseUrl()
+          break
         case 'settingsOpenDocument':
           await this.openSettingsDocument()
           break
@@ -207,23 +213,6 @@ class ChatViewProvider {
       const message = error instanceof Error ? error.message : String(error)
       this.onLog(message)
       void vscode.window.showErrorMessage(message)
-    }
-  }
-
-  hydrateMessage() {
-    return {
-      type: 'hydrate',
-      status: this.dsh.statusValue,
-      workspace: this.workspaceView,
-      sessions: [],
-      selectedSessionId: this.selectedSessionId,
-      conversation: this.conversationSnapshot(),
-      running: this.isSessionRunning(this.selectedSessionId),
-      sessionDisplay: this.sessionDisplay,
-      fontSize: this.fontSize,
-      language: this.language,
-      enterToSend: this.enterToSend,
-      queue: this.queueSnapshot(this.selectedSessionId),
     }
   }
 
@@ -511,6 +500,10 @@ class ChatViewProvider {
           set: secret.set,
         })),
       }))
+    const llmNs = (settingsResult.namespaces ?? []).find((ns) => ns.ns === 'llm-deepseek')
+    const baseUrl = llmNs
+      ? (llmNs.user?.baseURL ?? llmNs.value?.baseURL ?? null)
+      : null
     this.post({
       type: 'settingsData',
       data: {
@@ -522,6 +515,11 @@ class ChatViewProvider {
         enterToSend: this.enterToSend,
         credentials,
         namespaces,
+        baseUrl: {
+          ns: 'llm-deepseek',
+          value: baseUrl,
+          revision: llmNs?.revision,
+        },
       },
     })
   }
@@ -548,6 +546,32 @@ class ChatViewProvider {
       ns,
       patch,
       ...(expectedRevision === undefined ? {} : { expectedRevision }),
+    })
+    await this.refreshSettings()
+  }
+
+  async saveBaseUrl(value) {
+    const text = String(value || '').trim()
+    if (!text) return
+    const client = this.sessions.requireClient()
+    const settings = await client.call('settings.describe', {})
+    const ns = (settings.namespaces ?? []).find((item) => item.ns === 'llm-deepseek')
+    await client.call('settings.mutate', {
+      ns: 'llm-deepseek',
+      ops: [{ op: 'set', path: ['baseURL'], value: text }],
+      expectedRevision: ns?.revision,
+    })
+    await this.refreshSettings()
+  }
+
+  async clearBaseUrl() {
+    const client = this.sessions.requireClient()
+    const settings = await client.call('settings.describe', {})
+    const ns = (settings.namespaces ?? []).find((item) => item.ns === 'llm-deepseek')
+    await client.call('settings.mutate', {
+      ns: 'llm-deepseek',
+      ops: [{ op: 'unset', path: ['baseURL'] }],
+      expectedRevision: ns?.revision,
     })
     await this.refreshSettings()
   }
@@ -667,6 +691,14 @@ class ChatViewProvider {
     }
 
     await this.sessions.archiveSession(sessionId)
+    // 归档后清理该会话的所有本地缓存，避免长期运行后内存持续增长。
+    this.eventsBySession.delete(sessionId)
+    this.queuesBySession.delete(sessionId)
+    this.pendingQuestionsBySession.delete(sessionId)
+    this.pendingApprovalsBySession.delete(sessionId)
+    this.projectionsBySession.delete(sessionId)
+    this.hasMoreBySession.delete(sessionId)
+    this.sessionRunning.delete(sessionId)
     if (this.selectedSessionId === sessionId) this.selectedSessionId = null
     await this.refreshSessions()
     if (!this.selectedSessionId) await this.autoAttachSession()
@@ -1058,13 +1090,14 @@ class ChatViewProvider {
   }
 
   ingestEvent(sessionId, event) {
-    if (sessionId !== this.selectedSessionId) return
+    // 所有会话的事件都入缓存（按 seq 去重）；只有选中会话需要推送渲染。
+    // 未选中会话的事件在切回时由 loadHistory 兜底，这里缓存可避免重复拉取。
     const entry = this.getEventsEntry(sessionId, true)
     if (entry.seen.has(event.seq)) return
     entry.seen.add(event.seq)
     entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
     entry.events.sort((a, b) => a.seq - b.seq)
-    this.postConversation(sessionId)
+    if (sessionId === this.selectedSessionId) this.postConversation(sessionId)
   }
 
   postConversation(sessionId) {
