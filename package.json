@@ -1,0 +1,158 @@
+{
+  "name": "dsh-vsc",
+  "displayName": "DeepSeek Harness Chat",
+  "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
+  "version": "0.1.22",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek harness",
+    "dsh",
+    "claude code"
+  ],
+  "main": "./src/extension.js",
+  "icon": "assets/icon.png",
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:dsh-vsc.openChatFromTitle"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dsh-vsc",
+          "title": "DeepSeek Harness",
+          "icon": "assets/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "dsh-vsc": [
+        {
+          "type": "webview",
+          "id": "dsh-vsc.chat",
+          "name": "Chat",
+          "contextualTitle": "dsh Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dsh-vsc.focus",
+        "title": "dsh: Open Chat"
+      },
+      {
+        "command": "dsh-vsc.newSession",
+        "title": "dsh: New Session"
+      },
+      {
+        "command": "dsh-vsc.refreshSessions",
+        "title": "dsh: Refresh Sessions"
+      },
+      {
+        "command": "dsh-vsc.openInBrowser",
+        "title": "dsh: Open Web UI in Browser"
+      },
+      {
+        "command": "dsh-vsc.openChatFromTitle",
+        "title": "dsh: Open Chat Panel",
+        "shortTitle": "dsh",
+        "icon": "assets/icon.svg"
+      }
+    ],
+    "configuration": {
+      "title": "DeepSeek Harness",
+      "properties": {
+        "dsh-vsc.dshPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Explicit path to the dsh executable. Empty: discover via PATH, npm global prefix, then npx --no-install."
+        },
+        "dsh-vsc.minDshVersion": {
+          "type": "string",
+          "default": "0.1.0-rc.6",
+          "description": "Minimum accepted dsh version (semver, prerelease-aware)."
+        },
+        "dsh-vsc.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Spawn (or connect to) the dsh web server when a workspace window opens."
+        },
+        "dsh-vsc.dshUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Optional explicit base URL of a running dsh web instance (e.g. http://127.0.0.1:3080). When set, the extension reuses it instead of probing/spawning."
+        },
+        "dsh-vsc.sessionDisplay": {
+          "type": "string",
+          "enum": [
+            "concise",
+            "detailed"
+          ],
+          "enumDescriptions": [
+            "简洁会话：隐藏工具调用与思考流程，只保留最终输出",
+            "详细会话：显示工具调用与思考流程"
+          ],
+          "default": "concise",
+          "description": "会话内容显示模式。"
+        },
+        "dsh-vsc.fontSize": {
+          "type": "number",
+          "default": 13,
+          "minimum": 10,
+          "maximum": 24,
+          "description": "聊天界面字体大小（px）。"
+        },
+        "dsh-vsc.language": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en"
+          ],
+          "enumDescriptions": [
+            "中文",
+            "English"
+          ],
+          "default": "zh",
+          "description": "插件界面语言。"
+        },
+        "dsh-vsc.autoOpenChat": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动 VS Code 时自动打开 dsh Chat 侧边栏。"
+        },
+        "dsh-vsc.enterToSend": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enter 键行为：true = Enter 发送、Shift+Enter 换行；false = Shift+Enter 发送、Enter 换行。"
+        }
+      }
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "dsh-vsc.openChatFromTitle",
+          "when": "editorIsOpen",
+          "group": "navigation@0"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}
