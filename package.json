@@ -2,7 +2,7 @@
   "name": "dsh-vsc",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -137,8 +137,8 @@
         },
         "dsh-vsc.enterToSend": {
           "type": "boolean",
-          "default": true,
-          "description": "Enter 键行为：true = Enter 发送、Shift+Enter 换行；false = Shift+Enter 发送、Enter 换行。"
+          "default": false,
+          "description": "Enter 键行为：true = Enter 发送、Shift+Enter 换行；false = Shift+Enter 发送、Enter 换行（默认）。"
         }
       }
     },

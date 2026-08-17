@@ -88,12 +88,6 @@ function getWebviewHtml(nonce) {
     .load-earlier-btn { font-size: 12px; padding: 4px 10px; }
     .msg { margin-bottom: 14px; max-width: 100%; }
     .msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
-    .msg.user .meta { justify-content: flex-end; }
-    .msg-delete {
-      flex: 0 0 auto; height: 18px; min-width: 22px; padding: 0 4px;
-      font-size: 10px; line-height: 1; opacity: 0.55;
-    }
-    .msg-delete:hover { opacity: 1; }
     .bubble {
       border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
       white-space: normal; overflow-wrap: anywhere; line-height: 1.55;
@@ -352,7 +346,7 @@ function getWebviewHtml(nonce) {
       <div id="approvalPanel" class="question-panel approval-panel" style="display:none"></div>
       <div id="composerRow" class="composer-row">
         <button id="permissionBtn" class="permission-button" title="选择权限">权</button>
-        <textarea id="composerInput" rows="1" placeholder="Enter 发送 · Shift+Enter 换行 · @ 引用文件 · / 命令"></textarea>
+        <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
         <button id="expandBtn" title="展开/收起输入框">⤢</button>
         <button id="stopBtn" title="停止生成" style="display:none">■</button>
         <button id="sendBtn" class="primary" title="发送">发送</button>
@@ -400,20 +394,6 @@ function getWebviewHtml(nonce) {
         </div>
       </div>
     </div>
-    <div id="deleteModal" class="modal-overlay">
-      <div class="modal">
-        <div class="modal-header">
-          <span>删除上下文</span>
-          <span class="spacer"></span>
-          <button id="deleteClose" title="关闭">✕</button>
-        </div>
-        <div id="deleteMessage" class="archive-message"></div>
-        <div class="modal-footer">
-          <button id="deleteCancelBtn">取消</button>
-          <button id="deleteConfirmBtn" class="primary">确认删除</button>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script nonce="${nonce}">
@@ -435,7 +415,7 @@ function getWebviewHtml(nonce) {
       sessionDisplay: 'concise',
       fontSize: 13,
       language: 'zh',
-      enterToSend: true,
+      enterToSend: false,
       queueItems: [],
       hasMoreEarlier: false,
       loadingEarlier: false,
@@ -444,15 +424,8 @@ function getWebviewHtml(nonce) {
       todos: [],
       permissions: null,
       questionSelections: {},
-      questionCustom: {},
-      hiddenItemIds: {}
+      questionCustom: {}
     };
-
-    // 消息删除是本地隐藏；跨 webview 重建（面板重开/HTML 刷新）时用 setState 恢复。
-    var persistedState = vscode.getState && vscode.getState();
-    if (persistedState && persistedState.hiddenItemIds) {
-      state.hiddenItemIds = persistedState.hiddenItemIds;
-    }
 
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
@@ -495,12 +468,6 @@ function getWebviewHtml(nonce) {
     var archiveCancelBtn = $('archiveCancelBtn');
     var archiveConfirmBtn = $('archiveConfirmBtn');
     var pendingArchiveSessionId = null;
-    var deleteModal = $('deleteModal');
-    var deleteMessage = $('deleteMessage');
-    var deleteCloseBtn = $('deleteClose');
-    var deleteCancelBtn = $('deleteCancelBtn');
-    var deleteConfirmBtn = $('deleteConfirmBtn');
-    var pendingDeleteItem = null;
 
     function post(msg) { vscode.postMessage(msg); }
 
@@ -552,9 +519,6 @@ function getWebviewHtml(nonce) {
         'waitingAnswer': '等待回答',
         'closeAndCancel': '关闭并取消问题',
         'submitAnswer': '提交回答',
-        'deleteThis': '删除此段上下文',
-        'deleteSegmentMsg': '将删除上次用户消息之后到当前条目之间的所有上下文（包括被隐藏的工具调用、思考流程与上下文注入）。',
-        'deleteSingleMsg': '将删除该条消息。',
         'meta.assistant': 'DeepSeek',
         'meta.tool': '工具',
         'meta.note': '提示',
@@ -571,8 +535,6 @@ function getWebviewHtml(nonce) {
         'archiveMessage': '将归档会话「{title}」。归档后会从会话列表移除，但会话记录副本会保存到当前工作目录的 .dsh-vsc/archived-sessions/ 下。',
         'confirmArchive': '确认归档',
         'cancel': '取消',
-        'deleteTitle': '删除上下文',
-        'confirmDelete': '确认删除',
         'settingsOpenDoc': '打开 settings.yaml',
         'settingsDone': '完成',
         'settingsReadonly': '当前 settings provider 为只读，无法修改配置。',
@@ -587,10 +549,6 @@ function getWebviewHtml(nonce) {
         'languageZh': '中文',
         'languageEn': 'English',
         'languageSwitchTitle': '点击切换到 {target}',
-        'baseUrlSection': '模型服务 Base URL',
-        'baseUrlLabel': 'DeepSeek API Base URL（可填写兼容 OpenAI 的第三方地址）',
-        'save': '保存',
-        'clear': '清除',
         'sendModeSection': '发送方式',
         'sendModeLabel': '输入框按键行为',
         'sendModeEnter': 'Enter 发送，Shift+Enter 换行',
@@ -607,7 +565,6 @@ function getWebviewHtml(nonce) {
         'stats.tokPerSec': '{rate} tok/s',
         'stats.cacheHit': '缓存命中 {pct}%',
         'stats.inputOutput': '输入 {input} tokens · 输出 {output} tokens',
-        'apiKeys': 'API Keys',
         'planReview': '计划评审',
         'chatAboutIt': '聊一聊'
       },
@@ -650,9 +607,6 @@ function getWebviewHtml(nonce) {
         'waitingAnswer': 'Waiting for Answer',
         'closeAndCancel': 'Close and cancel question',
         'submitAnswer': 'Submit Answer',
-        'deleteThis': 'Delete this context',
-        'deleteSegmentMsg': 'This will delete all context since the last user message up to the current item (including hidden tool calls, reasoning, and context injections).',
-        'deleteSingleMsg': 'This will delete this message.',
         'meta.assistant': 'DeepSeek',
         'meta.tool': 'Tool',
         'meta.note': 'Note',
@@ -669,8 +623,6 @@ function getWebviewHtml(nonce) {
         'archiveMessage': 'Archive session "{title}"? It will be removed from the list and a copy will be saved to .dsh-vsc/archived-sessions/ in the current workspace.',
         'confirmArchive': 'Archive',
         'cancel': 'Cancel',
-        'deleteTitle': 'Delete Context',
-        'confirmDelete': 'Delete',
         'settingsOpenDoc': 'Open settings.yaml',
         'settingsDone': 'Done',
         'settingsReadonly': 'The current settings provider is read-only and cannot be modified.',
@@ -685,10 +637,6 @@ function getWebviewHtml(nonce) {
         'languageZh': '中文',
         'languageEn': 'English',
         'languageSwitchTitle': 'Click to switch to {target}',
-        'baseUrlSection': 'Model Service Base URL',
-        'baseUrlLabel': 'DeepSeek API Base URL (use any OpenAI-compatible endpoint)',
-        'save': 'Save',
-        'clear': 'Clear',
         'sendModeSection': 'Send Mode',
         'sendModeLabel': 'Input key behavior',
         'sendModeEnter': 'Enter to send, Shift+Enter for newline',
@@ -705,7 +653,6 @@ function getWebviewHtml(nonce) {
         'stats.tokPerSec': '{rate} tok/s',
         'stats.cacheHit': 'cache hit {pct}%',
         'stats.inputOutput': 'input {input} tokens · output {output} tokens',
-        'apiKeys': 'API Keys',
         'planReview': 'Plan Review',
         'chatAboutIt': 'Chat about it'
       }
@@ -739,11 +686,8 @@ function getWebviewHtml(nonce) {
       settingsDoneBtn.textContent = t('settingsDone');
       archiveCancelBtn.textContent = t('cancel');
       archiveConfirmBtn.textContent = t('confirmArchive');
-      deleteCancelBtn.textContent = t('cancel');
-      deleteConfirmBtn.textContent = t('confirmDelete');
       document.querySelector('#settingsModal .modal-header span').textContent = t('settings');
       document.querySelector('#archiveModal .modal-header span').textContent = t('archiveTitle');
-      document.querySelector('#deleteModal .modal-header span').textContent = t('deleteTitle');
       permissionBtn.textContent = '权';
       modelBtn.textContent = '模';
       $('modelLabel').textContent = t('modelLabel');
@@ -1143,14 +1087,6 @@ function getWebviewHtml(nonce) {
       return s;
     }
 
-    function itemHiddenKey(item) {
-      return (state.selectedSessionId || '') + '::' + (item && item.id ? item.id : '');
-    }
-
-    function isItemHidden(item) {
-      return !!item && !!item.id && !!state.hiddenItemIds[itemHiddenKey(item)];
-    }
-
     function renderConversation() {
       var previousScrollTop = chatEl.scrollTop || 0;
       var wasNearBottom = (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight) < 40;
@@ -1171,7 +1107,7 @@ function getWebviewHtml(nonce) {
         earlierWrap.appendChild(earlierBtn);
         chatEl.appendChild(earlierWrap);
       }
-      var items = (state.conversation || []).filter(function (item) { return !isItemHidden(item); });
+      var items = state.conversation || [];
       var displayItems = state.sessionDisplay === 'concise'
         ? items.filter(function (item) {
             if (item.type === 'user') return typeof item.text === 'string' && item.text.trim().length > 0;
@@ -1202,81 +1138,14 @@ function getWebviewHtml(nonce) {
       }
     }
 
-    function persistHidden() {
-      // vscode.setState 在该 webview 的生命周期内跨 HTML 重建持久化（VS Code 重启后清空）。
-      if (vscode.setState) vscode.setState({ hiddenItemIds: state.hiddenItemIds });
-    }
-
-    function deleteConversationItem(item) {
-      var items = state.conversation || [];
-      var index = items.indexOf(item);
-      if (index < 0) return;
-      // 简洁模式下，删除非用户条目时，连同“上次用户消息之后、当前条目之前”的
-      // 所有隐藏上下文（工具调用、思考、上下文注入等）一起删除。
-      if (state.sessionDisplay === 'concise' && item.type !== 'user') {
-        var start = 0;
-        for (var i = index - 1; i >= 0; i--) {
-          if (items[i].type === 'user') {
-            start = i + 1;
-            break;
-          }
-        }
-        for (var j = start; j <= index; j++) {
-          if (items[j].id) state.hiddenItemIds[itemHiddenKey(items[j])] = true;
-        }
-      } else if (item.id) {
-        state.hiddenItemIds[itemHiddenKey(item)] = true;
-      }
-      persistHidden();
-      renderConversation();
-    }
-
-    function requestDeleteConversationItem(item) {
-      pendingDeleteItem = item;
-      if (state.sessionDisplay === 'concise' && item.type !== 'user') {
-        deleteMessage.textContent = t('deleteSegmentMsg');
-      } else {
-        deleteMessage.textContent = t('deleteSingleMsg');
-      }
-      deleteModal.classList.add('open');
-    }
-
-    function closeDeleteModal() {
-      deleteModal.classList.remove('open');
-      pendingDeleteItem = null;
-    }
-
-    function confirmDeleteConversationItem() {
-      if (pendingDeleteItem) deleteConversationItem(pendingDeleteItem);
-      closeDeleteModal();
-    }
-
     function renderItem(item) {
       var wrap = document.createElement('div');
       wrap.className = 'msg ' + item.type;
-      var meta = document.createElement('div');
-      meta.className = 'meta';
-      if (item.type === 'user') {
-        var userDelete = document.createElement('button');
-        userDelete.className = 'msg-delete';
-        userDelete.textContent = '✕';
-        userDelete.title = t('deleteThis');
-        userDelete.addEventListener('click', function () {
-          requestDeleteConversationItem(item);
-        });
-        meta.appendChild(userDelete);
-        wrap.appendChild(meta);
-      } else {
+      if (item.type !== 'user') {
+        var meta = document.createElement('div');
+        meta.className = 'meta';
         var label = item.type === 'assistant' ? t('meta.assistant') : item.type === 'tool' ? t('meta.tool') : item.type === 'note' ? t('meta.note') : t('meta.context');
         meta.innerHTML = '<span>' + label + '</span>' + (item.partial ? '<span class="status-badge">' + t('generating') + '</span>' : '');
-        var deleteBtn = document.createElement('button');
-        deleteBtn.className = 'msg-delete';
-        deleteBtn.textContent = '✕';
-        deleteBtn.title = t('deleteThis');
-        deleteBtn.addEventListener('click', function () {
-          requestDeleteConversationItem(item);
-        });
-        meta.appendChild(deleteBtn);
         wrap.appendChild(meta);
       }
 
@@ -2271,39 +2140,6 @@ function getWebviewHtml(nonce) {
       pendingArchiveSessionId = null;
     }
 
-    function appendSettingsField(parent, label, statusText, valueId, saveHandler, clearHandler) {
-      var field = document.createElement('div');
-      field.className = 'settings-field';
-      var labelEl = document.createElement('div');
-      labelEl.className = 'field-label';
-      var nameEl = document.createElement('span');
-      nameEl.textContent = label;
-      var statusEl = document.createElement('span');
-      statusEl.className = 'field-status';
-      statusEl.textContent = statusText;
-      labelEl.appendChild(nameEl);
-      labelEl.appendChild(statusEl);
-      var input = document.createElement('input');
-      input.type = 'password';
-      input.placeholder = statusText === '已配置' ? '留空则不修改' : '输入新的值';
-      input.id = valueId;
-      var actions = document.createElement('div');
-      actions.className = 'field-actions';
-      var saveBtn = document.createElement('button');
-      saveBtn.textContent = '保存';
-      saveBtn.className = 'primary';
-      saveBtn.addEventListener('click', function () { saveHandler(input.value); });
-      var clearBtn = document.createElement('button');
-      clearBtn.textContent = '清除';
-      clearBtn.addEventListener('click', clearHandler);
-      actions.appendChild(saveBtn);
-      actions.appendChild(clearBtn);
-      field.appendChild(labelEl);
-      field.appendChild(input);
-      field.appendChild(actions);
-      parent.appendChild(field);
-    }
-
     function renderSettingsData(data) {
       settingsContent.innerHTML = '';
       if (!data.writable) {
@@ -2479,9 +2315,6 @@ function getWebviewHtml(nonce) {
       if (!sessionId) return;
       post({ type: 'closeSession', sessionId: sessionId });
     });
-    deleteCloseBtn.addEventListener('click', closeDeleteModal);
-    deleteCancelBtn.addEventListener('click', closeDeleteModal);
-    deleteConfirmBtn.addEventListener('click', confirmDeleteConversationItem);
     renameSessionBtn.addEventListener('click', function () {
       if (!state.selectedSessionId) return;
       post({ type: 'renameSession', sessionId: state.selectedSessionId });
@@ -2519,8 +2352,10 @@ function getWebviewHtml(nonce) {
     });
     inputEl.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter') return;
-      var sendKey = state.enterToSend ? !event.shiftKey : event.shiftKey;
-      if (sendKey) {
+      // enterToSend=true：Enter 发送、Shift+Enter 换行（默认行为，不拦截）。
+      // enterToSend=false：Shift+Enter 发送、Enter 换行（默认行为，不拦截）。
+      var sendOnEnter = state.enterToSend === true;
+      if (sendOnEnter ? !event.shiftKey : event.shiftKey) {
         event.preventDefault();
         sendMessage();
       }
@@ -2544,7 +2379,7 @@ function getWebviewHtml(nonce) {
           state.sessionDisplay = msg.sessionDisplay || 'concise';
           state.fontSize = Number(msg.fontSize) || 13;
           state.language = msg.language === 'en' ? 'en' : 'zh';
-          state.enterToSend = msg.enterToSend !== false;
+          state.enterToSend = msg.enterToSend === true;
           applyFontSize();
           state.queueItems = msg.queue || [];
           state.hasMoreEarlier = msg.hasMoreEarlier || false;
@@ -2601,7 +2436,7 @@ function getWebviewHtml(nonce) {
           }
           break;
         case 'settingsData':
-          renderSettingsData(msg.data || { writable: false, credentials: [], namespaces: [] });
+          renderSettingsData(msg.data || { writable: false });
           break;
         case 'sessionDisplay':
           state.sessionDisplay = msg.value || 'concise';
@@ -2617,7 +2452,7 @@ function getWebviewHtml(nonce) {
           applyLanguage();
           break;
         case 'enterToSend':
-          state.enterToSend = msg.value !== false;
+          state.enterToSend = msg.value === true;
           composerInput.placeholder = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
           break;
         case 'conversation':

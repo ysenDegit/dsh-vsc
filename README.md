@@ -36,9 +36,6 @@
 - 工具调用与工具结果按 `callId` 配对。
 - 上下文注入默认折叠，只保留最新一条。
 - 向上翻页时提供“加载更早”按钮，按需加载更早历史。
-- 每条消息支持删除：
-  - 删除前二次确认。
-  - 简洁模式下删除非用户条目时，会连同上次用户消息之后的隐藏工具/思考/上下文一并删除。
 - Markdown 渲染：
   - 标题、段落、粗体、斜体、删除线。
   - 行内代码与围栏代码块（可带语言 class），并对常见语言提供轻量语法高亮（关键字/字符串/注释/数字）。
@@ -51,8 +48,8 @@
 
 ### 4. Composer 输入区
 - 发送方式可配置：
-  - `Enter` 发送，`Shift+Enter` 换行（默认）。
-  - 或反过来：`Shift+Enter` 发送，`Enter` 换行。
+  - `Shift+Enter` 发送，`Enter` 换行（默认）。
+  - 或反过来：`Enter` 发送，`Shift+Enter` 换行。
 - 输入框展开/收起：只有输入框向上展开，附近按钮位置不变。
 - 停止按钮使用 `■` 图标。
 - `@` 文件引用：输入 `@` 弹出当前工作区文件列表，实时过滤。
@@ -78,9 +75,8 @@
 - 字体大小：12–20 px。
 - 界面语言：中文 / English。
 - 发送方式：Enter 发送 / Shift+Enter 发送。
-- API Key：`DEEPSEEK_API_KEY`。
-- 可写 secret 字段编辑。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
+- LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
 
 ### 7. 入口与命令
 - 侧边栏鲸鱼图标入口。
@@ -114,7 +110,7 @@
 | `dsh-vsc.fontSize` | number | 13 | 聊天界面字体大小（px） |
 | `dsh-vsc.language` | string | zh | 插件界面语言：zh / en |
 | `dsh-vsc.autoOpenChat` | boolean | true | 检测到 dsh 已运行时，启动后自动打开工作区面板 |
-| `dsh-vsc.enterToSend` | boolean | true | Enter 键行为：true = Enter 发送；false = Shift+Enter 发送 |
+| `dsh-vsc.enterToSend` | boolean | false | Enter 键行为：false（默认）= Shift+Enter 发送、Enter 换行；true = Enter 发送 |
 
 ---
 

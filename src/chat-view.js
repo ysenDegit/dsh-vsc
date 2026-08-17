@@ -27,7 +27,7 @@ class ChatViewProvider {
     this.sessionDisplay = options.sessionDisplay ?? 'concise'
     this.fontSize = options.fontSize ?? 13
     this.language = options.language ?? 'zh'
-    this.enterToSend = options.enterToSend ?? true
+    this.enterToSend = options.enterToSend ?? false
     this.webviews = new Set()
     this.queue = []
     this.selectedSessionId = null
@@ -142,21 +142,6 @@ class ChatViewProvider {
         case 'settingsOpen':
           await this.refreshSettings()
           break
-        case 'credentialSave':
-          await this.saveCredential(msg.ref, msg.value)
-          break
-        case 'credentialUnset':
-          await this.unsetCredential(msg.ref)
-          break
-        case 'secretSave':
-          await this.saveSecret(msg.ns, msg.path, msg.value, msg.expectedRevision)
-          break
-        case 'baseUrlSave':
-          await this.saveBaseUrl(msg.value)
-          break
-        case 'baseUrlClear':
-          await this.clearBaseUrl()
-          break
         case 'settingsOpenDocument':
           await this.openSettingsDocument()
           break
@@ -227,6 +212,9 @@ class ChatViewProvider {
       conversation: this.conversationSnapshot(),
       running: this.isSessionRunning(this.selectedSessionId),
       sessionDisplay: this.sessionDisplay,
+      fontSize: this.fontSize,
+      language: this.language,
+      enterToSend: this.enterToSend,
       queue: this.queueSnapshot(this.selectedSessionId),
       hasMoreEarlier: this.hasMoreBySession.get(this.selectedSessionId) ?? false,
       question: this.questionSnapshot(this.selectedSessionId),
@@ -474,36 +462,8 @@ class ChatViewProvider {
 
   async refreshSettings() {
     if (!this.dsh.client) throw new Error('dsh web 尚未就绪')
-    const credentialRefs = ['DEEPSEEK_API_KEY']
     const client = this.sessions.requireClient()
-    const [credentialResult, settingsResult] = await Promise.all([
-      client.call('credentials.describe', { refs: credentialRefs }),
-      client.call('settings.describe', {}),
-    ])
-    const credentials = credentialRefs.map((ref) => {
-      const view = credentialResult.credentials?.[ref]
-      return {
-        ref,
-        label: 'DeepSeek API Key',
-        configured: view?.configured ?? false,
-        writable: view?.writable ?? false,
-      }
-    })
-    const namespaces = (settingsResult.namespaces ?? [])
-      .filter((ns) => Array.isArray(ns.secrets) && ns.secrets.length > 0 && ns.ns !== 'web-search-deepseek')
-      .map((ns) => ({
-        ns: ns.ns,
-        applies: ns.applies,
-        revision: ns.revision,
-        secrets: ns.secrets.map((secret) => ({
-          path: secret.path,
-          set: secret.set,
-        })),
-      }))
-    const llmNs = (settingsResult.namespaces ?? []).find((ns) => ns.ns === 'llm-deepseek')
-    const baseUrl = llmNs
-      ? (llmNs.user?.baseURL ?? llmNs.value?.baseURL ?? null)
-      : null
+    const settingsResult = await client.call('settings.describe', {})
     this.post({
       type: 'settingsData',
       data: {
@@ -513,67 +473,8 @@ class ChatViewProvider {
         fontSize: this.fontSize,
         language: this.language,
         enterToSend: this.enterToSend,
-        credentials,
-        namespaces,
-        baseUrl: {
-          ns: 'llm-deepseek',
-          value: baseUrl,
-          revision: llmNs?.revision,
-        },
       },
     })
-  }
-
-  async saveCredential(ref, value) {
-    if (!ref || value === undefined || value === '') return
-    const client = this.sessions.requireClient()
-    await client.call('credentials.set', { ref, value })
-    await this.refreshSettings()
-  }
-
-  async unsetCredential(ref) {
-    if (!ref) return
-    const client = this.sessions.requireClient()
-    await client.call('credentials.unset', { ref })
-    await this.refreshSettings()
-  }
-
-  async saveSecret(ns, path, value, expectedRevision) {
-    if (!ns || !Array.isArray(path) || path.length === 0) return
-    const client = this.sessions.requireClient()
-    const patch = buildNestedPatch(path, value)
-    await client.call('settings.update', {
-      ns,
-      patch,
-      ...(expectedRevision === undefined ? {} : { expectedRevision }),
-    })
-    await this.refreshSettings()
-  }
-
-  async saveBaseUrl(value) {
-    const text = String(value || '').trim()
-    if (!text) return
-    const client = this.sessions.requireClient()
-    const settings = await client.call('settings.describe', {})
-    const ns = (settings.namespaces ?? []).find((item) => item.ns === 'llm-deepseek')
-    await client.call('settings.mutate', {
-      ns: 'llm-deepseek',
-      ops: [{ op: 'set', path: ['baseURL'], value: text }],
-      expectedRevision: ns?.revision,
-    })
-    await this.refreshSettings()
-  }
-
-  async clearBaseUrl() {
-    const client = this.sessions.requireClient()
-    const settings = await client.call('settings.describe', {})
-    const ns = (settings.namespaces ?? []).find((item) => item.ns === 'llm-deepseek')
-    await client.call('settings.mutate', {
-      ns: 'llm-deepseek',
-      ops: [{ op: 'unset', path: ['baseURL'] }],
-      expectedRevision: ns?.revision,
-    })
-    await this.refreshSettings()
   }
 
   async openSettingsDocument() {
@@ -599,12 +500,10 @@ class ChatViewProvider {
   async setSessionDisplay(value) {
     const next = value === 'detailed' ? 'detailed' : 'concise'
     this.sessionDisplay = next
-    try {
-      const config = vscode.workspace.getConfiguration('dsh-vsc')
-      await config.update('sessionDisplay', next, vscode.ConfigurationTarget.Global)
-    } catch (error) {
-      this.onLog(`保存会话显示模式失败: ${String(error)}`)
-    }
+    // 写入失败不静默：让错误冒泡到 handleMessage 的统一 catch，弹窗告知用户，
+    // 避免“当前会话生效、重启后恢复默认”且用户无感知。
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('sessionDisplay', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'sessionDisplay', value: next })
   }
 
@@ -612,37 +511,45 @@ class ChatViewProvider {
     const size = Number(value)
     if (!Number.isFinite(size) || size < 10 || size > 24) return
     this.fontSize = size
-    try {
-      const config = vscode.workspace.getConfiguration('dsh-vsc')
-      await config.update('fontSize', size, vscode.ConfigurationTarget.Global)
-    } catch (error) {
-      this.onLog(`保存字体大小失败: ${String(error)}`)
-    }
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('fontSize', size, vscode.ConfigurationTarget.Global)
     this.post({ type: 'fontSize', value: size })
   }
 
   async setLanguage(value) {
     const next = value === 'en' ? 'en' : 'zh'
     this.language = next
-    try {
-      const config = vscode.workspace.getConfiguration('dsh-vsc')
-      await config.update('language', next, vscode.ConfigurationTarget.Global)
-    } catch (error) {
-      this.onLog(`保存界面语言失败: ${String(error)}`)
-    }
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('language', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'language', value: next })
   }
 
   async setEnterToSend(value) {
     const next = value === false ? false : true
     this.enterToSend = next
-    try {
-      const config = vscode.workspace.getConfiguration('dsh-vsc')
-      await config.update('enterToSend', next, vscode.ConfigurationTarget.Global)
-    } catch (error) {
-      this.onLog(`保存发送方式失败: ${String(error)}`)
-    }
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('enterToSend', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'enterToSend', value: next })
+  }
+
+  // 配置被外部修改（VS Code 设置 UI、settings.json 等）时同步 provider 状态与 webview。
+  updatePreferences(prefs) {
+    if (prefs.sessionDisplay !== undefined && prefs.sessionDisplay !== this.sessionDisplay) {
+      this.sessionDisplay = prefs.sessionDisplay
+      this.post({ type: 'sessionDisplay', value: prefs.sessionDisplay })
+    }
+    if (prefs.fontSize !== undefined && prefs.fontSize !== this.fontSize) {
+      this.fontSize = prefs.fontSize
+      this.post({ type: 'fontSize', value: prefs.fontSize })
+    }
+    if (prefs.language !== undefined && prefs.language !== this.language) {
+      this.language = prefs.language
+      this.post({ type: 'language', value: prefs.language })
+    }
+    if (prefs.enterToSend !== undefined && prefs.enterToSend !== this.enterToSend) {
+      this.enterToSend = prefs.enterToSend
+      this.post({ type: 'enterToSend', value: prefs.enterToSend })
+    }
   }
 
   async closeSession(sessionId) {

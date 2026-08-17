@@ -18,7 +18,7 @@ function activate(context) {
   const fontSize = config.get('fontSize', 13)
   const language = config.get('language', 'zh')
   const autoOpenChat = config.get('autoOpenChat', true)
-  const enterToSend = config.get('enterToSend', true)
+  const enterToSend = config.get('enterToSend', false)
 
   const dsh = new DshService({
     minimumVersion,
@@ -108,6 +108,21 @@ function activate(context) {
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       sessions.reset()
       if (dsh.statusValue === 'ready') void ensureWorkspaceAndSession()
+    }),
+  )
+
+  // 配置被外部修改（VS Code 设置 UI / settings.json）时，同步 provider 与 webview，
+  // 避免“插件弹窗里改的值与真实配置脱节、重启后表现不一致”。
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration('dsh-vsc')) return
+      const config = vscode.workspace.getConfiguration('dsh-vsc')
+      provider.updatePreferences({
+        sessionDisplay: config.get('sessionDisplay', 'concise'),
+        fontSize: config.get('fontSize', 13),
+        language: config.get('language', 'zh'),
+        enterToSend: config.get('enterToSend', false),
+      })
     }),
   )
 
