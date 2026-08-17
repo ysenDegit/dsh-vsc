@@ -76,6 +76,7 @@
 - 界面语言：中文 / English。
 - 发送方式：Enter 发送 / Shift+Enter 发送。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
+- 显示当前插件版本号。
 - LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
 
 ### 7. 入口与命令
@@ -129,15 +130,16 @@
 ```bash
 # 运行测试
 node --test tests/*.test.js
-
-# 打包（需安装 @vscode/vsce）
-npx @vscode/vsce package
 ```
 
-本仓库当前环境建议使用：
+打包分两步：
 
 ```bash
-npm_config_cache=/tmp/npm-cache npx --yes @vscode/vsce package
+# 1. 安装 vsce（仅首次需要）
+npm install -g @vscode/vsce
+
+# 2. 运行 vsce 打包
+vsce package
 ```
 
 ---

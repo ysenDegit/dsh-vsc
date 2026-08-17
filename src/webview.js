@@ -326,8 +326,8 @@ function getWebviewHtml(nonce) {
     <div class="sessions-wrap">
       <span class="status-badge"><span id="statusDot" class="status-dot stopped"></span><span id="statusText">stopped</span></span>
       <button id="settingsBtn" title="设置">⚙</button>
-      <button id="refreshBtn" title="刷新会话">刷新</button>
-      <button id="newSessionBtn" class="primary" title="新建会话">+ 新会话</button>
+      <button id="refreshBtn" title="刷新会话">⟳</button>
+      <button id="newSessionBtn" class="primary" title="新建会话">＋</button>
       <select id="sessionSelect" title="选择会话"></select>
       <button id="renameSessionBtn" title="重命名会话">✎</button>
       <button id="closeSessionBtn" title="归档/关闭会话">✕</button>
@@ -427,6 +427,14 @@ function getWebviewHtml(nonce) {
       questionCustom: {}
     };
 
+    // 增量渲染缓存：item id -> { node, signature }；流式更新只重绘变化的条目。
+    var itemNodes = new Map();
+    var earlierWrapEl = null;
+    var renderedSessionId = null;
+    var renderedMode = null;
+    var renderedLang = null;
+    var conversationTimer = 0;
+
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
     var selectEl = $('sessionSelect');
@@ -487,9 +495,7 @@ function getWebviewHtml(nonce) {
         'status.reconnecting': '重连中',
         'status.stopped': '已停止',
         'status.error': '错误',
-        'newSession': '+ 新会话',
         'newSessionTitle': '新建会话',
-        'refresh': '刷新',
         'refreshTitle': '刷新会话',
         'renameSession': '重命名会话',
         'closeSession': '归档/关闭会话',
@@ -538,6 +544,7 @@ function getWebviewHtml(nonce) {
         'settingsOpenDoc': '打开 settings.yaml',
         'settingsDone': '完成',
         'settingsReadonly': '当前 settings provider 为只读，无法修改配置。',
+        'pluginVersion': '插件版本',
         'sessionDisplaySection': '会话显示',
         'sessionDisplayLabel': '会话显示模式',
         'concise': '简洁会话',
@@ -575,9 +582,7 @@ function getWebviewHtml(nonce) {
         'status.reconnecting': 'Reconnecting',
         'status.stopped': 'Stopped',
         'status.error': 'Error',
-        'newSession': '+ New Session',
         'newSessionTitle': 'New Session',
-        'refresh': 'Refresh',
         'refreshTitle': 'Refresh Sessions',
         'renameSession': 'Rename Session',
         'closeSession': 'Archive/Close Session',
@@ -626,6 +631,7 @@ function getWebviewHtml(nonce) {
         'settingsOpenDoc': 'Open settings.yaml',
         'settingsDone': 'Done',
         'settingsReadonly': 'The current settings provider is read-only and cannot be modified.',
+        'pluginVersion': 'Plugin Version',
         'sessionDisplaySection': 'Session Display',
         'sessionDisplayLabel': 'Session display mode',
         'concise': 'Concise',
@@ -670,9 +676,7 @@ function getWebviewHtml(nonce) {
     }
 
     function applyLanguage() {
-      newSessionBtn.textContent = t('newSession');
       newSessionBtn.title = t('newSessionTitle');
-      refreshBtn.textContent = t('refresh');
       refreshBtn.title = t('refreshTitle');
       renameSessionBtn.title = t('renameSession');
       closeSessionBtn.title = t('closeSession');
@@ -1087,26 +1091,62 @@ function getWebviewHtml(nonce) {
       return s;
     }
 
-    function renderConversation() {
-      var previousScrollTop = chatEl.scrollTop || 0;
-      var wasNearBottom = (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight) < 40;
-      chatEl.innerHTML = '';
-      if (state.hasMoreEarlier) {
-        var earlierWrap = document.createElement('div');
-        earlierWrap.className = 'load-earlier-wrap';
-        var earlierBtn = document.createElement('button');
-        earlierBtn.className = 'load-earlier-btn';
-        earlierBtn.textContent = state.loadingEarlier ? t('loadingEarlier') : t('loadEarlier');
-        earlierBtn.disabled = state.loadingEarlier;
-        earlierBtn.addEventListener('click', function () {
-          if (state.loadingEarlier) return;
-          state.loadingEarlier = true;
-          renderConversation();
-          post({ type: 'loadEarlier', sessionId: state.selectedSessionId });
-        });
-        earlierWrap.appendChild(earlierBtn);
-        chatEl.appendChild(earlierWrap);
+    function itemSignature(item) {
+      return item.type + '|' + (item.id || '') + '|' + (item.text || '') + '|' + (item.reasoning || '')
+        + '|' + (item.status || '') + '|' + (item.resultText || '') + '|' + (item.arguments || '')
+        + '|' + (item.summary || '') + '|' + (item.partial ? 1 : 0);
+    }
+
+    function scheduleConversationRender() {
+      if (conversationTimer) return;
+      conversationTimer = setTimeout(function () {
+        conversationTimer = 0;
+        renderConversation();
+      }, 16);
+    }
+
+    function flushConversationRender() {
+      if (conversationTimer) {
+        clearTimeout(conversationTimer);
+        conversationTimer = 0;
       }
+      renderConversation();
+    }
+
+    function renderConversation() {
+      // 切换会话、显示模式或语言时重建整棵列表；流式更新复用节点，只重绘变化的条目。
+      if (renderedSessionId !== state.selectedSessionId || renderedMode !== state.sessionDisplay || renderedLang !== state.language) {
+        itemNodes.clear();
+        chatEl.innerHTML = '';
+        renderedSessionId = state.selectedSessionId;
+        renderedMode = state.sessionDisplay;
+        renderedLang = state.language;
+      }
+      var wasNearBottom = (chatEl.scrollHeight - chatEl.scrollTop - chatEl.clientHeight) < 40;
+
+      if (state.hasMoreEarlier) {
+        if (!earlierWrapEl) {
+          earlierWrapEl = document.createElement('div');
+          earlierWrapEl.className = 'load-earlier-wrap';
+          var earlierBtn = document.createElement('button');
+          earlierBtn.className = 'load-earlier-btn';
+          earlierBtn.addEventListener('click', function () {
+            if (state.loadingEarlier) return;
+            state.loadingEarlier = true;
+            renderConversation();
+            post({ type: 'loadEarlier', sessionId: state.selectedSessionId });
+          });
+          earlierWrapEl.appendChild(earlierBtn);
+        }
+        var earlierBtnEl = earlierWrapEl.querySelector('.load-earlier-btn');
+        earlierBtnEl.textContent = state.loadingEarlier ? t('loadingEarlier') : t('loadEarlier');
+        earlierBtnEl.disabled = state.loadingEarlier;
+        chatEl.insertBefore(earlierWrapEl, chatEl.firstChild);
+      } else if (earlierWrapEl) {
+        earlierWrapEl.remove();
+        earlierWrapEl = null;
+      }
+
       var items = state.conversation || [];
       var displayItems = state.sessionDisplay === 'concise'
         ? items.filter(function (item) {
@@ -1115,6 +1155,7 @@ function getWebviewHtml(nonce) {
             return false;
           })
         : items;
+
       if (!displayItems.length) {
         if (!items.length) {
           var session = currentSession();
@@ -1128,14 +1169,37 @@ function getWebviewHtml(nonce) {
         chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('conciseHidden')) + '</div>';
         return;
       }
+
+      var seen = new Set();
       for (var i = 0; i < displayItems.length; i++) {
-        chatEl.appendChild(renderItem(displayItems[i]));
+        var item = displayItems[i];
+        var key = item.id || (item.type + '-' + i);
+        seen.add(key);
+        var rec = itemNodes.get(key);
+        if (!rec) {
+          rec = { node: renderItem(item), signature: '' };
+          itemNodes.set(key, rec);
+        }
+        var sig = itemSignature(item);
+        if (rec.signature !== sig) {
+          var fresh = renderItem(item);
+          rec.node.replaceWith(fresh);
+          rec.node = fresh;
+          rec.signature = sig;
+        }
+        chatEl.appendChild(rec.node);
       }
+      for (var entry of itemNodes) {
+        if (!seen.has(entry[0])) {
+          entry[1].node.remove();
+          itemNodes.delete(entry[0]);
+        }
+      }
+
       if (wasNearBottom) {
         chatEl.scrollTop = chatEl.scrollHeight;
-      } else {
-        chatEl.scrollTop = Math.min(previousScrollTop, Math.max(0, chatEl.scrollHeight - chatEl.clientHeight));
       }
+      // 未在底部时保持原滚动位置（节点复用不会重置滚动）。
     }
 
     function renderItem(item) {
@@ -2142,6 +2206,19 @@ function getWebviewHtml(nonce) {
 
     function renderSettingsData(data) {
       settingsContent.innerHTML = '';
+      var versionSection = document.createElement('div');
+      versionSection.className = 'settings-section';
+      var versionTitle = document.createElement('h3');
+      versionTitle.textContent = t('pluginVersion');
+      versionSection.appendChild(versionTitle);
+      var versionField = document.createElement('div');
+      versionField.className = 'settings-field';
+      var versionValue = document.createElement('span');
+      versionValue.textContent = data.version ? ('v' + data.version) : '—';
+      versionField.appendChild(versionValue);
+      versionSection.appendChild(versionField);
+      settingsContent.appendChild(versionSection);
+
       if (!data.writable) {
         var hint = document.createElement('div');
         hint.className = 'hint';
@@ -2461,11 +2538,14 @@ function getWebviewHtml(nonce) {
             renderSessions();
           }
           if (msg.sessionId === state.selectedSessionId) {
+            var wasRunning = state.running;
             state.conversation = msg.conversation || [];
             state.hasMoreEarlier = msg.hasMoreEarlier || false;
             state.loadingEarlier = false;
             setRunning(msg.running || false);
-            renderConversation();
+            // 流式 chunk 合并渲染（~16ms 一帧）；回合结束时立即刷新。
+            if (wasRunning && !state.running) flushConversationRender();
+            else scheduleConversationRender();
           }
           break;
         case 'selectedSession':

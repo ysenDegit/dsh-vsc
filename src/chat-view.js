@@ -6,6 +6,7 @@ const { relative, join } = require('node:path')
 const { mkdirSync, writeFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { getWebviewHtml } = require('./webview.js')
+const { version: extensionVersion } = require('../package.json')
 
 const viewType = 'dsh-vsc.chat'
 
@@ -44,6 +45,8 @@ class ChatViewProvider {
     this.eventsBySession = new Map()
     // sessionId -> Map<projectionKey, { seq:number, value:unknown }>
     this.projectionsBySession = new Map()
+    // 会话流式渲染节流：合并短时间内的多个 chunk，避免每个 token 都全量折叠+推送。
+    this.conversationFlushTimer = null
     this.workspaceView = null
     this.workspacePromptedPath = null
     this.workspacePromptAccepted = false
@@ -270,6 +273,7 @@ class ChatViewProvider {
     if (this.selectedSessionId) return
     const workspace = await this.ensureWorkspace()
     if (!workspace) return
+    this.clearConversationPost()
     // 启动时优先打开最近的非空白会话；只有完全没有现存会话时才创建空白新会话。
     const existingSessions = await this.sessions.listSessions(null)
     const existing = existingSessions[0]
@@ -300,6 +304,7 @@ class ChatViewProvider {
     const workspace = await this.ensureWorkspace()
     if (!workspace) throw new Error('没有打开的工作区，无法创建会话')
     const { sessionId } = await this.sessions.resolveNewSession()
+    this.clearConversationPost()
     this.selectedSessionId = sessionId
     await this.refreshSessions()
     await this.loadHistory(sessionId)
@@ -318,6 +323,7 @@ class ChatViewProvider {
 
   async selectSession(sessionId) {
     if (!sessionId) return
+    this.clearConversationPost()
     this.selectedSessionId = sessionId
     await this.refreshSessions()
     await this.loadHistory(sessionId)
@@ -473,6 +479,7 @@ class ChatViewProvider {
         fontSize: this.fontSize,
         language: this.language,
         enterToSend: this.enterToSend,
+        version: extensionVersion,
       },
     })
   }
@@ -599,6 +606,10 @@ class ChatViewProvider {
 
     await this.sessions.archiveSession(sessionId)
     // 归档后清理该会话的所有本地缓存，避免长期运行后内存持续增长。
+    if (this.conversationFlushTimer) {
+      clearTimeout(this.conversationFlushTimer)
+      this.conversationFlushTimer = null
+    }
     this.eventsBySession.delete(sessionId)
     this.queuesBySession.delete(sessionId)
     this.pendingQuestionsBySession.delete(sessionId)
@@ -1003,8 +1014,20 @@ class ChatViewProvider {
     if (entry.seen.has(event.seq)) return
     entry.seen.add(event.seq)
     entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
-    entry.events.sort((a, b) => a.seq - b.seq)
-    if (sessionId === this.selectedSessionId) this.postConversation(sessionId)
+    // 事件基本按 seq 顺序到达：仅在乱序时做插入，避免每个 chunk 都全量 sort。
+    if (entry.events.length > 1 && entry.events[entry.events.length - 1].seq < entry.events[entry.events.length - 2].seq) {
+      const item = entry.events.pop()
+      let i = entry.events.length - 1
+      while (i >= 0 && entry.events[i].seq > item.seq) {
+        entry.events[i + 1] = entry.events[i]
+        i--
+      }
+      entry.events[i + 1] = item
+    }
+    if (sessionId === this.selectedSessionId) {
+      if (event.type === 'turn/end') this.flushConversationPost()
+      else this.scheduleConversationPost()
+    }
   }
 
   postConversation(sessionId) {
@@ -1020,6 +1043,32 @@ class ChatViewProvider {
       running: folded.running,
       hasMoreEarlier: this.hasMoreBySession.get(sessionId) ?? false,
     })
+  }
+
+  // 节流推送：合并 ~30ms 内的流式 chunk，减少全量折叠与 postMessage 次数。
+  scheduleConversationPost() {
+    if (this.conversationFlushTimer) return
+    this.conversationFlushTimer = setTimeout(() => {
+      this.conversationFlushTimer = null
+      this.postConversation(this.selectedSessionId)
+    }, 30)
+  }
+
+  // 回合结束时立即推送，避免结尾内容被节流延迟。
+  flushConversationPost() {
+    if (this.conversationFlushTimer) {
+      clearTimeout(this.conversationFlushTimer)
+      this.conversationFlushTimer = null
+    }
+    this.postConversation(this.selectedSessionId)
+  }
+
+  // 切换会话前丢弃待发送的节流任务，避免旧会话的折叠结果推送到新选中会话。
+  clearConversationPost() {
+    if (this.conversationFlushTimer) {
+      clearTimeout(this.conversationFlushTimer)
+      this.conversationFlushTimer = null
+    }
   }
 
   appendNote(sessionId, text) {
