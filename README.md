@@ -31,7 +31,7 @@
 ### 3. 聊天界面与会话内容显示
 - 简洁会话 / 详细会话两种模式，默认简洁。
   - 简洁模式隐藏工具调用与思考流程，只保留用户与 Assistant 最终输出。
-  - 运行中显示 `working`。
+  - 简洁模式下底部统计行左侧常驻 `working` 标识（与 LLM 统计信息同行、层级更高），小灯泡颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中。
 - 流式 Assistant 输出。
 - 工具调用与工具结果按 `callId` 配对。
 - 上下文注入默认折叠，只保留最新一条。
@@ -57,9 +57,10 @@
 - 发送队列显示：显示“排队中”队列，支持编辑、插话（steer）、删除。
 - 模型与推理强度合并为一个 `模` 按钮，支持自定义模型名称。
 - 权限选择压缩为输入框左侧 `权` 按钮。
-- 底部统计行：
-  - 中文：`上下文:42% | 11 轮 · 319 步 | LLM 46m33s · 工具调用 35m30s | ...`
-  - 英文：`ctx:42% | 11 turns · 319 steps | LLM 46m33s · tool calls 35m30s | ...`
+- 上下文占用：以输入框背景按占用比例填充显示，悬停输入框可见具体百分比；可在设置中关闭，并可自定义进度条颜色（默认与用户消息框同色）。
+- 底部统计行（居中，仅保留缓存命中与输入输出）：
+  - 中文：`缓存命中 42% | 输入 12.3K tokens · 输出 2.1K tokens`
+  - 英文：`cache hit 42% | input 12.3K tokens · output 2.1K tokens`
 
 ### 5. 工具审批 / 计划条 / 权限 / 问题
 - 工具审批（Approval）：输入框区域切换为审批面板，支持 `允许一次` / `拒绝`。
@@ -73,6 +74,10 @@
 - 打开方式：点击顶部 `⚙`。
 - 会话显示模式：简洁 / 详细。
 - 字体大小：12–20 px。
+- 内容最大宽度：不限制 / 800 / 1000 / 1200 / 1600 px（大屏时内容居中，不占满工作区）。
+- 上下文占用显示：开 / 关（输入框背景占用指示）。
+- 上下文进度条颜色：默认（与用户消息框相同）/ 自定义颜色。
+- 上下文进度条透明度：0–100%（滑杆调节）。
 - 界面语言：中文 / English。
 - 发送方式：Enter 发送 / Shift+Enter 发送。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
@@ -109,6 +114,10 @@
 | `dsh-vsc.dshUrl` | string/null | null | 显式指定已运行的 dsh web 地址 |
 | `dsh-vsc.sessionDisplay` | string | concise | 会话显示模式：concise / detailed |
 | `dsh-vsc.fontSize` | number | 13 | 聊天界面字体大小（px） |
+| `dsh-vsc.maxWidth` | number | 1000 | 聊天内容最大宽度（px），0 = 不限制（占满面板） |
+| `dsh-vsc.showContextUsage` | boolean | true | 是否在输入框中以背景填充显示上下文占用信息 |
+| `dsh-vsc.contextBarColor` | string | `var(--accent)` | 上下文进度条颜色（CSS 颜色值，默认与用户消息框同色） |
+| `dsh-vsc.contextBarOpacity` | number | 30 | 上下文进度条填充不透明度（%，0–100） |
 | `dsh-vsc.language` | string | zh | 插件界面语言：zh / en |
 | `dsh-vsc.autoOpenChat` | boolean | true | 检测到 dsh 已运行时，启动后自动打开工作区面板 |
 | `dsh-vsc.enterToSend` | boolean | false | Enter 键行为：false（默认）= Shift+Enter 发送、Enter 换行；true = Enter 发送 |

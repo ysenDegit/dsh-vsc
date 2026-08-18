@@ -34,7 +34,7 @@ function getWebviewHtml(nonce) {
       flex-direction: column;
       overflow: hidden;
     }
-    #app { display: flex; flex-direction: column; height: 100%; }
+    #app { display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; max-width: var(--chat-max-width, none); margin: 0 auto; }
 
     /* Status badge (top integrated bar) */
     .status-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); flex: 0 0 auto; }
@@ -68,7 +68,7 @@ function getWebviewHtml(nonce) {
     }
     .mode-row {
       display: flex; align-items: center; gap: 6px; padding: 6px 10px;
-      border-bottom: 1px solid var(--border); flex: 0 0 auto;
+      border-bottom: 1px solid var(--border); flex: 0 0 auto; min-width: 0;
       font-size: 12px; color: var(--muted);
     }
     .mode-row .mode-button {
@@ -82,7 +82,7 @@ function getWebviewHtml(nonce) {
     .mode-welcome .preset-list { max-height: none; }
 
     /* Chat area */
-    .chat { flex: 1 1 auto; overflow-y: auto; padding: 12px 10px; }
+    .chat { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 10px; }
     .empty { color: var(--muted); text-align: center; margin-top: 40px; line-height: 1.8; }
     .load-earlier-wrap { text-align: center; margin: 4px 0 8px; }
     .load-earlier-btn { font-size: 12px; padding: 4px 10px; }
@@ -131,11 +131,11 @@ function getWebviewHtml(nonce) {
     .bubble blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid var(--border); color: var(--muted); }
     .bubble hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
     .bubble a { color: var(--accent); }
-    .bubble table { border-collapse: collapse; }
+    .bubble table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
     .bubble td, .bubble th { border: 1px solid var(--border); padding: 3px 6px; }
 
     /* Composer */
-    .composer { flex: 0 0 auto; border-top: 1px solid var(--border); padding: 8px 10px; position: relative; }
+    .composer { flex: 0 0 auto; min-width: 0; border-top: 1px solid var(--border); padding: 8px 10px; position: relative; }
     .file-picker {
       position: absolute; bottom: 100%; left: 10px; right: 10px; max-height: 220px; overflow-y: auto;
       background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; z-index: 10;
@@ -146,14 +146,15 @@ function getWebviewHtml(nonce) {
     .file-picker .item:hover { background: var(--hover); }
     .file-picker .item.selected { background: var(--hover); }
     .file-picker .item .desc { color: var(--muted); font-size: 11px; }
-    .working-bar {
-      margin-bottom: 6px; font-size: 12px; color: var(--accent);
-      display: flex; align-items: center; gap: 6px;
+    .work-indicator {
+      position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+      display: inline-flex; align-items: center; gap: 5px;
+      font-weight: 600; font-size: 11px; color: var(--fg);
     }
-    .working-bar::before {
-      content: ''; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--accent); animation: iconPulse 1s ease-in-out infinite;
-    }
+    .work-bulb { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; color: var(--muted); }
+    .work-indicator.thinking .work-bulb { color: #a6e3a1; }
+    .work-indicator.tool .work-bulb { color: #f38ba8; }
+    .work-indicator.output .work-bulb { color: #89b4fa; }
     .queue-dock { display: none; flex-direction: column; gap: 4px; margin-bottom: 6px; }
     .queue-dock.open { display: flex; }
     .queue-item {
@@ -238,12 +239,12 @@ function getWebviewHtml(nonce) {
       flex: 0 0 auto; height: 20px; min-width: 24px; padding: 0 5px;
       font-size: 11px; line-height: 1;
     }
-    .composer-row { display: flex; gap: 6px; align-items: flex-end; }
+    .composer-row { display: flex; gap: 6px; align-items: flex-end; min-width: 0; }
     .composer-row button { flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 8px; }
     #stopBtn { font-size: 14px; padding: 0 10px; }
     .model-button { min-width: 36px; max-width: 36px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
     .model-popover {
-      position: absolute; right: 10px; bottom: calc(100% - 4px); width: 300px;
+      position: absolute; right: 10px; bottom: calc(100% - 4px); width: 300px; max-width: calc(100% - 20px);
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       padding: 8px; z-index: 11; display: none;
       box-shadow: 0 8px 24px rgba(0,0,0,0.35);
@@ -269,7 +270,7 @@ function getWebviewHtml(nonce) {
     }
     .model-popover-row button { height: 26px; padding: 0 8px; }
     #composerInput {
-      flex: 1; resize: none; min-height: 36px; max-height: 180px;
+      flex: 1; min-width: 0; resize: none; min-height: 36px; max-height: 180px;
       background: var(--input-bg); color: var(--input-fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px;
       font: inherit; line-height: 1.5;
@@ -278,8 +279,8 @@ function getWebviewHtml(nonce) {
     body.composer-expanded #composerInput { max-height: none; height: 40vh; min-height: 220px; }
     .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
     .stats-bar {
-      margin-top: 4px; font-size: 11px; color: var(--muted);
-      text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      position: relative; margin-top: 4px; font-size: 11px; color: var(--muted);
+      text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
 
     /* New session modal */
@@ -304,8 +305,22 @@ function getWebviewHtml(nonce) {
     .preset-item .pname { font-weight: 600; }
     .preset-item .pdesc { color: var(--muted); font-size: 12px; margin-top: 2px; }
     .modal-footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
-    .settings-modal { width: min(480px, calc(100% - 24px)); }
-    .settings-content { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .settings-modal {
+      width: min(600px, calc(100% - 24px));
+      height: min(560px, calc(100vh - 48px));
+      display: flex; flex-direction: column;
+    }
+    .settings-content { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+    .settings-body { display: flex; gap: 10px; flex: 1; min-height: 0; }
+    .settings-nav { flex: 0 0 110px; display: flex; flex-direction: column; gap: 2px; }
+    .settings-nav-item {
+      text-align: left; padding: 6px 8px; border: none; background: transparent;
+      color: var(--fg); border-radius: 4px; font: inherit; font-size: 12px; cursor: pointer;
+    }
+    .settings-nav-item:hover { background: var(--hover); }
+    .settings-nav-item.active { background: var(--hover); color: var(--accent); font-weight: 600; }
+    .settings-pane { display: none; flex-direction: column; gap: 10px; }
+    .settings-pane.active { display: flex; }
     .settings-section { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
     .settings-section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
     .settings-field { margin-bottom: 8px; }
@@ -317,6 +332,11 @@ function getWebviewHtml(nonce) {
       border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
       font: inherit; font-size: 12px;
     }
+    .settings-field input[type=color] {
+      width: 100%; height: 32px; padding: 2px; background: var(--input-bg);
+      border: 1px solid var(--border); border-radius: 4px;
+    }
+    .settings-field input[type=range] { width: 100%; accent-color: var(--accent); }
     .settings-field .field-actions { display: flex; gap: 6px; margin-top: 4px; justify-content: flex-end; }
     .archive-message { font-size: 12px; color: var(--muted); line-height: 1.6; word-break: break-all; }
   </style>
@@ -339,7 +359,6 @@ function getWebviewHtml(nonce) {
     <div class="composer">
       <div id="filePicker" class="file-picker"></div>
       <div id="commandPicker" class="file-picker command-picker"></div>
-      <div id="workingBar" class="working-bar" style="display:none">working</div>
       <div id="todoDock" class="todo-dock"></div>
       <div id="queueDock" class="queue-dock"></div>
       <div id="questionPanel" class="question-panel" style="display:none"></div>
@@ -364,7 +383,13 @@ function getWebviewHtml(nonce) {
         <span id="modelStatus" class="hint" style="margin-top:0"></span>
       </div>
       <div id="permissionPopover" class="permission-popover"></div>
-      <div id="statsBar" class="stats-bar"></div>
+      <div id="statsBar" class="stats-bar">
+      <span id="workIndicator" class="work-indicator idle">
+        <span class="work-bulb"></span>
+        <span class="work-label">working</span>
+      </span>
+      <span id="statsText"></span>
+    </div>
     </div>
     <div id="settingsModal" class="modal-overlay">
       <div class="modal settings-modal">
@@ -373,7 +398,10 @@ function getWebviewHtml(nonce) {
           <span class="spacer"></span>
           <button id="settingsClose" title="关闭">✕</button>
         </div>
-        <div id="settingsContent" class="settings-content"></div>
+        <div class="settings-body">
+          <div id="settingsNav" class="settings-nav"></div>
+          <div id="settingsContent" class="settings-content"></div>
+        </div>
         <div class="modal-footer">
           <button id="settingsOpenDocBtn">打开 settings.yaml</button>
           <button id="settingsDoneBtn" class="primary">完成</button>
@@ -414,8 +442,12 @@ function getWebviewHtml(nonce) {
       commandsAvailable: false,
       sessionDisplay: 'concise',
       fontSize: 13,
+      maxWidth: 1000,
       language: 'zh',
       enterToSend: false,
+      showContextUsage: true,
+      contextBarColor: 'var(--accent)',
+      contextBarOpacity: 30,
       queueItems: [],
       hasMoreEarlier: false,
       loadingEarlier: false,
@@ -454,7 +486,8 @@ function getWebviewHtml(nonce) {
     var effortSelectEl = $('effortSelect');
     var modelStatusEl = $('modelStatus');
     var statsBarEl = $('statsBar');
-    var workingBarEl = $('workingBar');
+    var statsTextEl = $('statsText');
+    var workIndicatorEl = $('workIndicator');
     var queueDockEl = $('queueDock');
     var todoDockEl = $('todoDock');
     var questionPanelEl = $('questionPanel');
@@ -466,6 +499,7 @@ function getWebviewHtml(nonce) {
     var modelPopover = $('modelPopover');
     var settingsBtn = $('settingsBtn');
     var settingsModal = $('settingsModal');
+    var settingsNav = $('settingsNav');
     var settingsContent = $('settingsContent');
     var settingsCloseBtn = $('settingsClose');
     var settingsDoneBtn = $('settingsDoneBtn');
@@ -485,6 +519,11 @@ function getWebviewHtml(nonce) {
       if (size > 24) size = 24;
       document.documentElement.style.setProperty('--vscode-font-size', size + 'px');
       document.body.style.fontSize = size + 'px';
+    }
+
+    function applyMaxWidth() {
+      var width = Number(state.maxWidth) || 0;
+      document.documentElement.style.setProperty('--chat-max-width', width > 0 ? width + 'px' : 'none');
     }
 
     var I18N = {
@@ -551,6 +590,19 @@ function getWebviewHtml(nonce) {
         'detailed': '详细会话',
         'fontSizeSection': '字体大小',
         'fontSizeLabel': '聊天界面字体大小',
+        'maxWidthSection': '内容宽度',
+        'maxWidthLabel': '聊天内容最大宽度',
+        'unlimited': '不限制（占满）',
+        'contextUsageSection': '上下文占用',
+        'contextUsageLabel': '在输入框中显示上下文占用',
+        'contextColorSection': '进度条颜色',
+        'contextColorDefault': '使用默认颜色（与用户消息框相同）',
+        'contextOpacitySection': '进度条透明度',
+        'contextOpacityLabel': '填充不透明度',
+        'tabDisplay': '显示',
+        'tabContext': '上下文占用',
+        'tabGeneral': '通用',
+        'tabAbout': '关于',
         'languageSection': '界面语言',
         'languageLabel': '插件界面语言',
         'languageZh': '中文',
@@ -565,11 +617,6 @@ function getWebviewHtml(nonce) {
         'loadingEarlier': '加载中…',
         'stats.ctxNone': '上下文:—',
         'stats.ctx': '上下文:{pct}%',
-        'stats.turns': '{turns} 轮 · {steps} 步',
-        'stats.llm': 'LLM',
-        'stats.tool': '工具调用',
-        'stats.ttftAvg': '首 token 平均',
-        'stats.tokPerSec': '{rate} tok/s',
         'stats.cacheHit': '缓存命中 {pct}%',
         'stats.inputOutput': '输入 {input} tokens · 输出 {output} tokens',
         'planReview': '计划评审',
@@ -638,6 +685,19 @@ function getWebviewHtml(nonce) {
         'detailed': 'Detailed',
         'fontSizeSection': 'Font Size',
         'fontSizeLabel': 'Chat font size',
+        'maxWidthSection': 'Content Width',
+        'maxWidthLabel': 'Max chat content width',
+        'unlimited': 'Unlimited (full width)',
+        'contextUsageSection': 'Context Usage',
+        'contextUsageLabel': 'Show context usage in the input box',
+        'contextColorSection': 'Bar Color',
+        'contextColorDefault': 'Use default color (same as user message)',
+        'contextOpacitySection': 'Bar Opacity',
+        'contextOpacityLabel': 'Fill opacity',
+        'tabDisplay': 'Display',
+        'tabContext': 'Context Usage',
+        'tabGeneral': 'General',
+        'tabAbout': 'About',
         'languageSection': 'Language',
         'languageLabel': 'Plugin UI language',
         'languageZh': '中文',
@@ -652,11 +712,6 @@ function getWebviewHtml(nonce) {
         'loadingEarlier': 'Loading…',
         'stats.ctxNone': 'ctx:—',
         'stats.ctx': 'ctx:{pct}%',
-        'stats.turns': '{turns} turns · {steps} steps',
-        'stats.llm': 'LLM',
-        'stats.tool': 'tool calls',
-        'stats.ttftAvg': 'TTFT avg',
-        'stats.tokPerSec': '{rate} tok/s',
         'stats.cacheHit': 'cache hit {pct}%',
         'stats.inputOutput': 'input {input} tokens · output {output} tokens',
         'planReview': 'Plan Review',
@@ -1163,7 +1218,16 @@ function getWebviewHtml(nonce) {
             renderBlankSessionWelcome();
             return;
           }
-          chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyReady')) + '</div>';
+          // 有更早历史时顶部已有“加载更早”按钮，不再显示“新会话已就绪”提示；
+          // 同时清掉残留的空提示/旧消息节点，只保留按钮。
+          if (!state.hasMoreEarlier) {
+            chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyReady')) + '</div>';
+            return;
+          }
+          while (chatEl.lastChild && chatEl.lastChild !== earlierWrapEl) {
+            chatEl.removeChild(chatEl.lastChild);
+          }
+          itemNodes.clear();
           return;
         }
         chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('conciseHidden')) + '</div>';
@@ -1505,10 +1569,25 @@ function getWebviewHtml(nonce) {
       closePicker();
     }
 
+    function workingPhase() {
+      if (!state.running) return 'idle';
+      var items = state.conversation || [];
+      for (var i = items.length - 1; i >= 0; i--) {
+        var item = items[i];
+        if (item.type === 'tool' && item.status === 'call') return 'tool';
+        if (item.type === 'assistant' && item.partial) {
+          if (typeof item.text === 'string' && item.text.trim().length > 0) return 'output';
+          if (typeof item.reasoning === 'string' && item.reasoning.trim().length > 0) return 'thinking';
+        }
+      }
+      return 'thinking';
+    }
+
     function updateWorkingBar() {
-      var active = state.running && state.sessionDisplay === 'concise';
-      workingBarEl.style.display = active ? 'flex' : 'none';
-      if (active) workingBarEl.textContent = 'working';
+      var show = state.sessionDisplay === 'concise';
+      workIndicatorEl.style.display = show ? 'inline-flex' : 'none';
+      if (!show) return;
+      workIndicatorEl.className = 'work-indicator ' + workingPhase();
     }
 
     function renderQueue() {
@@ -1979,7 +2058,7 @@ function getWebviewHtml(nonce) {
       composerRowEl.style.display = (hasQuestion || hasApproval) ? 'none' : 'flex';
       closePicker();
       closeModelPopover();
-      if (hasQuestion || hasApproval) workingBarEl.style.display = 'none';
+      if (hasQuestion || hasApproval) workIndicatorEl.style.display = 'none';
       else updateWorkingBar();
     }
 
@@ -2109,17 +2188,9 @@ function getWebviewHtml(nonce) {
       return (n / 1000000).toFixed(n < 10000000 ? 1 : 0) + 'M';
     }
 
-    function formatDuration(ms) {
-      ms = Number(ms) || 0;
-      var s = ms / 1000;
-      if (s < 60) return (Math.round(s * 10) / 10) + 's';
-      var whole = Math.round(s);
-      return Math.floor(whole / 60) + 'm' + (whole % 60) + 's';
-    }
-
-    function contextUsageText(stats) {
+    function contextPressurePercent(stats) {
       var pressure = stats && stats.contextPressure;
-      if (!pressure || !pressure.contextWindow) return t('stats.ctxNone');
+      if (!pressure || !pressure.contextWindow) return null;
       var used = pressure.projectedTokens;
       if (used === undefined) used = pressure.pressureTokens;
       if (used === undefined && stats.contextBreakdown) {
@@ -2127,48 +2198,45 @@ function getWebviewHtml(nonce) {
           + (Number(stats.contextBreakdown.toolsTokens) || 0)
           + (Number(stats.contextBreakdown.messageTokens) || 0);
       }
-      if (used === undefined) return t('stats.ctxNone');
-      var pct = Math.min(100, Math.round(Number(used) / Number(pressure.contextWindow) * 100));
-      return t('stats.ctx', { pct: pct });
+      if (used === undefined) return null;
+      return Math.min(100, Math.round(Number(used) / Number(pressure.contextWindow) * 100));
+    }
+
+    function updateContextBar(stats) {
+      if (!state.showContextUsage) {
+        inputEl.style.backgroundImage = '';
+        inputEl.title = '';
+        return;
+      }
+      var pct = contextPressurePercent(stats);
+      if (pct === null) {
+        inputEl.style.backgroundImage = '';
+        inputEl.title = t('stats.ctxNone');
+        return;
+      }
+      // 输入框背景按占用比例填充，颜色与透明度均取设置值（默认 var(--accent)/30%）。
+      var barColor = state.contextBarColor || 'var(--accent)';
+      var opacity = Math.min(100, Math.max(0, Number(state.contextBarOpacity) || 30));
+      inputEl.style.backgroundImage = 'linear-gradient(to right, color-mix(in srgb, ' + barColor + ' ' + opacity + '%, transparent) ' + pct + '%, transparent ' + pct + '%)';
+      inputEl.title = t('stats.ctx', { pct: pct });
     }
 
     function renderStats(stats) {
+      updateContextBar(stats);
       var usage = stats && stats.tokenUsage;
-      var billedInput = 0;
-      var output = 0;
+      var parts = [];
       if (usage) {
-        billedInput = (Number(usage.uncachedInputTokens) || 0)
+        var billedInput = (Number(usage.uncachedInputTokens) || 0)
           + (Number(usage.cacheReadTokens) || 0)
           + (Number(usage.cacheWriteTokens) || 0);
-        output = Number(usage.outputTokens) || 0;
-      }
-
-      // 单一底部统计行：上下文占用 + 完整 LLM 调用信息。
-      var parts = [contextUsageText(stats)];
-      var sessionStats = stats && stats.sessionStats;
-      if (sessionStats && sessionStats.steps > 0) {
-        parts.push(t('stats.turns', { turns: sessionStats.turns || 0, steps: sessionStats.steps }));
-      }
-      if (sessionStats) {
-        var timeParts = [];
-        if (sessionStats.llmMs > 0) timeParts.push(t('stats.llm') + ' ' + formatDuration(sessionStats.llmMs));
-        if (sessionStats.toolMs > 0) timeParts.push(t('stats.tool') + ' ' + formatDuration(sessionStats.toolMs));
-        if (timeParts.length) parts.push(timeParts.join(' · '));
-        var ttftParts = [];
-        if (sessionStats.ttftSteps > 0) {
-          ttftParts.push(t('stats.ttftAvg') + ' ' + formatDuration(sessionStats.ttftMs / sessionStats.ttftSteps));
+        var output = Number(usage.outputTokens) || 0;
+        if (billedInput > 0) {
+          var cacheHit = Math.round((Number(usage.cacheReadTokens) || 0) / billedInput * 100);
+          parts.push(t('stats.cacheHit', { pct: cacheHit }));
+          parts.push(t('stats.inputOutput', { input: formatTokens(billedInput), output: formatTokens(output) }));
         }
-        if (sessionStats.decodeMs > 0) {
-          ttftParts.push(t('stats.tokPerSec', { rate: Math.round(sessionStats.decodeTokens / (sessionStats.decodeMs / 1000)) }));
-        }
-        if (ttftParts.length) parts.push(ttftParts.join(' · '));
       }
-      if (usage && billedInput > 0) {
-        var cacheHit = Math.round((Number(usage.cacheReadTokens) || 0) / billedInput * 100);
-        parts.push(t('stats.cacheHit', { pct: cacheHit }));
-        parts.push(t('stats.inputOutput', { input: formatTokens(billedInput), output: formatTokens(output) }));
-      }
-      statsBarEl.textContent = parts.join(' | ');
+      statsTextEl.textContent = parts.join(' | ');
       renderTodos();
       renderPermissions();
     }
@@ -2219,13 +2287,43 @@ function getWebviewHtml(nonce) {
       versionSection.appendChild(versionField);
       settingsContent.appendChild(versionSection);
 
+      settingsNav.innerHTML = '';
+      function activateSettingsTab(key) {
+        for (var i = 0; i < settingsNav.children.length; i++) {
+          settingsNav.children[i].classList.toggle('active', settingsNav.children[i].dataset.tab === key);
+        }
+        for (var j = 0; j < settingsContent.children.length; j++) {
+          settingsContent.children[j].classList.toggle('active', settingsContent.children[j].dataset.tab === key);
+        }
+      }
+      function makeSettingsPane(key, title) {
+        var item = document.createElement('button');
+        item.className = 'settings-nav-item';
+        item.textContent = title;
+        item.dataset.tab = key;
+        var pane = document.createElement('div');
+        pane.className = 'settings-pane';
+        pane.dataset.tab = key;
+        settingsNav.appendChild(item);
+        settingsContent.appendChild(pane);
+        item.addEventListener('click', function () { activateSettingsTab(key); });
+        return pane;
+      }
+
+      var aboutPane = makeSettingsPane('about', t('tabAbout'));
+      aboutPane.appendChild(versionSection);
+
       if (!data.writable) {
         var hint = document.createElement('div');
         hint.className = 'hint';
         hint.textContent = t('settingsReadonly');
-        settingsContent.appendChild(hint);
+        aboutPane.appendChild(hint);
+        activateSettingsTab('about');
         return;
       }
+      var displayPane = makeSettingsPane('display', t('tabDisplay'));
+      var contextPane = makeSettingsPane('context', t('tabContext'));
+      var generalPane = makeSettingsPane('general', t('tabGeneral'));
       var displaySection = document.createElement('div');
       displaySection.className = 'settings-section';
       var displayTitle = document.createElement('h3');
@@ -2255,7 +2353,7 @@ function getWebviewHtml(nonce) {
       });
       displayField.appendChild(displaySelect);
       displaySection.appendChild(displayField);
-      settingsContent.appendChild(displaySection);
+      displayPane.appendChild(displaySection);
 
       var fontSizeSection = document.createElement('div');
       fontSizeSection.className = 'settings-section';
@@ -2289,7 +2387,136 @@ function getWebviewHtml(nonce) {
       });
       fontSizeField.appendChild(fontSizeSelect);
       fontSizeSection.appendChild(fontSizeField);
-      settingsContent.appendChild(fontSizeSection);
+      displayPane.appendChild(fontSizeSection);
+
+      var maxWidthSection = document.createElement('div');
+      maxWidthSection.className = 'settings-section';
+      var maxWidthTitle = document.createElement('h3');
+      maxWidthTitle.textContent = t('maxWidthSection');
+      maxWidthSection.appendChild(maxWidthTitle);
+      var maxWidthField = document.createElement('div');
+      maxWidthField.className = 'settings-field';
+      var maxWidthLabel = document.createElement('div');
+      maxWidthLabel.className = 'field-label';
+      var maxWidthName = document.createElement('span');
+      maxWidthName.textContent = t('maxWidthLabel');
+      maxWidthLabel.appendChild(maxWidthName);
+      maxWidthField.appendChild(maxWidthLabel);
+      var maxWidthSelect = document.createElement('select');
+      var widths = [0, 800, 1000, 1200, 1600];
+      var currentMaxWidth = Number(data.maxWidth) || 0;
+      for (var wi = 0; wi < widths.length; wi++) {
+        (function (width) {
+          var opt = document.createElement('option');
+          opt.value = String(width);
+          opt.textContent = width === 0 ? t('unlimited') : width + ' px';
+          if (width === currentMaxWidth) opt.selected = true;
+          maxWidthSelect.appendChild(opt);
+        })(widths[wi]);
+      }
+      maxWidthSelect.addEventListener('change', function () {
+        post({ type: 'setMaxWidth', value: Number(maxWidthSelect.value) || 0 });
+      });
+      maxWidthField.appendChild(maxWidthSelect);
+      maxWidthSection.appendChild(maxWidthField);
+      displayPane.appendChild(maxWidthSection);
+
+      var contextSection = document.createElement('div');
+      contextSection.className = 'settings-section';
+      var contextTitle = document.createElement('h3');
+      contextTitle.textContent = t('contextUsageSection');
+      contextSection.appendChild(contextTitle);
+      var contextField = document.createElement('div');
+      contextField.className = 'settings-field';
+      var contextLabel = document.createElement('label');
+      contextLabel.className = 'field-label';
+      var contextCheck = document.createElement('input');
+      contextCheck.type = 'checkbox';
+      contextCheck.checked = data.showContextUsage !== false;
+      var contextName = document.createElement('span');
+      contextName.textContent = t('contextUsageLabel');
+      contextLabel.appendChild(contextCheck);
+      contextLabel.appendChild(contextName);
+      contextField.appendChild(contextLabel);
+      contextSection.appendChild(contextField);
+      contextCheck.addEventListener('change', function () {
+        post({ type: 'setShowContextUsage', value: contextCheck.checked });
+      });
+      contextPane.appendChild(contextSection);
+
+      var colorSection = document.createElement('div');
+      colorSection.className = 'settings-section';
+      var colorTitle = document.createElement('h3');
+      colorTitle.textContent = t('contextColorSection');
+      colorSection.appendChild(colorTitle);
+      var colorField = document.createElement('div');
+      colorField.className = 'settings-field';
+      var colorLabel = document.createElement('label');
+      colorLabel.className = 'field-label';
+      var colorDefaultCheck = document.createElement('input');
+      colorDefaultCheck.type = 'checkbox';
+      var colorName = document.createElement('span');
+      colorName.textContent = t('contextColorDefault');
+      colorLabel.appendChild(colorDefaultCheck);
+      colorLabel.appendChild(colorName);
+      colorField.appendChild(colorLabel);
+      var colorInput = document.createElement('input');
+      colorInput.type = 'color';
+      colorInput.value = '#89b4fa';
+      colorField.appendChild(colorInput);
+      colorSection.appendChild(colorField);
+      var currentColor = data.contextBarColor || 'var(--accent)';
+      var isDefaultColor = currentColor === 'var(--accent)' || currentColor === '';
+      colorDefaultCheck.checked = isDefaultColor;
+      colorInput.disabled = isDefaultColor;
+      var hexMatch = /^#([0-9a-fA-F]{6})$/.exec(currentColor);
+      if (hexMatch) colorInput.value = currentColor;
+      colorDefaultCheck.addEventListener('change', function () {
+        if (colorDefaultCheck.checked) {
+          colorInput.disabled = true;
+          post({ type: 'setContextBarColor', value: 'var(--accent)' });
+        } else {
+          colorInput.disabled = false;
+          post({ type: 'setContextBarColor', value: colorInput.value });
+        }
+      });
+      colorInput.addEventListener('input', function () {
+        if (!colorDefaultCheck.checked) post({ type: 'setContextBarColor', value: colorInput.value });
+      });
+      contextPane.appendChild(colorSection);
+
+      var opacitySection = document.createElement('div');
+      opacitySection.className = 'settings-section';
+      var opacityTitle = document.createElement('h3');
+      opacityTitle.textContent = t('contextOpacitySection');
+      opacitySection.appendChild(opacityTitle);
+      var opacityField = document.createElement('div');
+      opacityField.className = 'settings-field';
+      var opacityLabel = document.createElement('div');
+      opacityLabel.className = 'field-label';
+      var opacityName = document.createElement('span');
+      opacityName.textContent = t('contextOpacityLabel');
+      opacityLabel.appendChild(opacityName);
+      var opacityValue = document.createElement('span');
+      opacityValue.className = 'field-status';
+      var currentOpacity = Number(data.contextBarOpacity) || 30;
+      opacityValue.textContent = currentOpacity + '%';
+      opacityLabel.appendChild(opacityValue);
+      opacityField.appendChild(opacityLabel);
+      var opacityInput = document.createElement('input');
+      opacityInput.type = 'range';
+      opacityInput.min = '0';
+      opacityInput.max = '100';
+      opacityInput.step = '5';
+      opacityInput.value = String(currentOpacity);
+      opacityField.appendChild(opacityInput);
+      opacitySection.appendChild(opacityField);
+      opacityInput.addEventListener('input', function () {
+        var value = Number(opacityInput.value) || 0;
+        opacityValue.textContent = value + '%';
+        post({ type: 'setContextBarOpacity', value: value });
+      });
+      contextPane.appendChild(opacitySection);
 
       var languageSection = document.createElement('div');
       languageSection.className = 'settings-section';
@@ -2322,7 +2549,7 @@ function getWebviewHtml(nonce) {
       });
       languageField.appendChild(languageButton);
       languageSection.appendChild(languageField);
-      settingsContent.appendChild(languageSection);
+      generalPane.appendChild(languageSection);
 
       var sendModeSection = document.createElement('div');
       sendModeSection.className = 'settings-section';
@@ -2355,7 +2582,7 @@ function getWebviewHtml(nonce) {
       });
       sendModeField.appendChild(sendModeSelect);
       sendModeSection.appendChild(sendModeField);
-      settingsContent.appendChild(sendModeSection);
+      generalPane.appendChild(sendModeSection);
 
       var webNoticeSection = document.createElement('div');
       webNoticeSection.className = 'settings-section';
@@ -2363,7 +2590,8 @@ function getWebviewHtml(nonce) {
       webNotice.className = 'hint';
       webNotice.textContent = t('settingsWebNotice');
       webNoticeSection.appendChild(webNotice);
-      settingsContent.appendChild(webNoticeSection);
+      aboutPane.appendChild(webNoticeSection);
+      activateSettingsTab('display');
     }
 
     // Events
@@ -2455,9 +2683,17 @@ function getWebviewHtml(nonce) {
           state.conversation = msg.conversation || [];
           state.sessionDisplay = msg.sessionDisplay || 'concise';
           state.fontSize = Number(msg.fontSize) || 13;
+          var maxWidthVal = Number(msg.maxWidth);
+          state.maxWidth = Number.isFinite(maxWidthVal) && maxWidthVal >= 0 ? maxWidthVal : 1000;
           state.language = msg.language === 'en' ? 'en' : 'zh';
           state.enterToSend = msg.enterToSend === true;
+          state.showContextUsage = msg.showContextUsage !== false;
+          state.contextBarColor = msg.contextBarColor || 'var(--accent)';
+          var opacityVal = Number(msg.contextBarOpacity);
+          state.contextBarOpacity = Number.isFinite(opacityVal) && opacityVal >= 0 && opacityVal <= 100 ? opacityVal : 30;
           applyFontSize();
+          applyMaxWidth();
+          updateContextBar(null);
           state.queueItems = msg.queue || [];
           state.hasMoreEarlier = msg.hasMoreEarlier || false;
           state.loadingEarlier = false;
@@ -2523,6 +2759,22 @@ function getWebviewHtml(nonce) {
         case 'fontSize':
           state.fontSize = Number(msg.value) || 13;
           applyFontSize();
+          break;
+        case 'maxWidth':
+          state.maxWidth = Number(msg.value) >= 0 ? Number(msg.value) : 0;
+          applyMaxWidth();
+          break;
+        case 'showContextUsage':
+          state.showContextUsage = msg.value !== false;
+          updateContextBar(null);
+          break;
+        case 'contextBarColor':
+          state.contextBarColor = msg.value || 'var(--accent)';
+          updateContextBar(null);
+          break;
+        case 'contextBarOpacity':
+          state.contextBarOpacity = Number(msg.value) >= 0 ? Math.min(100, Number(msg.value)) : 30;
+          updateContextBar(null);
           break;
         case 'language':
           state.language = msg.value === 'en' ? 'en' : 'zh';

@@ -27,8 +27,12 @@ class ChatViewProvider {
     this.onLog = options.onLog ?? (() => {})
     this.sessionDisplay = options.sessionDisplay ?? 'concise'
     this.fontSize = options.fontSize ?? 13
+    this.maxWidth = options.maxWidth ?? 1000
     this.language = options.language ?? 'zh'
     this.enterToSend = options.enterToSend ?? false
+    this.showContextUsage = options.showContextUsage ?? true
+    this.contextBarColor = options.contextBarColor ?? 'var(--accent)'
+    this.contextBarOpacity = options.contextBarOpacity ?? 30
     this.webviews = new Set()
     this.queue = []
     this.selectedSessionId = null
@@ -160,6 +164,18 @@ class ChatViewProvider {
         case 'setEnterToSend':
           await this.setEnterToSend(msg.value)
           break
+        case 'setMaxWidth':
+          await this.setMaxWidth(msg.value)
+          break
+        case 'setShowContextUsage':
+          await this.setShowContextUsage(msg.value)
+          break
+        case 'setContextBarColor':
+          await this.setContextBarColor(msg.value)
+          break
+        case 'setContextBarOpacity':
+          await this.setContextBarOpacity(msg.value)
+          break
         case 'modelSelect':
           await this.selectModel(msg.provider, msg.model, msg.effort)
           break
@@ -216,8 +232,12 @@ class ChatViewProvider {
       running: this.isSessionRunning(this.selectedSessionId),
       sessionDisplay: this.sessionDisplay,
       fontSize: this.fontSize,
+      maxWidth: this.maxWidth,
       language: this.language,
       enterToSend: this.enterToSend,
+      showContextUsage: this.showContextUsage,
+      contextBarColor: this.contextBarColor,
+      contextBarOpacity: this.contextBarOpacity,
       queue: this.queueSnapshot(this.selectedSessionId),
       hasMoreEarlier: this.hasMoreBySession.get(this.selectedSessionId) ?? false,
       question: this.questionSnapshot(this.selectedSessionId),
@@ -477,8 +497,12 @@ class ChatViewProvider {
         hasDocument: settingsResult.hasDocument,
         sessionDisplay: this.sessionDisplay,
         fontSize: this.fontSize,
+        maxWidth: this.maxWidth,
         language: this.language,
         enterToSend: this.enterToSend,
+        showContextUsage: this.showContextUsage,
+        contextBarColor: this.contextBarColor,
+        contextBarOpacity: this.contextBarOpacity,
         version: extensionVersion,
       },
     })
@@ -539,6 +563,41 @@ class ChatViewProvider {
     this.post({ type: 'enterToSend', value: next })
   }
 
+  async setMaxWidth(value) {
+    const width = Number(value)
+    if (!Number.isFinite(width) || width < 0 || width > 4000) return
+    this.maxWidth = width
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('maxWidth', width, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'maxWidth', value: width })
+  }
+
+  async setShowContextUsage(value) {
+    const next = value !== false
+    this.showContextUsage = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('showContextUsage', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'showContextUsage', value: next })
+  }
+
+  async setContextBarColor(value) {
+    const next = String(value || '').trim() || 'var(--accent)'
+    this.contextBarColor = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('contextBarColor', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'contextBarColor', value: next })
+  }
+
+  async setContextBarOpacity(value) {
+    const opacity = Number(value)
+    if (!Number.isFinite(opacity)) return
+    const next = Math.min(100, Math.max(0, opacity))
+    this.contextBarOpacity = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('contextBarOpacity', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'contextBarOpacity', value: next })
+  }
+
   // 配置被外部修改（VS Code 设置 UI、settings.json 等）时同步 provider 状态与 webview。
   updatePreferences(prefs) {
     if (prefs.sessionDisplay !== undefined && prefs.sessionDisplay !== this.sessionDisplay) {
@@ -548,6 +607,22 @@ class ChatViewProvider {
     if (prefs.fontSize !== undefined && prefs.fontSize !== this.fontSize) {
       this.fontSize = prefs.fontSize
       this.post({ type: 'fontSize', value: prefs.fontSize })
+    }
+    if (prefs.maxWidth !== undefined && prefs.maxWidth !== this.maxWidth) {
+      this.maxWidth = prefs.maxWidth
+      this.post({ type: 'maxWidth', value: prefs.maxWidth })
+    }
+    if (prefs.showContextUsage !== undefined && prefs.showContextUsage !== this.showContextUsage) {
+      this.showContextUsage = prefs.showContextUsage
+      this.post({ type: 'showContextUsage', value: prefs.showContextUsage })
+    }
+    if (prefs.contextBarColor !== undefined && prefs.contextBarColor !== this.contextBarColor) {
+      this.contextBarColor = prefs.contextBarColor
+      this.post({ type: 'contextBarColor', value: prefs.contextBarColor })
+    }
+    if (prefs.contextBarOpacity !== undefined && prefs.contextBarOpacity !== this.contextBarOpacity) {
+      this.contextBarOpacity = prefs.contextBarOpacity
+      this.post({ type: 'contextBarOpacity', value: prefs.contextBarOpacity })
     }
     if (prefs.language !== undefined && prefs.language !== this.language) {
       this.language = prefs.language

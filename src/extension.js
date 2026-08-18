@@ -16,9 +16,13 @@ function activate(context) {
   const autoStart = config.get('autoStart', true)
   const sessionDisplay = config.get('sessionDisplay', 'concise')
   const fontSize = config.get('fontSize', 13)
+  const maxWidth = config.get('maxWidth', 1000)
   const language = config.get('language', 'zh')
   const autoOpenChat = config.get('autoOpenChat', true)
   const enterToSend = config.get('enterToSend', false)
+  const showContextUsage = config.get('showContextUsage', true)
+  const contextBarColor = config.get('contextBarColor', 'var(--accent)')
+  const contextBarOpacity = config.get('contextBarOpacity', 30)
 
   const dsh = new DshService({
     minimumVersion,
@@ -32,7 +36,7 @@ function activate(context) {
   })
 
   const sessions = new SessionService(() => dsh.client)
-  const provider = new ChatViewProvider(dsh, sessions, { onLog: (line) => log(line), sessionDisplay, fontSize, language, enterToSend })
+  const provider = new ChatViewProvider(dsh, sessions, { onLog: (line) => log(line), sessionDisplay, fontSize, maxWidth, language, enterToSend, showContextUsage, contextBarColor, contextBarOpacity })
   let chatPanel = null
 
   context.subscriptions.push(
@@ -120,8 +124,12 @@ function activate(context) {
       provider.updatePreferences({
         sessionDisplay: config.get('sessionDisplay', 'concise'),
         fontSize: config.get('fontSize', 13),
+        maxWidth: config.get('maxWidth', 1000),
         language: config.get('language', 'zh'),
         enterToSend: config.get('enterToSend', false),
+        showContextUsage: config.get('showContextUsage', true),
+        contextBarColor: config.get('contextBarColor', 'var(--accent)'),
+        contextBarOpacity: config.get('contextBarOpacity', 30),
       })
     }),
   )

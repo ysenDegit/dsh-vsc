@@ -2,7 +2,7 @@
   "name": "dsh-vsc",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "0.1.26",
+  "version": "0.1.41",
   "publisher": "local",
   "license": "MIT",
   "engines": {
@@ -116,6 +116,30 @@
           "minimum": 10,
           "maximum": 24,
           "description": "聊天界面字体大小（px）。"
+        },
+        "dsh-vsc.maxWidth": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 0,
+          "maximum": 4000,
+          "description": "聊天内容最大宽度（px），0 = 不限制（占满面板）。"
+        },
+        "dsh-vsc.showContextUsage": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否在输入框中以背景填充显示上下文占用信息。"
+        },
+        "dsh-vsc.contextBarColor": {
+          "type": "string",
+          "default": "var(--accent)",
+          "description": "上下文进度条颜色（CSS 颜色值，如 #89b4fa）。默认 var(--accent) 与用户消息框颜色一致。"
+        },
+        "dsh-vsc.contextBarOpacity": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "上下文进度条填充不透明度（%）。"
         },
         "dsh-vsc.language": {
           "type": "string",
