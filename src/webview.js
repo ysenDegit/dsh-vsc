@@ -102,6 +102,12 @@ function getWebviewHtml(nonce) {
     .msg.note .bubble { border-color: var(--error); color: var(--error); font-size: 12px; }
     .msg.tool .bubble { border-left: 3px solid var(--accent); font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
     .msg.tool .tool-name { font-weight: 600; color: var(--accent); }
+    .msg.command .bubble { border-left: 3px solid var(--accent); font-size: 12px; }
+    .msg.command .command-line { font-family: var(--vscode-editor-font-family, monospace); font-weight: 600; color: var(--accent); }
+    .msg.command .command-outcome { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg.command .command-running { color: var(--muted); }
+    .msg.command .command-success { color: var(--ok, #2e7d32); }
+    .msg.command .command-error { color: var(--error); }
     .reasoning { color: var(--muted); font-size: 12px; margin-bottom: 6px; white-space: pre-wrap; }
     .cursor::after { content: '▍'; color: var(--accent); animation: blink 1s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
@@ -282,6 +288,10 @@ function getWebviewHtml(nonce) {
       position: relative; margin-top: 4px; font-size: 11px; color: var(--muted);
       text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .stats-bar .model-info {
+      position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+      max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+    }
 
     /* New session modal */
     .modal-overlay {
@@ -389,6 +399,7 @@ function getWebviewHtml(nonce) {
         <span class="work-label">working</span>
       </span>
       <span id="statsText"></span>
+      <span id="modelInfo" class="model-info"></span>
     </div>
     </div>
     <div id="settingsModal" class="modal-overlay">
@@ -488,6 +499,7 @@ function getWebviewHtml(nonce) {
     var statsBarEl = $('statsBar');
     var statsTextEl = $('statsText');
     var workIndicatorEl = $('workIndicator');
+    var modelInfoEl = $('modelInfo');
     var queueDockEl = $('queueDock');
     var todoDockEl = $('todoDock');
     var questionPanelEl = $('questionPanel');
@@ -568,8 +580,12 @@ function getWebviewHtml(nonce) {
         'meta.tool': '工具',
         'meta.note': '提示',
         'meta.context': '上下文',
+        'meta.command': '命令',
         'generating': '生成中…',
         'contextInjection': '上下文注入',
+        'commandRunning': '执行中…',
+        'commandDone': '已执行',
+        'commandFailed': '执行失败',
         'permissionTitle': '选择权限（当前：{label}）',
         'permissionRunning': '会话运行中无法切换权限',
         'modelTitle': '模型与推理强度（当前：{label}）',
@@ -663,8 +679,12 @@ function getWebviewHtml(nonce) {
         'meta.tool': 'Tool',
         'meta.note': 'Note',
         'meta.context': 'Context',
+        'meta.command': 'Command',
         'generating': 'Generating…',
         'contextInjection': 'Context Injection',
+        'commandRunning': 'Running…',
+        'commandDone': 'Done',
+        'commandFailed': 'Failed',
         'permissionTitle': 'Select permission (current: {label})',
         'permissionRunning': 'Cannot switch permission while session is running',
         'modelTitle': 'Model & Reasoning (current: {label})',
@@ -1149,7 +1169,8 @@ function getWebviewHtml(nonce) {
     function itemSignature(item) {
       return item.type + '|' + (item.id || '') + '|' + (item.text || '') + '|' + (item.reasoning || '')
         + '|' + (item.status || '') + '|' + (item.resultText || '') + '|' + (item.arguments || '')
-        + '|' + (item.summary || '') + '|' + (item.partial ? 1 : 0);
+        + '|' + (item.summary || '') + '|' + (item.partial ? 1 : 0)
+        + '|' + ((item.outcome && item.outcome.kind) || '') + '|' + ((item.outcome && item.outcome.text) || '');
     }
 
     function scheduleConversationRender() {
@@ -1207,6 +1228,7 @@ function getWebviewHtml(nonce) {
         ? items.filter(function (item) {
             if (item.type === 'user') return typeof item.text === 'string' && item.text.trim().length > 0;
             if (item.type === 'assistant') return typeof item.text === 'string' && item.text.trim().length > 0;
+            if (item.type === 'command') return true; // 命令执行是用户操作反馈，简洁模式也保留
             return false;
           })
         : items;
@@ -1272,7 +1294,7 @@ function getWebviewHtml(nonce) {
       if (item.type !== 'user') {
         var meta = document.createElement('div');
         meta.className = 'meta';
-        var label = item.type === 'assistant' ? t('meta.assistant') : item.type === 'tool' ? t('meta.tool') : item.type === 'note' ? t('meta.note') : t('meta.context');
+        var label = item.type === 'assistant' ? t('meta.assistant') : item.type === 'tool' ? t('meta.tool') : item.type === 'note' ? t('meta.note') : item.type === 'command' ? t('meta.command') : t('meta.context');
         meta.innerHTML = '<span>' + label + '</span>' + (item.partial ? '<span class="status-badge">' + t('generating') + '</span>' : '');
         wrap.appendChild(meta);
       }
@@ -1294,6 +1316,17 @@ function getWebviewHtml(nonce) {
           + '<div>' + escapeHtml(toolSummary(item)) + '</div>';
       } else if (item.type === 'note') {
         bubble.textContent = item.text || '';
+      } else if (item.type === 'command') {
+        var cmdLine = '/' + (item.name || '?') + (item.args || '');
+        var cmdHtml = '<div class="command-line">' + escapeHtml(cmdLine) + '</div>';
+        if (item.outcome) {
+          var outcomeClass = item.outcome.kind === 'error' ? 'command-error' : 'command-success';
+          var outcomeText = item.outcome.text || (item.outcome.kind === 'error' ? t('commandFailed') : t('commandDone'));
+          cmdHtml += '<div class="command-outcome ' + outcomeClass + '">' + escapeHtml(outcomeText) + '</div>';
+        } else {
+          cmdHtml += '<div class="command-outcome command-running">' + escapeHtml(t('commandRunning')) + '</div>';
+        }
+        bubble.innerHTML = cmdHtml;
       } else if (item.type === 'context') {
         var ctxSummary = item.summary || (item.text || '').split('\\n').find(function (line) { return line.trim().length > 0; }) || t('contextInjection');
         bubble.innerHTML = '<details class="context-details"><summary>' + escapeHtml(ctxSummary) + '</summary><pre>'
@@ -2075,30 +2108,73 @@ function getWebviewHtml(nonce) {
       return models.current;
     }
 
+    // 模型显示名：优先 group 里的展示名，回退到模型 id。
+    function modelDisplayName(current, groups) {
+      var provider = current.provider;
+      var modelId = current.model;
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].id !== provider) continue;
+        var groupModels = groups[i].models || [];
+        for (var j = 0; j < groupModels.length; j++) {
+          if (groupModels[j].id === modelId) {
+            return groupModels[j].name || groupModels[j].id;
+          }
+        }
+        break;
+      }
+      return modelId;
+    }
+
+    // 推理强度显示名：effort 的展示名（如 Max），找不到时回退到 id。
+    function effortDisplayName(current, groups) {
+      var effortId = current.reasoningEffort;
+      if (!effortId) return '';
+      for (var i = 0; i < groups.length; i++) {
+        if (groups[i].id !== current.provider) continue;
+        var groupModels = groups[i].models || [];
+        for (var j = 0; j < groupModels.length; j++) {
+          if (groupModels[j].id !== current.model) continue;
+          var reasoning = groupModels[j].reasoning;
+          if (!reasoning || !Array.isArray(reasoning.efforts)) return effortId;
+          for (var ei = 0; ei < reasoning.efforts.length; ei++) {
+            if (reasoning.efforts[ei].id === effortId) {
+              return reasoning.efforts[ei].name || reasoning.efforts[ei].id;
+            }
+          }
+          return effortId;
+        }
+        break;
+      }
+      return effortId;
+    }
+
+    // 统计行右下角：模型名 | 推理强度（无推理强度时只显示模型名）。
+    function updateModelInfo() {
+      var models = state.models;
+      if (!models || !models.current) {
+        modelInfoEl.textContent = '';
+        modelInfoEl.title = '';
+        return;
+      }
+      var groups = models.groups || [];
+      var name = modelDisplayName(models.current, groups);
+      var effort = effortDisplayName(models.current, groups);
+      modelInfoEl.textContent = effort ? name + ' | ' + effort : name;
+      modelInfoEl.title = modelInfoEl.textContent;
+    }
+
     function renderModelButton() {
       var models = state.models;
       var label = t('modelFallback');
       if (models && models.current) {
-        var provider = models.current.provider;
-        var modelId = models.current.model;
-        var modelName = modelId;
         var groups = models.groups || [];
-        for (var i = 0; i < groups.length; i++) {
-          if (groups[i].id !== provider) continue;
-          var groupModels = groups[i].models || [];
-          for (var j = 0; j < groupModels.length; j++) {
-            if (groupModels[j].id === modelId) {
-              modelName = groupModels[j].name || groupModels[j].id;
-              break;
-            }
-          }
-          break;
-        }
-        label = modelName || modelId || label;
+        var name = modelDisplayName(models.current, groups);
+        label = name || models.current.model || label;
         if (models.current.reasoningEffort) label += ' · ' + models.current.reasoningEffort;
       }
       modelBtn.textContent = '模';
       modelBtn.title = t('modelTitle', { label: label });
+      updateModelInfo();
     }
 
     function renderModels() {

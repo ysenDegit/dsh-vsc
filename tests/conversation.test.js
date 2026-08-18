@@ -53,3 +53,35 @@ test('tool call and result pair by callId', () => {
   assert.equal(items[0].status, 'result')
   assert.equal(items[0].resultText, 'ok')
 })
+
+test('command run and done pair by commandId', () => {
+  const events = [
+    ev(1, 'command/run', { commandId: 'cmd-1', name: 'compact', args: '', source: { kind: 'user' } }),
+    ev(2, 'command/done', { commandId: 'cmd-1', kind: 'success', text: '已压缩' }),
+  ]
+  const { items } = foldEvents(events)
+  assert.equal(items.length, 1)
+  assert.equal(items[0].type, 'command')
+  assert.equal(items[0].name, 'compact')
+  assert.equal(items[0].status, 'done')
+  assert.deepEqual(items[0].outcome, { kind: 'success', text: '已压缩' })
+})
+
+test('command done without run falls back to a done node', () => {
+  const { items } = foldEvents([
+    ev(1, 'command/done', { commandId: 'cmd-x', kind: 'error', text: 'boom' }),
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].type, 'command')
+  assert.equal(items[0].status, 'done')
+  assert.deepEqual(items[0].outcome, { kind: 'error', text: 'boom' })
+})
+
+test('running command stays visible until done', () => {
+  const { items } = foldEvents([
+    ev(1, 'command/run', { commandId: 'cmd-2', name: 'goal', args: ' ship', source: { kind: 'user' } }),
+  ])
+  assert.equal(items.length, 1)
+  assert.equal(items[0].status, 'run')
+  assert.equal(items[0].outcome, null)
+})

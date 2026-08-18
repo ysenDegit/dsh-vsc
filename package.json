@@ -2,7 +2,7 @@
   "name": "dsh-vsc",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "0.1.41",
+  "version": "0.1.43",
   "publisher": "local",
   "license": "MIT",
   "engines": {

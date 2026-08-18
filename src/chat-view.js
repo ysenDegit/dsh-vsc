@@ -7,6 +7,8 @@ const { mkdirSync, writeFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { getWebviewHtml } = require('./webview.js')
 const { version: extensionVersion } = require('../package.json')
+const { DshRpcError } = require('./wire.js')
+const { isCommandLine } = require('./commands.js')
 
 const viewType = 'dsh-vsc.chat'
 
@@ -367,8 +369,43 @@ class ChatViewProvider {
       await this.loadHistory(sessionId)
       await this.refreshModels(sessionId)
     }
-    await this.sessions.prompt(sessionId, text, 'queue')
+    const line = String(text ?? '')
+    // 与 web 端一致：完整斜杠命令行优先走命令执行，绝不发给模型；
+    // 未注册命令才按普通消息发送。
+    if (isCommandLine(line) && await this.tryDispatchCommand(sessionId, line)) return
+    await this.sessions.prompt(sessionId, line, 'queue')
     // 不乐观回显：用户消息通过 session/event(user/message) 下发。
+  }
+
+  /**
+   * 尝试把一条斜杠命令行交给 dsh 命令注册表执行。
+   * @returns true 表示命令已被 host 接收执行（不要再按普通消息发送）；
+   *   false 表示这不是已注册命令（调用方按普通消息发送）。
+   *   已注册命令执行失败时抛错（调用方提示用户，不发送给模型）。
+   */
+  async tryDispatchCommand(sessionId, line) {
+    try {
+      // commands/execute 的语义：已注册命令返回 {commandId, result}；
+      // 未注册命令/非命令行返回 undefined；host 不支持该 RPC 时抛错。
+      const result = await this.sessions.executeCommand(sessionId, line)
+      return Boolean(result && result.commandId)
+    } catch (error) {
+      if (this.isUnsupportedCommandRpc(error)) {
+        this.onLog(`dsh 未提供命令 RPC，按普通消息发送: ${String(error.message)}`)
+        return false
+      }
+      throw error
+    }
+  }
+
+  isUnsupportedCommandRpc(error) {
+    const message = String(error && error.message || '')
+    if (error instanceof DshRpcError) {
+      // Typert gateway 对未注册端点返回 internal + invocation-unavailable。
+      return error.code === 'internal' && /invocation-unavailable|no active Remote method/u.test(message)
+    }
+    // 旧版 host 的 HTTP /api 路由对未注册方法返回 404（载体错误）。
+    return /HTTP 404|not found|载体错误/u.test(message)
   }
 
   async refreshPresets() {

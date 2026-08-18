@@ -18,6 +18,7 @@ function foldEvents(events) {
   const items = []
   const removedIndices = new Set()
   const partials = new Map() // key turn:step -> {item, key}
+  const commandByIndex = new Map() // commandId -> items index（command/run 与 command/done 配对）
   let running = false
 
   for (const event of events) {
@@ -124,6 +125,42 @@ function foldEvents(events) {
       case 'note':
         items.push({ type: 'note', text: data.text || '', id: 'note-' + event.seq })
         break
+      case 'command/run': {
+        const commandId = data.commandId || ('cmd-' + event.seq)
+        items.push({
+          type: 'command',
+          id: 'command-' + commandId,
+          commandId,
+          name: data.name || '',
+          args: data.args || '',
+          status: 'run',
+          outcome: null,
+        })
+        commandByIndex.set(commandId, items.length - 1)
+        break
+      }
+      case 'command/done': {
+        const commandId = data.commandId || ('cmd-' + event.seq)
+        const outcome = { kind: data.kind, text: data.text || '' }
+        const index = commandByIndex.get(commandId)
+        if (index !== undefined && items[index] && items[index].type === 'command') {
+          items[index].status = 'done'
+          items[index].outcome = outcome
+          commandByIndex.delete(commandId)
+        } else {
+          // 历史截断等场景下可能只有 done 没有 run：仍渲染为一条已结束的命令节点。
+          items.push({
+            type: 'command',
+            id: 'command-' + commandId,
+            commandId,
+            name: '',
+            args: '',
+            status: 'done',
+            outcome,
+          })
+        }
+        break
+      }
       default:
         // 未知事件保持不破坏折叠；seq 水位照常推进。
         break
