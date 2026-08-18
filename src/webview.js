@@ -576,6 +576,8 @@ function getWebviewHtml(nonce) {
         'waitingAnswer': '等待回答',
         'closeAndCancel': '关闭并取消问题',
         'submitAnswer': '提交回答',
+        'questionCustom': '输入你的回答',
+        'questionCustomOptional': '输入自定义回答（可选）',
         'meta.assistant': 'DeepSeek',
         'meta.tool': '工具',
         'meta.note': '提示',
@@ -675,6 +677,8 @@ function getWebviewHtml(nonce) {
         'waitingAnswer': 'Waiting for Answer',
         'closeAndCancel': 'Close and cancel question',
         'submitAnswer': 'Submit Answer',
+        'questionCustom': 'Type your answer',
+        'questionCustomOptional': 'Custom answer (optional)',
         'meta.assistant': 'DeepSeek',
         'meta.tool': 'Tool',
         'meta.note': 'Note',
@@ -1882,6 +1886,10 @@ function getWebviewHtml(nonce) {
         else labels = [label];
       }
       state.questionSelections[q.id] = labels;
+      if (!q.multiSelect) {
+        // 单选：选择选项后清掉该题已输入的自定义回答（与 web 端互斥语义一致）。
+        state.questionCustom[q.id] = '';
+      }
       renderQuestion();
     }
 
@@ -1903,14 +1911,22 @@ function getWebviewHtml(nonce) {
           }
           answers.push({ id: q.id, selected: [], custom: custom });
         } else {
-          if (selected.length === 0) {
+          if (selected.length === 0 && !custom) {
             var err2 = document.createElement('div');
             err2.className = 'q-error';
-            err2.textContent = '请选择问题「' + q.question + '」的选项';
+            err2.textContent = '请选择选项或输入自定义回答：' + q.question;
             questionPanelEl.insertBefore(err2, questionPanelEl.querySelector('.q-actions'));
             return;
           }
-          answers.push({ id: q.id, selected: selected });
+          var answer2 = { id: q.id };
+          if (!q.multiSelect && custom) {
+            // 单选 + 自定义回答：以自定义内容为准（与 web 端一致）。
+            answer2.selected = [];
+          } else {
+            answer2.selected = selected;
+          }
+          if (custom) answer2.custom = custom;
+          answers.push(answer2);
         }
       }
       post({ type: 'questionAnswer', sessionId: state.selectedSessionId, rpcId: pending.rpcId, answers: answers });
@@ -2031,11 +2047,27 @@ function getWebviewHtml(nonce) {
           })(i);
         }
         block.appendChild(opts);
+        // 与 web 端一致：有选项的问题也允许用户自行输入回答；
+        // 单选时自定义回答优先于所选选项，多选时两者共存。
+        var customInput = document.createElement('input');
+        customInput.type = 'text';
+        customInput.className = 'q-custom-input';
+        customInput.placeholder = t('questionCustomOptional');
+        customInput.value = state.questionCustom[q.id] || '';
+        customInput.addEventListener('input', function () {
+          state.questionCustom[q.id] = customInput.value;
+          if (!q.multiSelect && customInput.value.trim() !== '') {
+            state.questionSelections[q.id] = [];
+            var optionBtns = block.querySelectorAll('.q-option');
+            for (var bi = 0; bi < optionBtns.length; bi++) optionBtns[bi].classList.remove('selected');
+          }
+        });
+        block.appendChild(customInput);
       } else {
         var input = document.createElement('input');
         input.type = 'text';
         input.className = 'q-custom-input';
-        input.placeholder = '输入你的回答';
+        input.placeholder = t('questionCustom');
         input.value = state.questionCustom[q.id] || '';
         input.addEventListener('input', function () {
           state.questionCustom[q.id] = input.value;
