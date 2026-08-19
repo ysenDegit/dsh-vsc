@@ -7,6 +7,7 @@
 ### Added
 
 - 首个公开面世版本。
+- README 添加插件截图（assets/Screenshot.png）。
 
 ### Changed
 
