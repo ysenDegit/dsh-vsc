@@ -1,16 +1,20 @@
 # DeepSeek Harness Chat (dsh-vsc-weblike)
 
-[English](README_en.md) | 中文
+[中文](#中文) | [English](#english)
 
 将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与双 WebSocket 事件流直接与 dsh 后端通信。
+
+Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and workspace panel. The extension does not embed the dsh web frontend; instead it talks directly to the dsh backend over HTTP RPC and dual WebSocket event streams.
 
 ![插件截图](assets/Screenshot.png)
 
 ---
 
-## 一、核心功能
+## 中文
 
-### 1. dsh 实例生命周期管理
+### 一、核心功能
+
+#### 1. dsh 实例生命周期管理
 - 自动发现 dsh：配置路径 `dsh-vsc.dshPath` → `PATH` → npm 全局目录 → `npx --no-install @deepseek-ai/dsh`。
 - 启动前检查是否已有 dsh web 在后台运行：
   - 显式 `dsh-vsc.dshUrl`
@@ -20,7 +24,7 @@
 - VS Code 关闭时，自动退出由插件启动的 dsh 实例；复用已有实例时仅断开连接。
 - 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误。
 
-### 2. 工作区与会话管理
+#### 2. 工作区与会话管理
 - 自动将当前 VS Code 工作目录加入 dsh 工作区。
   - 已存在：按 canonical path 匹配后直接使用。
   - 不存在：弹出确认框，经用户确认后创建。
@@ -32,7 +36,7 @@
   - 归档副本保存到当前工作目录 `.dsh-vsc/archived-sessions/`。
 - 会话标题 fallback 优化，不再显示裸 `session-`。
 
-### 3. 聊天界面与会话内容显示
+#### 3. 聊天界面与会话内容显示
 - 简洁会话 / 详细会话两种模式，默认简洁。
   - 简洁模式隐藏工具调用与思考流程，只保留用户、Assistant 最终输出与命令节点。
   - 简洁模式下底部统计行为同一行：左侧常驻 `working` 标识（圆点颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中）、居中 LLM 统计信息（缓存命中 / 输入输出）、右下角当前模型与推理强度。
@@ -51,7 +55,7 @@
   - 轻量 LaTeX 公式子集：`$...$` 行内公式、`$$...$$` 块级公式、分式、根号、上下标、希腊字母、常见运算符。
   - HTML 先转义再渲染，保证内容安全。
 
-### 4. Composer 输入区
+#### 4. Composer 输入区
 - 发送方式可配置：
   - `Shift+Enter` 发送，`Enter` 换行（默认）。
   - 或反过来：`Enter` 发送，`Shift+Enter` 换行。
@@ -69,7 +73,7 @@
   - 英文：`cache hit 42% | input 12.3K tokens · output 2.1K tokens`
   - 右下角模型信息：`Deepseek V4 Flash | Max`（模型名 | 推理强度，无推理强度时只显示模型名）。
 
-### 5. 工具审批 / 计划条 / 权限 / 问题 / 命令节点
+#### 5. 工具审批 / 计划条 / 权限 / 问题 / 命令节点
 - 工具审批（Approval）：输入框区域切换为审批面板，支持 `允许一次` / `拒绝`。
 - 计划条（Todo）：展示计划列表与状态统计。
 - 权限选择（Permission）：读取 dsh `permissions` 投影，切换时执行 `/permission <preset>`。
@@ -78,7 +82,7 @@
   - Plan Review：支持批准 / 拒绝 / 聊一聊。
   - Ask User：支持单选、多选；带选项的问题同时提供"自定义回答"输入框（单选时自定义回答优先于选项，多选时两者可同时提交），无选项的问题直接自由输入。
 
-### 6. 设置面板
+#### 6. 设置面板
 - 打开方式：点击顶部 `⚙`。
 - 会话显示模式：简洁 / 详细。
 - 字体大小：12–20 px。
@@ -92,7 +96,7 @@
 - 显示当前插件版本号。
 - LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
 
-### 7. 入口与命令
+#### 7. 入口与命令
 - 侧边栏鲸鱼图标入口。
 - 工作区右上角 `dsh` 按钮入口：在当前编辑器列直接打开 dsh 面板（覆盖当前工作区）。
 - VS Code 启动自动打开：
@@ -105,14 +109,12 @@
   - `dsh: Open Web UI in Browser`
   - `dsh: Open Chat Panel`
 
-### 8. 下载会话上下文
+#### 8. 下载会话上下文
 - 顶栏最右侧 `⬇` 按钮。
 - 将当前会话导出为 Markdown 或 JSON。
 - Markdown 仅保留用户消息与 Assistant 最终回复。
 
----
-
-## 二、配置项
+### 二、配置项
 
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
@@ -130,17 +132,13 @@
 | `dsh-vsc.autoOpenChat` | boolean | true | 检测到 dsh 已运行时，启动后自动打开工作区面板 |
 | `dsh-vsc.enterToSend` | boolean | false | Enter 键行为：false（默认）= Shift+Enter 发送、Enter 换行；true = Enter 发送 |
 
----
-
-## 三、运行环境
+### 三、运行环境
 
 - VS Code >= 1.90
 - Node >= 22（扩展宿主需提供全局 `WebSocket`；旧版宿主请确保可加载 `ws` 包）
 - 已安装 `@deepseek-ai/dsh` 且版本 >= 0.1.0-rc.6
 
----
-
-## 四、开发与打包
+### 四、开发与打包
 
 无需构建：入口直接使用 `src/extension.js`。
 
@@ -159,9 +157,7 @@ npm install -g @vscode/vsce
 vsce package
 ```
 
----
-
-## 五、已知限制
+### 五、已知限制
 
 - Markdown 渲染暂不支持完整 KaTeX 公式；当前为轻量 LaTeX 子集，代码高亮为轻量实现，不覆盖所有语言。
 - `@` 文件引用排除了 `node_modules` 与 `.git`，且最多枚举 2000 个文件。
@@ -169,8 +165,169 @@ vsce package
 - `ws` 依赖未显式声明；旧版 VS Code 宿主若无全局 WebSocket 则需额外安装 `ws`。
 - 权限切换受 dsh 后端保护：会话存在打开/创建中的持久终端时不能切换，需先关闭终端。
 
+[切换到 English](#english)
+
 ---
 
-## 许可
+## English
+
+### 1. Core Features
+
+#### 1.1 dsh Instance Lifecycle Management
+- Auto-discovery of dsh: config path `dsh-vsc.dshPath` → `PATH` → npm global directory → `npx --no-install @deepseek-ai/dsh`.
+- Before starting, checks whether a dsh web instance is already running:
+  - explicit `dsh-vsc.dshUrl`
+  - state file `~/.dsh/vscode-extension.json`
+  - default address `http://127.0.0.1:3080`
+- If not running, automatically starts `dsh web --port 0`.
+- When VS Code closes, the extension automatically exits the dsh instance it started; when reusing an existing instance, it only disconnects.
+- Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error.
+
+#### 1.2 Workspace and Session Management
+- Automatically adds the current VS Code workspace directory to the dsh workspace.
+  - If it already exists: matched by canonical path and reused directly.
+  - If not: a confirmation dialog appears, and the workspace is created after user confirmation.
+  - Re-maps automatically when VS Code workspace folders change.
+- Session list, selection, creation, and renaming.
+- Working mode selection in a new session: Standard / PTC / Minimal / Creative.
+- Archive/close sessions:
+  - Double confirmation before the operation.
+  - Archived copies are saved to the current workspace `.dsh-vsc/archived-sessions/`.
+- Improved session title fallback, no longer showing a bare `session-`.
+
+#### 1.3 Chat Interface and Conversation Display
+- Two display modes: concise / detailed, concise by default.
+  - Concise mode hides tool calls and thinking traces, keeping only user messages, the Assistant's final output, and command nodes.
+  - In concise mode, the bottom stats row is a single line: a persistent `working` indicator on the left (dot color shows session status: gray = idle, green = thinking, red = tool call, blue = streaming output), LLM stats in the center (cache hit / input-output), and the current model and reasoning effort at the bottom right.
+- Streaming Assistant output.
+- Tool calls and tool results are paired by `callId`.
+- `/` command execution results are shown as command nodes (`command/run` → `command/done`, including success/failure information).
+- Context injection is collapsed by default, keeping only the latest entry.
+- A "Load earlier" button appears when scrolling up, loading earlier history on demand.
+- Markdown rendering:
+  - Headings, paragraphs, bold, italic, strikethrough.
+  - Inline code and fenced code blocks (with optional language class), plus light syntax highlighting for common languages (keywords / strings / comments / numbers).
+  - Ordered/unordered lists (nestable).
+  - Blockquotes, horizontal rules.
+  - GFM tables (with alignment support).
+  - Links, images.
+  - A lightweight LaTeX subset: `$...$` inline math, `$$...$$` block math, fractions, square roots, super/subscripts, Greek letters, and common operators.
+  - HTML is escaped before rendering for content safety.
+
+#### 1.4 Composer Input Area
+- Configurable send behavior:
+  - `Shift+Enter` to send, `Enter` for a newline (default).
+  - Or the reverse: `Enter` to send, `Shift+Enter` for a newline.
+- Input box expand/collapse: only the input box expands upward; nearby buttons stay in place.
+- Stop button uses the `■` icon.
+- `@` file references: typing `@` pops up a list of files in the current workspace, filtered in real time.
+- `/` command menu: typing `/` pops up the dsh command list.
+- `/` command execution: sending a full command line starting with `/` calls `commands/execute` directly — registered commands are executed by the host (they are not sent to the model as normal conversation; results appear as command nodes in the session); unregistered commands return empty (`undefined`) and are sent as normal messages, matching the web frontend behavior; if an older dsh version doesn't support the command RPC, it automatically falls back to a normal message.
+- Send queue display: shows a "queued" list supporting edit, steer (interrupt), and delete.
+- Model and reasoning effort are merged into one `模` button; custom model names are supported.
+- Permission selector is compressed into a `权` button on the left of the input box.
+- Context usage: shown as background fill in the input box proportional to usage; hovering the input box reveals the exact percentage. It can be disabled in settings, and the progress bar color is customizable (default matches the user message box).
+- Bottom stats row (single line: `working` indicator on the left, cache hit and input/output in the center, current model and reasoning effort at the bottom right):
+  - Chinese: `缓存命中 42% | 输入 12.3K tokens · 输出 2.1K tokens`
+  - English: `cache hit 42% | input 12.3K tokens · output 2.1K tokens`
+  - Model info at the bottom right: `Deepseek V4 Flash | Max` (model name | reasoning effort; only the model name when there is no reasoning effort).
+
+#### 1.5 Tool Approval / Todo Bar / Permissions / Questions / Command Nodes
+- Tool approval: the input area switches to an approval panel, supporting `Allow once` / `Reject`.
+- Todo bar: shows the plan list and status statistics.
+- Permission: reads the dsh `permissions` projection; switching executes `/permission <preset>`.
+- Command nodes: after a `/` command executes, the command line and its result (success/failure) are shown in the session, and are kept in concise mode as well.
+- Questions and plan review:
+  - Plan Review: supports Approve / Reject / Chat.
+  - Ask User: supports single-choice and multi-choice; questions with options also provide a "custom answer" input (for single-choice, the custom answer takes priority over the options; for multi-choice, both can be submitted together). Questions without options accept free-form input.
+
+#### 1.6 Settings Panel
+- How to open: click the `⚙` icon at the top.
+- Session display mode: concise / detailed.
+- Font size: 12–20 px.
+- Max content width: unlimited / 800 / 1000 / 1200 / 1600 px (content is centered on large screens instead of filling the whole panel).
+- Context usage display: on / off (background usage indicator in the input box).
+- Context progress bar color: default (same as the user message box) / custom color.
+- Context progress bar opacity: 0–100% (slider).
+- UI language: 中文 / English.
+- Send behavior: Enter to send / Shift+Enter to send.
+- Open settings.yaml (opens `$DSH_HOME/settings.yaml` inside VS Code).
+- Shows the current extension version.
+- LLM-related settings (API Key, Base URL, etc.) are configured in the dsh Web UI.
+
+#### 1.7 Entry Points and Commands
+- Sidebar whale icon entry.
+- `dsh` button at the top right of the workspace: opens the dsh panel in the current editor column (overlaying the current workspace).
+- Auto-open on VS Code startup:
+  - The workspace dsh panel opens automatically only when a running dsh web instance is detected.
+  - It does not auto-open when no instance is running.
+- Commands:
+  - `dsh: Open Chat`
+  - `dsh: New Session`
+  - `dsh: Refresh Sessions`
+  - `dsh: Open Web UI in Browser`
+  - `dsh: Open Chat Panel`
+
+#### 1.8 Download Session Context
+- `⬇` button at the far right of the top bar.
+- Exports the current session as Markdown or JSON.
+- Markdown keeps only user messages and the Assistant's final replies.
+
+### 2. Configuration
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `dsh-vsc.dshPath` | string/null | null | Explicitly specify the dsh executable path |
+| `dsh-vsc.minDshVersion` | string | `0.1.0-rc.6` | Minimum required dsh version |
+| `dsh-vsc.autoStart` | boolean | true | Automatically check for/create a dsh instance when VS Code starts |
+| `dsh-vsc.dshUrl` | string/null | null | Explicitly specify the URL of an already running dsh web instance |
+| `dsh-vsc.sessionDisplay` | string | concise | Session display mode: concise / detailed |
+| `dsh-vsc.fontSize` | number | 13 | Chat font size (px) |
+| `dsh-vsc.maxWidth` | number | 1000 | Max chat content width (px); 0 = unlimited (fills the panel) |
+| `dsh-vsc.showContextUsage` | boolean | true | Show context usage as background fill in the input box |
+| `dsh-vsc.contextBarColor` | string | `var(--accent)` | Context progress bar color (CSS color value; default matches the user message box) |
+| `dsh-vsc.contextBarOpacity` | number | 30 | Context progress bar fill opacity (%, 0–100) |
+| `dsh-vsc.language` | string | zh | Extension UI language: zh / en |
+| `dsh-vsc.autoOpenChat` | boolean | true | Auto-open the workspace panel on startup when dsh is already running |
+| `dsh-vsc.enterToSend` | boolean | false | Enter key behavior: false (default) = Shift+Enter sends, Enter inserts a newline; true = Enter sends |
+
+### 3. Requirements
+
+- VS Code >= 1.90
+- Node >= 22 (the extension host must provide a global `WebSocket`; on older hosts make sure the `ws` package can be loaded)
+- `@deepseek-ai/dsh` installed, version >= 0.1.0-rc.6
+
+### 4. Development and Packaging
+
+No build step: the entry point directly uses `src/extension.js`.
+
+```bash
+# Run tests
+node --test tests/*.test.js
+```
+
+Packaging takes two steps:
+
+```bash
+# 1. Install vsce (first time only)
+npm install -g @vscode/vsce
+
+# 2. Run vsce package
+vsce package
+```
+
+### 5. Known Limitations
+
+- Markdown rendering does not support full KaTeX yet; it currently provides a lightweight LaTeX subset, and syntax highlighting is a lightweight implementation that does not cover all languages.
+- `@` file references exclude `node_modules` and `.git`, and enumerate at most 2000 files.
+- Working mode selection is still embedded in the blank session page and has not been turned into a modal dialog.
+- The `ws` dependency is not explicitly declared; older VS Code hosts without a global `WebSocket` need `ws` installed separately.
+- Permission switching is protected by the dsh backend: it cannot be switched while a persistent terminal is being opened/created in the session; close the terminal first.
+
+[切换到中文](#中文)
+
+---
+
+## 许可 / License
 
 MIT
