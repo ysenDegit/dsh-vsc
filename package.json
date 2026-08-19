@@ -18,6 +18,14 @@
     "dsh",
     "claude code"
   ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ysenDegit/dsh-vsc.git"
+  },
+  "homepage": "https://github.com/ysenDegit/dsh-vsc",
+  "bugs": {
+    "url": "https://github.com/ysenDegit/dsh-vsc/issues"
+  },
   "main": "./src/extension.js",
   "icon": "assets/icon.png",
   "activationEvents": [
