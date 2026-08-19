@@ -618,7 +618,6 @@ function getWebviewHtml(nonce) {
         'contextOpacitySection': '进度条透明度',
         'contextOpacityLabel': '填充不透明度',
         'tabDisplay': '显示',
-        'tabContext': '上下文占用',
         'tabGeneral': '通用',
         'tabAbout': '关于',
         'languageSection': '界面语言',
@@ -719,7 +718,6 @@ function getWebviewHtml(nonce) {
         'contextOpacitySection': 'Bar Opacity',
         'contextOpacityLabel': 'Fill opacity',
         'tabDisplay': 'Display',
-        'tabContext': 'Context Usage',
         'tabGeneral': 'General',
         'tabAbout': 'About',
         'languageSection': 'Language',
@@ -2430,7 +2428,6 @@ function getWebviewHtml(nonce) {
         return;
       }
       var displayPane = makeSettingsPane('display', t('tabDisplay'));
-      var contextPane = makeSettingsPane('context', t('tabContext'));
       var generalPane = makeSettingsPane('general', t('tabGeneral'));
       var displaySection = document.createElement('div');
       displaySection.className = 'settings-section';
@@ -2550,7 +2547,7 @@ function getWebviewHtml(nonce) {
       contextCheck.addEventListener('change', function () {
         post({ type: 'setShowContextUsage', value: contextCheck.checked });
       });
-      contextPane.appendChild(contextSection);
+      displayPane.appendChild(contextSection);
 
       var colorSection = document.createElement('div');
       colorSection.className = 'settings-section';
@@ -2591,7 +2588,7 @@ function getWebviewHtml(nonce) {
       colorInput.addEventListener('input', function () {
         if (!colorDefaultCheck.checked) post({ type: 'setContextBarColor', value: colorInput.value });
       });
-      contextPane.appendChild(colorSection);
+      displayPane.appendChild(colorSection);
 
       var opacitySection = document.createElement('div');
       opacitySection.className = 'settings-section';
@@ -2624,7 +2621,7 @@ function getWebviewHtml(nonce) {
         opacityValue.textContent = value + '%';
         post({ type: 'setContextBarOpacity', value: value });
       });
-      contextPane.appendChild(opacitySection);
+      displayPane.appendChild(opacitySection);
 
       var languageSection = document.createElement('div');
       languageSection.className = 'settings-section';
