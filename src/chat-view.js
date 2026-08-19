@@ -35,6 +35,8 @@ class ChatViewProvider {
     this.showContextUsage = options.showContextUsage ?? true
     this.contextBarColor = options.contextBarColor ?? 'var(--accent)'
     this.contextBarOpacity = options.contextBarOpacity ?? 30
+    this.autoStart = options.autoStart ?? true
+    this.autoOpenChat = options.autoOpenChat ?? true
     this.webviews = new Set()
     this.queue = []
     this.selectedSessionId = null
@@ -178,6 +180,15 @@ class ChatViewProvider {
         case 'setContextBarOpacity':
           await this.setContextBarOpacity(msg.value)
           break
+        case 'setAutoStart':
+          await this.setAutoStart(msg.value)
+          break
+        case 'setAutoOpenChat':
+          await this.setAutoOpenChat(msg.value)
+          break
+        case 'retryConnect':
+          await this.retryConnect()
+          break
         case 'modelSelect':
           await this.selectModel(msg.provider, msg.model, msg.effort)
           break
@@ -240,6 +251,8 @@ class ChatViewProvider {
       showContextUsage: this.showContextUsage,
       contextBarColor: this.contextBarColor,
       contextBarOpacity: this.contextBarOpacity,
+      autoStart: this.autoStart,
+      autoOpenChat: this.autoOpenChat,
       queue: this.queueSnapshot(this.selectedSessionId),
       hasMoreEarlier: this.hasMoreBySession.get(this.selectedSessionId) ?? false,
       question: this.questionSnapshot(this.selectedSessionId),
@@ -540,6 +553,8 @@ class ChatViewProvider {
         showContextUsage: this.showContextUsage,
         contextBarColor: this.contextBarColor,
         contextBarOpacity: this.contextBarOpacity,
+        autoStart: this.autoStart,
+        autoOpenChat: this.autoOpenChat,
         version: extensionVersion,
       },
     })
@@ -635,6 +650,30 @@ class ChatViewProvider {
     this.post({ type: 'contextBarOpacity', value: next })
   }
 
+  async setAutoStart(value) {
+    const next = value !== false
+    this.autoStart = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('autoStart', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'autoStart', value: next })
+  }
+
+  async setAutoOpenChat(value) {
+    const next = value !== false
+    this.autoOpenChat = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('autoOpenChat', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'autoOpenChat', value: next })
+  }
+
+  // 状态徽标（已停止/错误）点击后：重新探测 dsh web 实例。
+  // autoStart 开启则允许自动生成；关闭则只复用已手动运行的实例。
+  async retryConnect() {
+    const status = this.dsh.statusValue
+    if (status === 'ready' || status === 'starting' || status === 'discovering') return
+    await this.dsh.start({ allowSpawn: this.autoStart !== false })
+  }
+
   // 配置被外部修改（VS Code 设置 UI、settings.json 等）时同步 provider 状态与 webview。
   updatePreferences(prefs) {
     if (prefs.sessionDisplay !== undefined && prefs.sessionDisplay !== this.sessionDisplay) {
@@ -668,6 +707,14 @@ class ChatViewProvider {
     if (prefs.enterToSend !== undefined && prefs.enterToSend !== this.enterToSend) {
       this.enterToSend = prefs.enterToSend
       this.post({ type: 'enterToSend', value: prefs.enterToSend })
+    }
+    if (prefs.autoStart !== undefined && prefs.autoStart !== this.autoStart) {
+      this.autoStart = prefs.autoStart
+      this.post({ type: 'autoStart', value: prefs.autoStart })
+    }
+    if (prefs.autoOpenChat !== undefined && prefs.autoOpenChat !== this.autoOpenChat) {
+      this.autoOpenChat = prefs.autoOpenChat
+      this.post({ type: 'autoOpenChat', value: prefs.autoOpenChat })
     }
   }
 

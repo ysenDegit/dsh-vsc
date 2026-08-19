@@ -39,7 +39,7 @@ class DshService extends EventEmitter {
     this.emit('status', status, detail)
   }
 
-  async start() {
+  async start({ allowSpawn = true } = {}) {
     if (this.started) return
     this.started = true
     this.stopping = false
@@ -55,6 +55,13 @@ class DshService extends EventEmitter {
         this.options.onLog?.(`复用已运行的 dsh web: ${existing}`)
         this.connect()
         this.setStatus('ready')
+        return
+      }
+
+      // 自动启动被关闭（autoStart=false）：只复用不生成；未发现实例则保持 stopped。
+      if (!allowSpawn) {
+        this.started = false
+        this.setStatus('stopped')
         return
       }
 

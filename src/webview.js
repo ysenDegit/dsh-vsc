@@ -44,6 +44,8 @@ function getWebviewHtml(nonce) {
     .status-dot.error { background: #f38ba8; }
     .status-dot.stopped { background: #6c7086; }
     .status-dot.reconnecting { background: #f9e2af; }
+    .status-badge.retryable { cursor: pointer; border-bottom: 1px dotted var(--muted); }
+    .status-badge.retryable:hover { color: var(--accent); }
 
     button {
       background: transparent; color: var(--fg); border: 1px solid var(--border);
@@ -333,6 +335,8 @@ function getWebviewHtml(nonce) {
     .settings-pane.active { display: flex; }
     .settings-section { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
     .settings-section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .settings-subsection { margin: 8px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--border); }
+    .settings-subsection-title { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
     .settings-field { margin-bottom: 8px; }
     .settings-field:last-child { margin-bottom: 0; }
     .settings-field .field-label { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
@@ -459,6 +463,8 @@ function getWebviewHtml(nonce) {
       showContextUsage: true,
       contextBarColor: 'var(--accent)',
       contextBarOpacity: 30,
+      autoStart: true,
+      autoOpenChat: true,
       queueItems: [],
       hasMoreEarlier: false,
       loadingEarlier: false,
@@ -546,6 +552,7 @@ function getWebviewHtml(nonce) {
         'status.reconnecting': '重连中',
         'status.stopped': '已停止',
         'status.error': '错误',
+        'statusRetry': '点击重新检测 dsh web 实例',
         'newSessionTitle': '新建会话',
         'refreshTitle': '刷新会话',
         'renameSession': '重命名会话',
@@ -629,6 +636,9 @@ function getWebviewHtml(nonce) {
         'sendModeLabel': '输入框按键行为',
         'sendModeEnter': 'Enter 发送，Shift+Enter 换行',
         'sendModeShiftEnter': 'Shift+Enter 发送，Enter 换行',
+        'startupSection': '启动行为',
+        'autoStartLabel': '启动 VS Code 时自动启动 dsh web',
+        'autoOpenChatLabel': '启动时自动打开面板',
         'settingsWebNotice': 'LLM模型相关设置请移步web端',
         'loadEarlier': '加载更早',
         'loadingEarlier': '加载中…',
@@ -646,6 +656,7 @@ function getWebviewHtml(nonce) {
         'status.reconnecting': 'Reconnecting',
         'status.stopped': 'Stopped',
         'status.error': 'Error',
+        'statusRetry': 'Click to re-detect the dsh web instance',
         'newSessionTitle': 'New Session',
         'refreshTitle': 'Refresh Sessions',
         'renameSession': 'Rename Session',
@@ -729,6 +740,9 @@ function getWebviewHtml(nonce) {
         'sendModeLabel': 'Input key behavior',
         'sendModeEnter': 'Enter to send, Shift+Enter for newline',
         'sendModeShiftEnter': 'Shift+Enter to send, Enter for newline',
+        'startupSection': 'Startup',
+        'autoStartLabel': 'Auto-start dsh web when VS Code starts',
+        'autoOpenChatLabel': 'Auto-open the panel on startup',
         'settingsWebNotice': 'LLM model settings: please use the web UI.',
         'loadEarlier': 'Load earlier',
         'loadingEarlier': 'Loading…',
@@ -1386,6 +1400,11 @@ function getWebviewHtml(nonce) {
         error: t('status.error')
       };
       $('statusText').textContent = textMap[status] || status;
+      // stopped/error 状态可点击：重新探测 dsh web 实例。
+      var retryable = status === 'stopped' || status === 'error';
+      var badge = $('statusText').parentElement;
+      badge.classList.toggle('retryable', retryable);
+      badge.title = retryable ? t('statusRetry') : '';
       sendBtn.disabled = status !== 'ready';
       modelBtn.disabled = status !== 'ready';
       modelSelectEl.disabled = status !== 'ready';
@@ -2547,11 +2566,11 @@ function getWebviewHtml(nonce) {
       contextCheck.addEventListener('change', function () {
         post({ type: 'setShowContextUsage', value: contextCheck.checked });
       });
-      displayPane.appendChild(contextSection);
 
       var colorSection = document.createElement('div');
-      colorSection.className = 'settings-section';
-      var colorTitle = document.createElement('h3');
+      colorSection.className = 'settings-subsection';
+      var colorTitle = document.createElement('div');
+      colorTitle.className = 'settings-subsection-title';
       colorTitle.textContent = t('contextColorSection');
       colorSection.appendChild(colorTitle);
       var colorField = document.createElement('div');
@@ -2588,11 +2607,12 @@ function getWebviewHtml(nonce) {
       colorInput.addEventListener('input', function () {
         if (!colorDefaultCheck.checked) post({ type: 'setContextBarColor', value: colorInput.value });
       });
-      displayPane.appendChild(colorSection);
+      contextSection.appendChild(colorSection);
 
       var opacitySection = document.createElement('div');
-      opacitySection.className = 'settings-section';
-      var opacityTitle = document.createElement('h3');
+      opacitySection.className = 'settings-subsection';
+      var opacityTitle = document.createElement('div');
+      opacityTitle.className = 'settings-subsection-title';
       opacityTitle.textContent = t('contextOpacitySection');
       opacitySection.appendChild(opacityTitle);
       var opacityField = document.createElement('div');
@@ -2621,7 +2641,8 @@ function getWebviewHtml(nonce) {
         opacityValue.textContent = value + '%';
         post({ type: 'setContextBarOpacity', value: value });
       });
-      displayPane.appendChild(opacitySection);
+      contextSection.appendChild(opacitySection);
+      displayPane.appendChild(contextSection);
 
       var languageSection = document.createElement('div');
       languageSection.className = 'settings-section';
@@ -2689,6 +2710,48 @@ function getWebviewHtml(nonce) {
       sendModeSection.appendChild(sendModeField);
       generalPane.appendChild(sendModeSection);
 
+      var startupSection = document.createElement('div');
+      startupSection.className = 'settings-section';
+      var startupTitle = document.createElement('h3');
+      startupTitle.textContent = t('startupSection');
+      startupSection.appendChild(startupTitle);
+
+      var autoStartField = document.createElement('div');
+      autoStartField.className = 'settings-field';
+      var autoStartLabel = document.createElement('label');
+      autoStartLabel.className = 'field-label';
+      var autoStartCheck = document.createElement('input');
+      autoStartCheck.type = 'checkbox';
+      autoStartCheck.checked = data.autoStart !== false;
+      var autoStartName = document.createElement('span');
+      autoStartName.textContent = t('autoStartLabel');
+      autoStartLabel.appendChild(autoStartCheck);
+      autoStartLabel.appendChild(autoStartName);
+      autoStartField.appendChild(autoStartLabel);
+      startupSection.appendChild(autoStartField);
+      autoStartCheck.addEventListener('change', function () {
+        post({ type: 'setAutoStart', value: autoStartCheck.checked });
+      });
+
+      var autoOpenField = document.createElement('div');
+      autoOpenField.className = 'settings-field';
+      var autoOpenLabel = document.createElement('label');
+      autoOpenLabel.className = 'field-label';
+      var autoOpenCheck = document.createElement('input');
+      autoOpenCheck.type = 'checkbox';
+      autoOpenCheck.checked = data.autoOpenChat !== false;
+      var autoOpenName = document.createElement('span');
+      autoOpenName.textContent = t('autoOpenChatLabel');
+      autoOpenLabel.appendChild(autoOpenCheck);
+      autoOpenLabel.appendChild(autoOpenName);
+      autoOpenField.appendChild(autoOpenLabel);
+      startupSection.appendChild(autoOpenField);
+      autoOpenCheck.addEventListener('change', function () {
+        post({ type: 'setAutoOpenChat', value: autoOpenCheck.checked });
+      });
+
+      generalPane.appendChild(startupSection);
+
       var webNoticeSection = document.createElement('div');
       webNoticeSection.className = 'settings-section';
       var webNotice = document.createElement('div');
@@ -2702,6 +2765,11 @@ function getWebviewHtml(nonce) {
     // Events
     sendBtn.addEventListener('click', sendMessage);
     stopBtn.addEventListener('click', function () { post({ type: 'cancel' }); });
+    // 状态徽标（stopped/error 时）点击 → 重新探测 dsh web 实例。
+    $('statusText').parentElement.addEventListener('click', function () {
+      var s = state.status;
+      if (s === 'stopped' || s === 'error') post({ type: 'retryConnect' });
+    });
     $('newSessionBtn').addEventListener('click', function () {
       post({ type: 'newSession' });
     });
@@ -2796,6 +2864,8 @@ function getWebviewHtml(nonce) {
           state.contextBarColor = msg.contextBarColor || 'var(--accent)';
           var opacityVal = Number(msg.contextBarOpacity);
           state.contextBarOpacity = Number.isFinite(opacityVal) && opacityVal >= 0 && opacityVal <= 100 ? opacityVal : 30;
+          state.autoStart = msg.autoStart !== false;
+          state.autoOpenChat = msg.autoOpenChat !== false;
           applyFontSize();
           applyMaxWidth();
           updateContextBar(null);
@@ -2888,6 +2958,12 @@ function getWebviewHtml(nonce) {
         case 'enterToSend':
           state.enterToSend = msg.value === true;
           composerInput.placeholder = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
+          break;
+        case 'autoStart':
+          state.autoStart = msg.value !== false;
+          break;
+        case 'autoOpenChat':
+          state.autoOpenChat = msg.value !== false;
           break;
         case 'conversation':
           if (msg.selectedSessionId !== undefined && msg.selectedSessionId !== null) {

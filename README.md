@@ -22,7 +22,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - 默认地址 `http://127.0.0.1:3080`
 - 若未运行，则自动启动 `dsh web --port 0`。
 - VS Code 关闭时，自动退出由插件启动的 dsh 实例；复用已有实例时仅断开连接。
-- 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误。
+- 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误；停止/错误状态可点击重新检测 dsh web 实例。
 
 #### 2. 工作区与会话管理
 - 自动将当前 VS Code 工作目录加入 dsh 工作区。
@@ -87,11 +87,12 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 会话显示模式：简洁 / 详细。
 - 字体大小：12–20 px。
 - 内容最大宽度：不限制 / 800 / 1000 / 1200 / 1600 px（大屏时内容居中，不占满工作区）。
-- 上下文占用显示：开 / 关（输入框背景占用指示）。
-- 上下文进度条颜色：默认（与用户消息框相同）/ 自定义颜色。
-- 上下文进度条透明度：0–100%（滑杆调节）。
+- 上下文占用（含子设置：进度条颜色、进度条透明度）：开 / 关（输入框背景占用指示）。
+  - 进度条颜色：默认（与用户消息框相同）/ 自定义颜色。
+  - 进度条透明度：0–100%（滑杆调节）。
 - 界面语言：中文 / English。
 - 发送方式：Enter 发送 / Shift+Enter 发送。
+- 启动行为：启动 VS Code 时自动启动 dsh web（开/关）；启动时自动打开面板（开/关）。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
 - 显示当前插件版本号。
 - LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
@@ -99,9 +100,10 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 #### 7. 入口与命令
 - 侧边栏鲸鱼图标入口。
 - 工作区右上角 `dsh` 按钮入口：在当前编辑器列直接打开 dsh 面板（覆盖当前工作区）。
-- VS Code 启动自动打开：
-  - 仅当检测到 dsh web 已在运行时，才自动打开工作区 dsh 面板。
-  - 未运行时不自动打开。
+- VS Code 启动自动打开：需同时满足以下三个条件，才自动打开工作区 dsh 面板：
+  - dsh web 已在运行（未运行时不自动打开）。
+  - 当前目录已在 dsh 工作区中（新窗口/新目录不会自动弹出）。
+  - 上次使用未关闭过面板（关闭后不再自动弹出，手动打开一次面板后恢复）。
 - 命令：
   - `dsh: Open Chat`
   - `dsh: New Session`
@@ -120,7 +122,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 |---|---|---|---|
 | `dsh-vsc.dshPath` | string/null | null | 显式指定 dsh 可执行文件路径 |
 | `dsh-vsc.minDshVersion` | string | `0.1.0-rc.6` | 最低 dsh 版本要求 |
-| `dsh-vsc.autoStart` | boolean | true | 启动 VS Code 时自动检查/生成 dsh 实例 |
+| `dsh-vsc.autoStart` | boolean | true | 启动 VS Code 时自动检查/生成 dsh 实例；关闭时仅复用已运行的实例，不自动生成 |
 | `dsh-vsc.dshUrl` | string/null | null | 显式指定已运行的 dsh web 地址 |
 | `dsh-vsc.sessionDisplay` | string | concise | 会话显示模式：concise / detailed |
 | `dsh-vsc.fontSize` | number | 13 | 聊天界面字体大小（px） |
@@ -181,7 +183,7 @@ vsce package
   - default address `http://127.0.0.1:3080`
 - If not running, automatically starts `dsh web --port 0`.
 - When VS Code closes, the extension automatically exits the dsh instance it started; when reusing an existing instance, it only disconnects.
-- Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error.
+- Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error; click it in the stopped/error state to re-detect the dsh web instance.
 
 #### 1.2 Workspace and Session Management
 - Automatically adds the current VS Code workspace directory to the dsh workspace.
@@ -246,11 +248,12 @@ vsce package
 - Session display mode: concise / detailed.
 - Font size: 12–20 px.
 - Max content width: unlimited / 800 / 1000 / 1200 / 1600 px (content is centered on large screens instead of filling the whole panel).
-- Context usage display: on / off (background usage indicator in the input box).
-- Context progress bar color: default (same as the user message box) / custom color.
-- Context progress bar opacity: 0–100% (slider).
+- Context usage (with sub-settings: bar color, bar opacity): on / off (background usage indicator in the input box).
+  - Bar color: default (same as the user message box) / custom color.
+  - Bar opacity: 0–100% (slider).
 - UI language: 中文 / English.
 - Send behavior: Enter to send / Shift+Enter to send.
+- Startup behavior: auto-start dsh web when VS Code starts (on/off); auto-open the panel on startup (on/off).
 - Open settings.yaml (opens `$DSH_HOME/settings.yaml` inside VS Code).
 - Shows the current extension version.
 - LLM-related settings (API Key, Base URL, etc.) are configured in the dsh Web UI.
@@ -258,9 +261,10 @@ vsce package
 #### 1.7 Entry Points and Commands
 - Sidebar whale icon entry.
 - `dsh` button at the top right of the workspace: opens the dsh panel in the current editor column (overlaying the current workspace).
-- Auto-open on VS Code startup:
-  - The workspace dsh panel opens automatically only when a running dsh web instance is detected.
-  - It does not auto-open when no instance is running.
+- Auto-open on VS Code startup: the workspace dsh panel opens automatically only when all of the following conditions hold:
+  - A running dsh web instance is detected (no auto-open when it is not running).
+  - The current directory is already in the dsh workspace (opening a new window/directory does not auto-open).
+  - The panel was not closed last time (closing it disables auto-open until the user opens the panel manually once).
 - Commands:
   - `dsh: Open Chat`
   - `dsh: New Session`
@@ -279,7 +283,7 @@ vsce package
 |---|---|---|---|
 | `dsh-vsc.dshPath` | string/null | null | Explicitly specify the dsh executable path |
 | `dsh-vsc.minDshVersion` | string | `0.1.0-rc.6` | Minimum required dsh version |
-| `dsh-vsc.autoStart` | boolean | true | Automatically check for/create a dsh instance when VS Code starts |
+| `dsh-vsc.autoStart` | boolean | true | Automatically check for/create a dsh instance when VS Code starts; when disabled, only reuses a running instance without spawning |
 | `dsh-vsc.dshUrl` | string/null | null | Explicitly specify the URL of an already running dsh web instance |
 | `dsh-vsc.sessionDisplay` | string | concise | Session display mode: concise / detailed |
 | `dsh-vsc.fontSize` | number | 13 | Chat font size (px) |

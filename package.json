@@ -95,7 +95,7 @@
         "dsh-vsc.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Spawn (or connect to) the dsh web server when a workspace window opens."
+          "description": "Auto-start dsh web when a workspace window opens; when disabled, still connects to an already running dsh web instance without spawning one."
         },
         "dsh-vsc.dshUrl": {
           "type": [
