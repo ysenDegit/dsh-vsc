@@ -2,6 +2,12 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.1.46] - 2026-08-19
+
+### Changed
+
+- README：删除"开发与打包"中的"发布到 VS Code Marketplace"章节。
+
 ## [0.1.45] - 2026-08-19
 
 ### Changed

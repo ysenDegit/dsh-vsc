@@ -155,20 +155,6 @@ npm install -g @vscode/vsce
 vsce package
 ```
 
-发布到 VS Code Marketplace：
-
-```bash
-# 本地发布（首次需登录 publisher，见 https://code.visualstudio.com/api/working-with-extensions/publishing-extension）
-vsce login ysen
-vsce publish
-```
-
-或使用仓库内置的 GitHub Actions 自动发布：打 `v*` 标签推送到 GitHub 即可（需先在仓库 Settings → Secrets 配置 `VSCODE_MARKETPLACE_TOKEN`）。
-
-```bash
-git tag v0.1.45 && git push origin v0.1.45
-```
-
 ---
 
 ## 五、已知限制
