@@ -30,10 +30,11 @@
 
 ### 3. 聊天界面与会话内容显示
 - 简洁会话 / 详细会话两种模式，默认简洁。
-  - 简洁模式隐藏工具调用与思考流程，只保留用户与 Assistant 最终输出。
-  - 简洁模式下底部统计行左侧常驻 `working` 标识（与 LLM 统计信息同行、层级更高），小灯泡颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中。
+  - 简洁模式隐藏工具调用与思考流程，只保留用户、Assistant 最终输出与命令节点。
+  - 简洁模式下底部统计行为同一行：左侧常驻 `working` 标识（圆点颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中）、居中 LLM 统计信息（缓存命中 / 输入输出）、右下角当前模型与推理强度。
 - 流式 Assistant 输出。
 - 工具调用与工具结果按 `callId` 配对。
+- `/` 命令执行结果以命令节点展示（`command/run` → `command/done`，含成功/失败信息）。
 - 上下文注入默认折叠，只保留最新一条。
 - 向上翻页时提供“加载更早”按钮，按需加载更早历史。
 - Markdown 渲染：
@@ -54,7 +55,7 @@
 - 停止按钮使用 `■` 图标。
 - `@` 文件引用：输入 `@` 弹出当前工作区文件列表，实时过滤。
 - `/` 命令菜单：输入 `/` 弹出 dsh 命令列表。
-- `/` 命令执行：发送以 `/` 开头的完整命令行时，先查 dsh 命令目录——已注册命令走 `commands/execute` 执行（不会作为普通对话发给模型，结果以命令节点显示在会话中）；未注册命令保持与 web 端一致，按普通消息发送。
+- `/` 命令执行：发送以 `/` 开头的完整命令行时直接调用 `commands/execute`——已注册命令被 host 执行（不会作为普通对话发给模型，结果以命令节点显示在会话中）；未注册命令返回空（`undefined`），与 web 端一致按普通消息发送；旧版 dsh 不支持命令 RPC 时自动回退普通消息。
 - 发送队列显示：显示“排队中”队列，支持编辑、插话（steer）、删除。
 - 模型与推理强度合并为一个 `模` 按钮，支持自定义模型名称。
 - 权限选择压缩为输入框左侧 `权` 按钮。
@@ -152,6 +153,20 @@ npm install -g @vscode/vsce
 
 # 2. 运行 vsce 打包
 vsce package
+```
+
+发布到 VS Code Marketplace：
+
+```bash
+# 本地发布（首次需登录 publisher，见 https://code.visualstudio.com/api/working-with-extensions/publishing-extension）
+vsce login ysen
+vsce publish
+```
+
+或使用仓库内置的 GitHub Actions 自动发布：打 `v*` 标签推送到 GitHub 即可（需先在仓库 Settings → Secrets 配置 `VSCODE_MARKETPLACE_TOKEN`）。
+
+```bash
+git tag v0.1.45 && git push origin v0.1.45
 ```
 
 ---
