@@ -1,12 +1,12 @@
 # Changelog
 
-本文件记录 dsh-vsc 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
+本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
 ## [0.1.45] - 2026-08-19
 
 ### Changed
 
-- 发布准备与文档同步：新增 marketplace 发布字段（repository/homepage/bugs），README 措辞修正。
+- 市场发布：扩展名改为 `dsh-vsc-weblike`（市场 ID `ysen.dsh-vsc-weblike`），新增发布字段与自动发布流程。
 
 ## [0.1.44] - 2026-08-18
 

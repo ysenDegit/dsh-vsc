@@ -1,4 +1,4 @@
-# DeepSeek Harness Chat (dsh-vsc)
+# DeepSeek Harness Chat (dsh-vsc-weblike)
 
 将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与双 WebSocket 事件流直接与 dsh 后端通信。
 
