@@ -79,6 +79,18 @@ test('tool call and result pair by callId', () => {
   assert.equal(items[0].resultText, 'ok')
 })
 
+test('tool result matches message.callId (real dsh shape)', () => {
+  const events = [
+    ev(1, 'tool/call', { turn: 1, step: 1, callId: 'c2', name: 'bash', arguments: '{"cmd":"ls"}' }),
+    ev(2, 'tool/result', { turn: 1, step: 1, message: { callId: 'c2', content: [{ type: 'text', text: 'out' }], isError: false } }),
+  ]
+  const { items } = foldEvents(events)
+  assert.equal(items.length, 1)
+  assert.equal(items[0].name, 'bash')
+  assert.equal(items[0].status, 'result')
+  assert.equal(items[0].resultText, 'out')
+})
+
 test('command run and done pair by commandId', () => {
   const events = [
     ev(1, 'command/run', { commandId: 'cmd-1', name: 'compact', args: '', source: { kind: 'user' } }),

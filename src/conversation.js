@@ -110,12 +110,15 @@ function foldEvents(events) {
         break
       case 'tool/result': {
         const text = extractText(data.message?.content)
-        const callId = data.message?.source?.callId || data.message?.content?.[0]?.toolCallId
+        // dsh 的 tool/result 把 callId 挂在 data.message.callId 上（tool/call 的 data.callId 与之相等）；
+        // 兼容历史/投影里的 source.callId 与 content[].toolCallId 形态。
+        const callId = data.message?.callId ?? data.callId ?? data.message?.source?.callId ?? data.message?.content?.[0]?.toolCallId
+        const isError = Boolean(data.error || data.message?.isError)
         const existing = items.find((item) => item.type === 'tool' && item.callId === callId)
         if (existing) {
           existing.status = 'result'
           existing.resultText = text
-          existing.isError = Boolean(data.error)
+          existing.isError = isError
         } else {
           items.push({
             type: 'tool',
@@ -125,7 +128,7 @@ function foldEvents(events) {
             arguments: '',
             status: 'result',
             resultText: text,
-            isError: Boolean(data.error),
+            isError,
           })
         }
         break

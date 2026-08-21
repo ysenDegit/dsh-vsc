@@ -22,6 +22,11 @@ function getWebviewHtml(nonce) {
       --error: var(--vscode-errorForeground, #f38ba8);
       --hover: var(--vscode-list-hoverBackground, #313244);
       --code-bg: var(--vscode-textCodeBlock-background, #11111b);
+      --ok: var(--vscode-testing-iconPassed, #a6e3a1);
+      --warn: var(--vscode-editorWarning-foreground, #f9e2af);
+      --tool-bg: color-mix(in srgb, var(--input-bg) 65%, transparent);
+      --chip-bg: color-mix(in srgb, var(--accent) 14%, transparent);
+      --chip-border: color-mix(in srgb, var(--accent) 32%, transparent);
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -38,12 +43,12 @@ function getWebviewHtml(nonce) {
 
     /* Status badge (top integrated bar) */
     .status-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); flex: 0 0 auto; }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #6c7086; }
-    .status-dot.ready { background: #a6e3a1; }
-    .status-dot.starting, .status-dot.discovering { background: #f9e2af; }
-    .status-dot.error { background: #f38ba8; }
-    .status-dot.stopped { background: #6c7086; }
-    .status-dot.reconnecting { background: #f9e2af; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .status-dot.ready { background: var(--ok); }
+    .status-dot.starting, .status-dot.discovering { background: var(--warn); }
+    .status-dot.error { background: var(--error); }
+    .status-dot.stopped { background: var(--muted); }
+    .status-dot.reconnecting { background: var(--warn); }
     .status-badge.retryable { cursor: pointer; border-bottom: 1px dotted var(--muted); }
     .status-badge.retryable:hover { color: var(--accent); }
 
@@ -91,29 +96,65 @@ function getWebviewHtml(nonce) {
     .empty-actions button { padding: 4px 14px; }
     .load-earlier-wrap { text-align: center; margin: 4px 0 8px; }
     .load-earlier-btn { font-size: 12px; padding: 4px 10px; }
-    .msg { margin-bottom: 14px; max-width: 100%; }
+    .msg { display: flex; flex-direction: column; margin-bottom: 10px; max-width: 100%; align-items: stretch; }
+    .msg.user { align-items: flex-end; }
+    .msg.assistant { align-items: flex-start; }
+    .msg.tool, .msg.command { align-items: flex-start; }
     .msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
     .bubble {
       border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
       white-space: normal; overflow-wrap: anywhere; line-height: 1.55;
     }
     .msg.user .bubble {
-      background: color-mix(in srgb, var(--accent) 16%, transparent);
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
       border-color: color-mix(in srgb, var(--accent) 38%, transparent);
-      max-width: 100%;
+      border-radius: 8px 8px 2px 8px;
+      max-width: 85%;
     }
-    .msg.assistant .bubble { background: transparent; }
+    .msg.assistant .bubble { background: transparent; max-width: 100%; }
     .msg.context .bubble { border-style: dashed; color: var(--muted); font-size: 12px; }
     .msg.note .bubble { border-color: var(--error); color: var(--error); font-size: 12px; }
-    .msg.tool .bubble { border-left: 3px solid var(--accent); font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
+    .msg.tool .bubble { border-left: 3px solid var(--accent); background: var(--tool-bg); font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; padding: 5px 8px; }
+    .msg.tool .tool-details { margin: 0; }
+    .msg.tool .tool-head { display: flex; align-items: baseline; gap: 6px; cursor: pointer; color: var(--accent); font-weight: 600; list-style: none; }
+    .msg.tool .tool-head::-webkit-details-marker { display: none; }
+    .msg.tool .tool-head::before { content: '▸'; flex: 0 0 auto; color: var(--muted); margin-right: 2px; transition: transform 0.12s ease; }
+    .msg.tool .tool-details[open] > summary.tool-head::before { content: '▾'; }
+    .msg.tool .tool-arg { flex: 1 1 auto; min-width: 0; color: var(--muted); font-weight: 400; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg.tool .tool-args, .msg.tool .tool-result {
+      margin: 6px 0 0; padding: 6px 8px; background: var(--code-bg);
+      border: 1px solid var(--border); border-radius: 4px;
+      max-height: 220px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      font-size: 11px;
+    }
+    .msg.tool .tool-running { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    .msg.tool .tool-done { color: var(--ok); font-size: 11px; margin-top: 4px; }
+    .msg.tool .tool-failed { color: var(--error); font-size: 11px; margin-top: 4px; }
     .msg.tool .tool-name { font-weight: 600; color: var(--accent); }
-    .msg.command .bubble { border-left: 3px solid var(--accent); font-size: 12px; }
+    .msg.command .bubble { border-left: 3px solid var(--accent); background: var(--tool-bg); font-size: 12px; padding: 5px 8px; }
     .msg.command .command-line { font-family: var(--vscode-editor-font-family, monospace); font-weight: 600; color: var(--accent); }
     .msg.command .command-outcome { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
     .msg.command .command-running { color: var(--muted); }
-    .msg.command .command-success { color: var(--ok, #2e7d32); }
+    .msg.command .command-success { color: var(--ok); }
     .msg.command .command-error { color: var(--error); }
-    .reasoning { color: var(--muted); font-size: 12px; margin-bottom: 6px; white-space: pre-wrap; }
+    .msg.command .command-inline { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; }
+    .msg.command .command-inline .command-outcome { margin-top: 0; }
+    .msg.command .command-chip {
+      display: inline-flex; align-items: center; white-space: nowrap;
+      font-family: var(--vscode-editor-font-family, monospace); font-weight: 600;
+      font-size: 11px; line-height: 1; padding: 2px 8px; border-radius: 10px;
+      background: var(--chip-bg); color: var(--accent); border: 1px solid var(--chip-border);
+    }
+    .reasoning-details { margin: 0 0 6px; border-left: 3px solid var(--accent); background: var(--tool-bg); border-radius: 6px; padding: 5px 8px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
+    .reasoning-details > summary.reasoning-title { list-style: none; cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 600; user-select: none; }
+    .reasoning-details > summary.reasoning-title::-webkit-details-marker { display: none; }
+    .reasoning-title::before { content: '▸'; display: inline-block; margin-right: 2px; font-size: 12px; transition: transform 0.12s ease; color: var(--muted); }
+    .reasoning-details[open] > summary.reasoning-title::before { content: '▾'; }
+    .reasoning-body { color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 0; padding-left: 12px; background: transparent; border: 0; }
+    .reasoning-live { align-self: stretch; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; margin-bottom: 6px; min-width: 0; border-left: 3px solid var(--accent); background: var(--tool-bg); border-radius: 6px; padding: 5px 8px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
+    .reasoning-status { flex: 0 0 auto; color: var(--accent); font-weight: 600; font-size: 12px; }
+    .reasoning-sep { flex: 0 0 auto; color: var(--muted); }
+    .reasoning-stream { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 12px; }
     .cursor::after { content: '▍'; color: var(--accent); animation: blink 1s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
 
@@ -126,7 +167,7 @@ function getWebviewHtml(nonce) {
     .bubble pre code { background: transparent; padding: 0; }
     .tok-keyword { color: #c792ea; }
     .tok-string { color: #c3e88d; }
-    .tok-comment { color: #6c7086; font-style: italic; }
+    .tok-comment { color: var(--muted); font-style: italic; }
     .tok-number { color: #f78c6c; }
     .math-inline { padding: 0 2px; font-family: var(--vscode-editor-font-family, monospace); }
     .math-block { display: block; text-align: center; margin: 6px 0; font-family: var(--vscode-editor-font-family, monospace); }
@@ -163,9 +204,9 @@ function getWebviewHtml(nonce) {
       font-weight: 600; font-size: 11px; color: var(--fg);
     }
     .work-bulb { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: currentColor; color: var(--muted); }
-    .work-indicator.thinking .work-bulb { color: #a6e3a1; }
-    .work-indicator.tool .work-bulb { color: #f38ba8; }
-    .work-indicator.output .work-bulb { color: #89b4fa; }
+    .work-indicator.thinking .work-bulb { color: var(--ok); }
+    .work-indicator.tool .work-bulb { color: var(--error); }
+    .work-indicator.output .work-bulb { color: var(--accent); }
     .queue-dock { display: none; flex-direction: column; gap: 4px; margin-bottom: 6px; }
     .queue-dock.open { display: flex; }
     .queue-item {
@@ -207,7 +248,7 @@ function getWebviewHtml(nonce) {
     }
     .question-panel .q-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
     .question-panel .q-error { color: var(--error); font-size: 11px; margin-bottom: 6px; }
-    .approval-panel { border-left: 3px solid #f9e2af; }
+    .approval-panel { border-left: 3px solid var(--warn); }
     .approval-panel .a-tool { font-weight: 600; }
     .approval-panel .a-reason { color: var(--muted); font-size: 12px; margin-top: 4px; white-space: pre-wrap; }
     .todo-dock {
@@ -222,9 +263,12 @@ function getWebviewHtml(nonce) {
     .todo-dock .todo-list { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
     .todo-dock .todo-item { display: flex; gap: 6px; align-items: center; }
     .todo-dock .todo-status { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
-    .todo-dock .todo-status.completed { background: #a6e3a1; }
-    .todo-dock .todo-status.in_progress { background: #f9e2af; }
-    .todo-dock .todo-status.pending { background: #6c7086; }
+    .todo-dock .todo-status.completed { background: var(--ok); }
+    .todo-dock .todo-status.in_progress { background: var(--warn); }
+    .todo-dock .todo-status.pending { background: var(--muted); }
+    .todo-dock .todo-toggle { flex: 0 0 auto; color: var(--muted); font-size: 11px; line-height: 1; user-select: none; }
+    .todo-dock .todo-header:hover .todo-toggle { color: var(--accent); }
+    .todo-dock.collapsed .todo-list { display: none; }
     .permission-button {
       display: none; min-width: 36px; max-width: 36px; padding: 0 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -298,7 +342,7 @@ function getWebviewHtml(nonce) {
       padding: 0; border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
       color: var(--muted); cursor: pointer; font-size: 11px; text-align: center;
     }
-    .composer-notice { color: #d9534f; font-size: 11px; margin: 2px 0 6px; }
+    .composer-notice { color: var(--error); font-size: 11px; margin: 2px 0 6px; }
     .msg-images { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
     .msg-image img { max-height: 180px; max-width: 100%; border-radius: 6px; display: block; }
     .img-placeholder {
@@ -366,7 +410,7 @@ function getWebviewHtml(nonce) {
     .ws-path { font-size: 12px; word-break: break-all; }
     .ws-meta { font-size: 11px; color: var(--muted); }
     .ws-rename-input { width: 110px; }
-    .ws-del-btn { color: #f38ba8; border-color: #f38ba8; }
+    .ws-del-btn { color: var(--error); border-color: var(--error); }
     .ws-arch-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
     .settings-field { margin-bottom: 8px; }
     .settings-field:last-child { margin-bottom: 0; }
@@ -550,6 +594,7 @@ function getWebviewHtml(nonce) {
     var modelInfoEl = $('modelInfo');
     var queueDockEl = $('queueDock');
     var todoDockEl = $('todoDock');
+    var todosCollapsed = false;
     var questionPanelEl = $('questionPanel');
     var approvalPanelEl = $('approvalPanel');
     var composerRowEl = $('composerRow');
@@ -644,8 +689,10 @@ function getWebviewHtml(nonce) {
         'meta.note': '提示',
         'meta.context': '上下文',
         'meta.command': '命令',
+        'reasoningTitle': 'Think',
         'generating': '生成中…',
         'contextInjection': '上下文注入',
+        'toolRunning': '运行中…',
         'commandRunning': '执行中…',
         'commandDone': '已执行',
         'commandFailed': '执行失败',
@@ -775,8 +822,10 @@ function getWebviewHtml(nonce) {
         'meta.note': 'Note',
         'meta.context': 'Context',
         'meta.command': 'Command',
+        'reasoningTitle': 'Think',
         'generating': 'Generating…',
         'contextInjection': 'Context Injection',
+        'toolRunning': 'Running…',
         'commandRunning': 'Running…',
         'commandDone': 'Done',
         'commandFailed': 'Failed',
@@ -1415,42 +1464,108 @@ function getWebviewHtml(nonce) {
     function renderItem(item) {
       var wrap = document.createElement('div');
       wrap.className = 'msg ' + item.type;
-      if (item.type !== 'user') {
-        var meta = document.createElement('div');
-        meta.className = 'meta';
-        var label = item.type === 'assistant' ? t('meta.assistant') : item.type === 'tool' ? t('meta.tool') : item.type === 'note' ? t('meta.note') : item.type === 'command' ? t('meta.command') : t('meta.context');
-        meta.innerHTML = '<span>' + label + '</span>' + (item.partial ? '<span class="status-badge">' + t('generating') + '</span>' : '');
-        wrap.appendChild(meta);
-      }
 
       var bubble = document.createElement('div');
       bubble.className = 'bubble';
+      var needBubble = true;
 
       if (item.type === 'assistant') {
-        if (item.reasoning && state.sessionDisplay !== 'concise') {
-          var r = document.createElement('div');
-          r.className = 'reasoning';
-          r.textContent = item.reasoning;
-          bubble.appendChild(r);
+        var hasText = !!(item.text && String(item.text).trim());
+        var hasReasoning = !!(item.reasoning && String(item.reasoning).trim());
+        needBubble = hasText || (item.partial && !hasReasoning);
+        if (!hasText && !hasReasoning && !item.partial) {
+          // 空消息（常为仅含工具调用、无文本/推理）不渲染空白气泡。
+          wrap.style.display = 'none';
         }
-        bubble.innerHTML += renderMarkdown(item.text || '');
+        if (hasReasoning && state.sessionDisplay !== 'concise') {
+          if (item.partial) {
+            // 流式思考：左侧为输出状态（Think），右侧为单行流式内容（不换行、无横向滚动条、高度保持一行）。
+            var live = document.createElement('div');
+            live.className = 'reasoning-live';
+            var statusEl = document.createElement('span');
+            statusEl.className = 'reasoning-status';
+            statusEl.textContent = 'Thinking';
+            var sepEl = document.createElement('span');
+            sepEl.className = 'reasoning-sep';
+            sepEl.textContent = '·';
+            var streamEl = document.createElement('span');
+            streamEl.className = 'reasoning-stream';
+            streamEl.textContent = item.reasoning;
+            live.appendChild(statusEl);
+            live.appendChild(sepEl);
+            live.appendChild(streamEl);
+            wrap.appendChild(live);
+            // 内容不断向右增长，视窗固定在最新处（旧内容向左滚动越出视野）。
+            setTimeout(function () { streamEl.scrollLeft = streamEl.scrollWidth; }, 0);
+          } else {
+            // 生成结束自动折叠为一行 "Think"，点击可展开完整思维链（与正式输出分开）。
+            var rd = document.createElement('details');
+            rd.className = 'reasoning-details';
+            var rsum = document.createElement('summary');
+            rsum.className = 'reasoning-title';
+            rsum.textContent = 'Think';
+            rd.appendChild(rsum);
+            var rbody = document.createElement('pre');
+            rbody.className = 'reasoning-body';
+            rbody.textContent = item.reasoning;
+            rd.appendChild(rbody);
+            wrap.appendChild(rd);
+          }
+        }
+        if (hasText) bubble.innerHTML += renderMarkdown(item.text);
         if (item.partial) bubble.classList.add('cursor');
       } else if (item.type === 'tool') {
-        bubble.innerHTML = '<div class="tool-name">' + escapeHtml(item.name || 'tool') + '</div>'
-          + '<div>' + escapeHtml(toolSummary(item)) + '</div>';
+        var toolName = escapeHtml(item.name || 'tool');
+        var toolArgFull = '';
+        var toolArgShort = '';
+        if (item.arguments) {
+          try {
+            var toolArgs = JSON.parse(item.arguments);
+            toolArgFull = JSON.stringify(toolArgs, null, 2);
+            var toolKeys = Object.keys(toolArgs);
+            if (toolKeys.length) {
+              var toolFirst = toolArgs[toolKeys[0]];
+              var toolVal = typeof toolFirst === 'string' ? toolFirst : JSON.stringify(toolFirst);
+              if (toolVal.length > 60) toolVal = toolVal.slice(0, 60) + '…';
+              toolArgShort = toolVal;
+            }
+          } catch (e) { toolArgFull = item.arguments; }
+        }
+        var toolHead = '<summary class="tool-head"><span class="tool-name">' + toolName + '</span>'
+          + (toolArgShort ? '<span class="tool-arg">' + escapeHtml(toolArgShort) + '</span>' : '')
+          + '</summary>';
+        var toolBody = '';
+        if (toolArgFull) toolBody += '<pre class="tool-args">' + escapeHtml(toolArgFull) + '</pre>';
+        var toolDone = item.status === 'result' || !!item.resultText || !!item.isError;
+        if (!toolDone) {
+          toolBody += '<div class="tool-running">' + escapeHtml(t('toolRunning')) + '</div>';
+        } else if (item.resultText) {
+          toolBody += '<pre class="tool-result">' + escapeHtml(item.resultText) + '</pre>';
+        } else if (item.isError) {
+          toolBody += '<div class="tool-failed">' + escapeHtml(t('commandFailed')) + '</div>';
+        } else {
+          toolBody += '<div class="tool-done">' + escapeHtml(t('commandDone')) + '</div>';
+        }
+        bubble.innerHTML = '<details class="tool-details">' + toolHead + toolBody + '</details>';
       } else if (item.type === 'note') {
         bubble.textContent = item.text || '';
       } else if (item.type === 'command') {
         var cmdLine = '/' + (item.name || '?') + (item.args || '');
-        var cmdHtml = '<div class="command-line">' + escapeHtml(cmdLine) + '</div>';
+        var outcomeClass;
+        var outcomeText;
         if (item.outcome) {
-          var outcomeClass = item.outcome.kind === 'error' ? 'command-error' : 'command-success';
-          var outcomeText = item.outcome.text || (item.outcome.kind === 'error' ? t('commandFailed') : t('commandDone'));
-          cmdHtml += '<div class="command-outcome ' + outcomeClass + '">' + escapeHtml(outcomeText) + '</div>';
+          outcomeClass = item.outcome.kind === 'error' ? 'command-error' : 'command-success';
+          outcomeText = item.outcome.text || (item.outcome.kind === 'error' ? t('commandFailed') : t('commandDone'));
         } else {
-          cmdHtml += '<div class="command-outcome command-running">' + escapeHtml(t('commandRunning')) + '</div>';
+          outcomeClass = 'command-running';
+          outcomeText = t('commandRunning');
         }
-        bubble.innerHTML = cmdHtml;
+        var outcomeHtml = '<div class="command-outcome ' + outcomeClass + '">' + escapeHtml(outcomeText) + '</div>';
+        if (item.name === 'permission') {
+          bubble.innerHTML = '<div class="command-inline"><span class="command-chip">' + escapeHtml(cmdLine) + '</span>' + outcomeHtml + '</div>';
+        } else {
+          bubble.innerHTML = '<div class="command-line">' + escapeHtml(cmdLine) + '</div>' + outcomeHtml;
+        }
       } else if (item.type === 'context') {
         var ctxSummary = item.summary || (item.text || '').split('\\n').find(function (line) { return line.trim().length > 0; }) || t('contextInjection');
         bubble.innerHTML = '<details class="context-details"><summary>' + escapeHtml(ctxSummary) + '</summary><pre>'
@@ -1489,7 +1604,7 @@ function getWebviewHtml(nonce) {
       } else {
         bubble.innerHTML = renderMarkdown(item.text || '');
       }
-      wrap.appendChild(bubble);
+      if (needBubble) wrap.appendChild(bubble);
       return wrap;
     }
 
@@ -1949,9 +2064,8 @@ function getWebviewHtml(nonce) {
     }
 
     function updateWorkingBar() {
-      var show = state.sessionDisplay === 'concise';
-      workIndicatorEl.style.display = show ? 'inline-flex' : 'none';
-      if (!show) return;
+      // 会话显示模式（简洁/详细）均显示左下角工作状态（working）。
+      workIndicatorEl.style.display = 'inline-flex';
       workIndicatorEl.className = 'work-indicator ' + workingPhase();
     }
 
@@ -2033,10 +2147,16 @@ function getWebviewHtml(nonce) {
       progress.className = 'todo-progress';
       progress.textContent = progressParts.join(' · ');
       var toggle = document.createElement('span');
-      toggle.textContent = '▾';
+      toggle.className = 'todo-toggle';
+      toggle.textContent = todosCollapsed ? '▸' : '▾';
       header.appendChild(title);
       header.appendChild(toggle);
       header.appendChild(progress);
+      header.addEventListener('click', function () {
+        todosCollapsed = !todosCollapsed;
+        toggle.textContent = todosCollapsed ? '▸' : '▾';
+        todoDockEl.classList.toggle('collapsed', todosCollapsed);
+      });
       todoDockEl.appendChild(header);
       var list = document.createElement('div');
       list.className = 'todo-list';
@@ -2053,6 +2173,7 @@ function getWebviewHtml(nonce) {
           list.appendChild(item);
         })(todos[j]);
       }
+      todoDockEl.classList.toggle('collapsed', todosCollapsed);
       todoDockEl.appendChild(list);
     }
 
