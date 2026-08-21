@@ -4,7 +4,11 @@
 
 将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与双 WebSocket 事件流直接与 dsh 后端通信。
 
+> 由于本人测试环境有限，陆陆续续发现了很多 BUG；如遇恶性 BUG，请邮件 ysen96@qq.com，我将尽快修复。
+
 Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and workspace panel. The extension does not embed the dsh web frontend; instead it talks directly to the dsh backend over HTTP RPC and dual WebSocket event streams.
+
+> Due to a limited testing environment, bugs have surfaced over time. If you encounter a critical bug, please email ysen96@qq.com and I will fix it as soon as possible.
 
 ![插件截图](assets/Screenshot.png)
 
@@ -20,7 +24,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - 显式 `dsh-vsc.dshUrl`
   - 状态文件 `~/.dsh/vscode-extension.json`
   - 默认地址 `http://127.0.0.1:3080`
-- 若未运行，则自动启动 `dsh web --port 0`。
+- 若未运行，则自动启动 `dsh web --port 0 --no-open`。
 - VS Code 关闭时，自动退出由插件启动的 dsh 实例；复用已有实例时仅断开连接。
 - 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误；停止/错误状态可点击重新检测 dsh web 实例。
 
@@ -187,7 +191,7 @@ vsce package
   - explicit `dsh-vsc.dshUrl`
   - state file `~/.dsh/vscode-extension.json`
   - default address `http://127.0.0.1:3080`
-- If not running, automatically starts `dsh web --port 0`.
+- If not running, automatically starts `dsh web --port 0 --no-open`.
 - When VS Code closes, the extension automatically exits the dsh instance it started; when reusing an existing instance, it only disconnects.
 - Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error; click it in the stopped/error state to re-detect the dsh web instance.
 

@@ -65,7 +65,7 @@ class DshService extends EventEmitter {
         return
       }
 
-      // 未运行：生成一个新的 dsh 实例（dsh web --port 0，随机 loopback 端口）。
+      // 未运行：生成一个新的 dsh 实例（dsh web --port 0 --no-open，随机 loopback 端口，不打开浏览器）。
       this.launcher = await discoverDsh({
         minimumVersion: this.options.minimumVersion,
         explicitPath: this.options.explicitPath,

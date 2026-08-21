@@ -11,7 +11,16 @@ function launcherNeedsShell(command, platform = process.platform) {
 }
 
 /**
- * Spawn `dsh web --port 0` and resolve once the ready URL line is observed.
+ * Build the dsh web argv. 固定追加 `--no-open`（放在末尾，避免被任意 extraArgs 覆盖），
+ * 防止 dsh 自动打开默认浏览器；`--port 0` 让 dsh 选一个空闲 loopback 端口。
+ */
+function webArgs(launcher, extraArgs = []) {
+  return [...launcher.args, 'web', '--port', '0', ...extraArgs, '--no-open']
+}
+
+/**
+ * Spawn `dsh web --port 0 --no-open` and resolve once the ready URL line is observed.
+ * `--no-open` 防止 dsh 自动打开默认浏览器（插件内嵌自己的界面，无需打开浏览器）。
  */
 function startDshWeb(options) {
   const {
@@ -24,7 +33,7 @@ function startDshWeb(options) {
   } = options
 
   return new Promise((resolve, reject) => {
-    const args = [...launcher.args, 'web', '--port', '0', ...extraArgs]
+    const args = webArgs(launcher, extraArgs)
     const useShell = launcherNeedsShell(launcher.command)
     const childEnv = { ...(env || process.env) }
     // dsh web 的依赖（parseurl 等）可能触发 Node 的 url.parse() 弃用告警；
@@ -123,4 +132,4 @@ function makeServer(child, baseUrl, port, stderrBuf) {
   }
 }
 
-module.exports = { startDshWeb, launcherNeedsShell }
+module.exports = { startDshWeb, launcherNeedsShell, webArgs }

@@ -2,7 +2,14 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [1.0.6]
+## [1.0.7]
+
+### Changed
+
+- 自动启动 dsh 的进程命令改为 `dsh web --port 0 --no-open`：此前自启会触发 dsh 打开默认浏览器，现通过 `--no-open` 禁止打开浏览器（插件内嵌自己的聊天界面，无需外部浏览器）。新增 `server.webArgs` 纯函数统一生成启动参数，并补充回归测试确保 `--no-open` 始终位于参数末尾、不被覆盖。
+- README 简介新增 Bug 反馈提示：由于作者测试环境有限、BUG 被发现得较零散，如遇恶性 BUG 可邮件 ysen96@qq.com，将尽快修复。
+
+## [1.0.6] - 2026-08-22
 
 ### Changed
 
