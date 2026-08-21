@@ -81,11 +81,14 @@ function getWebviewHtml(nonce) {
     .mode-welcome { max-width: 420px; margin: 0 auto; text-align: left; }
     .mode-welcome-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
     .mode-welcome-desc { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+    .mode-welcome-hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
     .mode-welcome .preset-list { max-height: none; }
 
     /* Chat area */
     .chat { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 10px; }
     .empty { color: var(--muted); text-align: center; margin-top: 40px; line-height: 1.8; }
+    .empty-actions { margin-top: 12px; text-align: center; }
+    .empty-actions button { padding: 4px 14px; }
     .load-earlier-wrap { text-align: center; margin: 4px 0 8px; }
     .load-earlier-btn { font-size: 12px; padding: 4px 10px; }
     .msg { margin-bottom: 14px; max-width: 100%; }
@@ -337,6 +340,17 @@ function getWebviewHtml(nonce) {
     .settings-section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
     .settings-subsection { margin: 8px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--border); }
     .settings-subsection-title { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+    .settings-section a { color: var(--accent); cursor: pointer; word-break: break-all; }
+    .settings-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+    .settings-title-row h3 { margin: 0; }
+    .ws-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .ws-row:last-child { margin-bottom: 0; }
+    .ws-info { flex: 1; min-width: 0; }
+    .ws-path { font-size: 12px; word-break: break-all; }
+    .ws-meta { font-size: 11px; color: var(--muted); }
+    .ws-rename-input { width: 110px; }
+    .ws-del-btn { color: #f38ba8; border-color: #f38ba8; }
+    .ws-arch-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
     .settings-field { margin-bottom: 8px; }
     .settings-field:last-child { margin-bottom: 0; }
     .settings-field .field-label { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
@@ -465,6 +479,7 @@ function getWebviewHtml(nonce) {
       contextBarOpacity: 30,
       autoStart: true,
       autoOpenChat: true,
+      showArchivedSessions: false,
       queueItems: [],
       hasMoreEarlier: false,
       loadingEarlier: false,
@@ -483,6 +498,8 @@ function getWebviewHtml(nonce) {
     var renderedMode = null;
     var renderedLang = null;
     var conversationTimer = 0;
+    // 设置弹窗当前激活标签页（settingsData 重渲染后恢复，用于"管理工作区"刷新）。
+    var settingsActiveTab = 'display';
 
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
@@ -564,6 +581,8 @@ function getWebviewHtml(nonce) {
         'composerPlaceholder': 'Enter 发送 · Shift+Enter 换行 · @ 引用文件 · / 命令',
         'composerPlaceholderAlt': 'Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令',
         'emptyReady': '新会话已就绪。输入消息开始与 DeepSeek Harness 对话。',
+        'emptyNoWorkspace': '没有打开的工作区，无法开始会话。',
+        'addWorkspaceBtn': '将当前文件夹添加到DSH工作区',
         'conciseHidden': '简洁模式已隐藏工具调用与思考流程。',
         'blankTitle': '新会话',
         'session': '会话',
@@ -609,6 +628,9 @@ function getWebviewHtml(nonce) {
         'settingsDone': '完成',
         'settingsReadonly': '当前 settings provider 为只读，无法修改配置。',
         'pluginVersion': '插件版本',
+        'dshServiceUrlSection': 'dsh 服务地址',
+        'dshServiceUrlNone': '未连接',
+        'dshWebOpenTitle': '在浏览器中打开 dsh Web UI',
         'sessionDisplaySection': '会话显示',
         'sessionDisplayLabel': '会话显示模式',
         'concise': '简洁会话',
@@ -626,7 +648,21 @@ function getWebviewHtml(nonce) {
         'contextOpacityLabel': '填充不透明度',
         'tabDisplay': '显示',
         'tabGeneral': '通用',
+        'tabWorkspace': '工作区',
         'tabAbout': '关于',
+        'workspaceCurrentSection': '当前工作区',
+        'workspacePathLabel': '目录',
+        'workspaceIdLabel': '工作区 ID',
+        'workspaceSessionsLabel': '会话数：',
+        'workspaceActiveSuffix': '（工作中）',
+        'workspaceCountSeparator': '+',
+        'workspaceArchivedSuffix': '（已归档）',
+        'workspaceNone': '未添加工作区',
+        'showArchivedSessionsLabel': '显示已归档会话',
+        'workspaceAllSection': '所有 dsh 工作区',
+        'workspaceRenameBtn': '重命名',
+        'workspaceDeleteBtn': '删除',
+        'workspaceRefreshBtn': '刷新',
         'languageSection': '界面语言',
         'languageLabel': '插件界面语言',
         'languageZh': '中文',
@@ -668,6 +704,8 @@ function getWebviewHtml(nonce) {
         'composerPlaceholder': 'Enter to send · Shift+Enter for newline · @ files · / commands',
         'composerPlaceholderAlt': 'Shift+Enter to send · Enter for newline · @ files · / commands',
         'emptyReady': 'New session ready. Type a message to start chatting with DeepSeek Harness.',
+        'emptyNoWorkspace': 'No workspace is open; the session cannot start.',
+        'addWorkspaceBtn': 'Add the current folder to the DSH workspace',
         'conciseHidden': 'Concise mode has hidden tool calls and reasoning.',
         'blankTitle': 'New Session',
         'session': 'Session',
@@ -713,6 +751,9 @@ function getWebviewHtml(nonce) {
         'settingsDone': 'Done',
         'settingsReadonly': 'The current settings provider is read-only and cannot be modified.',
         'pluginVersion': 'Plugin Version',
+        'dshServiceUrlSection': 'dsh Service URL',
+        'dshServiceUrlNone': 'Not connected',
+        'dshWebOpenTitle': 'Open the dsh Web UI in the browser',
         'sessionDisplaySection': 'Session Display',
         'sessionDisplayLabel': 'Session display mode',
         'concise': 'Concise',
@@ -730,7 +771,21 @@ function getWebviewHtml(nonce) {
         'contextOpacityLabel': 'Fill opacity',
         'tabDisplay': 'Display',
         'tabGeneral': 'General',
+        'tabWorkspace': 'Workspace',
         'tabAbout': 'About',
+        'workspaceCurrentSection': 'Current Workspace',
+        'workspacePathLabel': 'Folder',
+        'workspaceIdLabel': 'Workspace ID',
+        'workspaceSessionsLabel': 'Sessions: ',
+        'workspaceActiveSuffix': ' (active)',
+        'workspaceCountSeparator': ' + ',
+        'workspaceArchivedSuffix': ' (archived)',
+        'workspaceNone': 'No workspace added',
+        'showArchivedSessionsLabel': 'Show archived sessions',
+        'workspaceAllSection': 'All dsh Workspaces',
+        'workspaceRenameBtn': 'Rename',
+        'workspaceDeleteBtn': 'Delete',
+        'workspaceRefreshBtn': 'Refresh',
         'languageSection': 'Language',
         'languageLabel': 'Plugin UI language',
         'languageZh': '中文',
@@ -1259,6 +1314,16 @@ function getWebviewHtml(nonce) {
           // 有更早历史时顶部已有“加载更早”按钮，不再显示“新会话已就绪”提示；
           // 同时清掉残留的空提示/旧消息节点，只保留按钮。
           if (!state.hasMoreEarlier) {
+            if (!state.workspace) {
+              // 未添加工作区：提示 + “将当前文件夹添加到 dsh 工作区”按钮。
+              chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyNoWorkspace')) + '</div>'
+                + '<div class="empty-actions"><button id="addWorkspaceBtn" class="primary">' + escapeHtml(t('addWorkspaceBtn')) + '</button></div>';
+              var addWorkspaceBtn = document.getElementById('addWorkspaceBtn');
+              if (addWorkspaceBtn) {
+                addWorkspaceBtn.addEventListener('click', function () { post({ type: 'addWorkspace' }); });
+              }
+              return;
+            }
             chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyReady')) + '</div>';
             return;
           }
@@ -1374,7 +1439,7 @@ function getWebviewHtml(nonce) {
         var s = sessions[i];
         var opt = document.createElement('option');
         opt.value = s.sessionId;
-        opt.textContent = (s.running ? '● ' : '') + sessionDisplayTitle(s);
+        opt.textContent = (s.archived ? '🗄 ' : '') + (s.running ? '● ' : '') + sessionDisplayTitle(s);
         opt.selected = s.sessionId === current;
         selectEl.appendChild(opt);
       }
@@ -1432,6 +1497,11 @@ function getWebviewHtml(nonce) {
       var session = currentSession();
       var wrap = document.createElement('div');
       wrap.className = 'mode-welcome';
+      // 空白新会话默认停留在"新会话"模式：先显示就绪提示，再提供工作模式选择。
+      var hint = document.createElement('div');
+      hint.className = 'mode-welcome-hint';
+      hint.textContent = t('emptyReady');
+      wrap.appendChild(hint);
       var title = document.createElement('div');
       title.className = 'mode-welcome-title';
       title.textContent = t('selectMode');
@@ -2413,7 +2483,9 @@ function getWebviewHtml(nonce) {
       settingsContent.appendChild(versionSection);
 
       settingsNav.innerHTML = '';
+      // 记住当前激活的设置标签页，刷新（settingsData 重渲染）后恢复，而不是重置回"显示"。
       function activateSettingsTab(key) {
+        settingsActiveTab = key;
         for (var i = 0; i < settingsNav.children.length; i++) {
           settingsNav.children[i].classList.toggle('active', settingsNav.children[i].dataset.tab === key);
         }
@@ -2437,6 +2509,34 @@ function getWebviewHtml(nonce) {
 
       var aboutPane = makeSettingsPane('about', t('tabAbout'));
       aboutPane.appendChild(versionSection);
+
+      // dsh 服务地址：显示当前连接地址，点击在浏览器打开 dsh Web UI。
+      var dshServiceSection = document.createElement('div');
+      dshServiceSection.className = 'settings-section';
+      var dshServiceTitle = document.createElement('h3');
+      dshServiceTitle.textContent = t('dshServiceUrlSection');
+      dshServiceSection.appendChild(dshServiceTitle);
+      var dshServiceField = document.createElement('div');
+      dshServiceField.className = 'settings-field';
+      if (data.baseUrl) {
+        var dshLink = document.createElement('a');
+        dshLink.href = data.baseUrl;
+        dshLink.textContent = data.baseUrl;
+        dshLink.id = 'dshWebLink';
+        dshLink.title = t('dshWebOpenTitle');
+        dshLink.addEventListener('click', function (event) {
+          event.preventDefault();
+          post({ type: 'openDshWeb' });
+        });
+        dshServiceField.appendChild(dshLink);
+      } else {
+        var dshNone = document.createElement('span');
+        dshNone.className = 'field-status';
+        dshNone.textContent = t('dshServiceUrlNone');
+        dshServiceField.appendChild(dshNone);
+      }
+      dshServiceSection.appendChild(dshServiceField);
+      aboutPane.appendChild(dshServiceSection);
 
       if (!data.writable) {
         var hint = document.createElement('div');
@@ -2752,6 +2852,156 @@ function getWebviewHtml(nonce) {
 
       generalPane.appendChild(startupSection);
 
+      // 管理工作区：当前工作区信息 + 全部 dsh 工作区（重命名/删除/刷新/重新映射）。
+      // 会话数显示为 "工作中+已归档"，例如 3（工作中）+4（已归档），工作中数字加粗。
+      // 数量由宿主按可见会话口径计算（排除空白占位/子代理/已归档）后随 settingsData 下发。
+      function sessionCountFragment(activeCount, archivedCount) {
+        var frag = document.createDocumentFragment();
+        frag.appendChild(document.createTextNode(t('workspaceSessionsLabel')));
+        var activeB = document.createElement('b');
+        activeB.textContent = String(activeCount);
+        frag.appendChild(activeB);
+        frag.appendChild(document.createTextNode(t('workspaceActiveSuffix')));
+        frag.appendChild(document.createTextNode(t('workspaceCountSeparator')));
+        frag.appendChild(document.createTextNode(String(archivedCount)));
+        frag.appendChild(document.createTextNode(t('workspaceArchivedSuffix')));
+        return frag;
+      }
+      var workspacePane = makeSettingsPane('workspace', t('tabWorkspace'));
+      var wsCurrentSection = document.createElement('div');
+      wsCurrentSection.className = 'settings-section';
+      var wsCurrentTitle = document.createElement('h3');
+      wsCurrentTitle.textContent = t('workspaceCurrentSection');
+      wsCurrentSection.appendChild(wsCurrentTitle);
+      if (data.currentWorkspaceId) {
+        var currentWs = null;
+        var wsList = data.workspaces || [];
+        for (var wi2 = 0; wi2 < wsList.length; wi2++) {
+          if (wsList[wi2].workspaceId === data.currentWorkspaceId) { currentWs = wsList[wi2]; break; }
+        }
+        var curPathField = document.createElement('div');
+        curPathField.className = 'settings-field';
+        var curPathLabel = document.createElement('div');
+        curPathLabel.className = 'field-label';
+        var curPathName = document.createElement('span');
+        curPathName.textContent = t('workspacePathLabel');
+        curPathLabel.appendChild(curPathName);
+        var curPathValue = document.createElement('span');
+        curPathValue.className = 'field-status';
+        curPathValue.textContent = data.currentFolderPath || (currentWs ? currentWs.path : '—');
+        curPathLabel.appendChild(curPathValue);
+        curPathField.appendChild(curPathLabel);
+        wsCurrentSection.appendChild(curPathField);
+        var curIdField = document.createElement('div');
+        curIdField.className = 'settings-field';
+        var curIdLabel = document.createElement('div');
+        curIdLabel.className = 'field-label';
+        var curIdName = document.createElement('span');
+        curIdName.textContent = t('workspaceIdLabel');
+        curIdLabel.appendChild(curIdName);
+        var curIdValue = document.createElement('span');
+        curIdValue.className = 'field-status';
+        curIdValue.textContent = data.currentWorkspaceId;
+        curIdLabel.appendChild(curIdValue);
+        curIdField.appendChild(curIdLabel);
+        wsCurrentSection.appendChild(curIdField);
+        if (currentWs) {
+          var curCountField = document.createElement('div');
+          curCountField.className = 'settings-field';
+          var curCountLabel = document.createElement('div');
+          curCountLabel.className = 'field-label';
+          var curCountName = document.createElement('span');
+          curCountName.appendChild(sessionCountFragment(currentWs.activeCount || 0, currentWs.archivedCount || 0));
+          curCountLabel.appendChild(curCountName);
+          curCountField.appendChild(curCountLabel);
+          wsCurrentSection.appendChild(curCountField);
+        }
+      } else {
+        var wsNoneField = document.createElement('div');
+        wsNoneField.className = 'settings-field';
+        var wsNoneSpan = document.createElement('span');
+        wsNoneSpan.className = 'field-status';
+        wsNoneSpan.textContent = t('workspaceNone');
+        wsNoneField.appendChild(wsNoneSpan);
+        wsCurrentSection.appendChild(wsNoneField);
+      }
+      workspacePane.appendChild(wsCurrentSection);
+
+      var wsAllSection = document.createElement('div');
+      wsAllSection.className = 'settings-section';
+      var wsAllTitleRow = document.createElement('div');
+      wsAllTitleRow.className = 'settings-title-row';
+      var wsAllTitle = document.createElement('h3');
+      wsAllTitle.textContent = t('workspaceAllSection');
+      wsAllTitleRow.appendChild(wsAllTitle);
+      // "显示已归档会话"开关：与会话列表过滤联动（dsh-vsc.showArchivedSessions）。
+      var wsArchLabel = document.createElement('label');
+      wsArchLabel.className = 'ws-arch-label';
+      var wsArchCheck = document.createElement('input');
+      wsArchCheck.type = 'checkbox';
+      wsArchCheck.checked = data.showArchivedSessions === true;
+      var wsArchName = document.createElement('span');
+      wsArchName.textContent = t('showArchivedSessionsLabel');
+      wsArchLabel.appendChild(wsArchCheck);
+      wsArchLabel.appendChild(wsArchName);
+      wsAllTitleRow.appendChild(wsArchLabel);
+      wsArchCheck.addEventListener('change', function () {
+        post({ type: 'setShowArchivedSessions', value: wsArchCheck.checked });
+      });
+      var wsRefreshBtn = document.createElement('button');
+      wsRefreshBtn.textContent = t('workspaceRefreshBtn');
+      wsRefreshBtn.addEventListener('click', function () { post({ type: 'workspaceRefresh' }); });
+      wsAllTitleRow.appendChild(wsRefreshBtn);
+      wsAllSection.appendChild(wsAllTitleRow);
+      var wsList2 = data.workspaces || [];
+      if (wsList2.length === 0) {
+        var wsEmptyField = document.createElement('div');
+        wsEmptyField.className = 'settings-field';
+        var wsEmptySpan = document.createElement('span');
+        wsEmptySpan.className = 'field-status';
+        wsEmptySpan.textContent = t('workspaceNone');
+        wsEmptyField.appendChild(wsEmptySpan);
+        wsAllSection.appendChild(wsEmptyField);
+      }
+      for (var wsi = 0; wsi < wsList2.length; wsi++) {
+        (function (ws) {
+          var row = document.createElement('div');
+          row.className = 'ws-row';
+          var info = document.createElement('div');
+          info.className = 'ws-info';
+          var pathDiv = document.createElement('div');
+          pathDiv.className = 'ws-path';
+          pathDiv.textContent = ws.path;
+          var metaDiv = document.createElement('div');
+          metaDiv.className = 'ws-meta';
+          metaDiv.appendChild(sessionCountFragment(ws.activeCount || 0, ws.archivedCount || 0));
+          metaDiv.appendChild(document.createTextNode(' · ' + (ws.workspaceId === data.currentWorkspaceId ? '← ' + t('tabWorkspace') : ws.workspaceId)));
+          info.appendChild(pathDiv);
+          info.appendChild(metaDiv);
+          row.appendChild(info);
+          var renameInput = document.createElement('input');
+          renameInput.className = 'ws-rename-input';
+          renameInput.value = ws.title || '';
+          renameInput.placeholder = ws.title || '';
+          row.appendChild(renameInput);
+          var renameBtn = document.createElement('button');
+          renameBtn.textContent = t('workspaceRenameBtn');
+          renameBtn.addEventListener('click', function () {
+            post({ type: 'workspaceRename', workspaceId: ws.workspaceId, title: renameInput.value });
+          });
+          row.appendChild(renameBtn);
+          var delBtn = document.createElement('button');
+          delBtn.className = 'ws-del-btn';
+          delBtn.textContent = t('workspaceDeleteBtn');
+          delBtn.addEventListener('click', function () {
+            post({ type: 'workspaceDelete', workspaceId: ws.workspaceId });
+          });
+          row.appendChild(delBtn);
+          wsAllSection.appendChild(row);
+        })(wsList2[wsi]);
+      }
+      workspacePane.appendChild(wsAllSection);
+
       var webNoticeSection = document.createElement('div');
       webNoticeSection.className = 'settings-section';
       var webNotice = document.createElement('div');
@@ -2759,7 +3009,7 @@ function getWebviewHtml(nonce) {
       webNotice.textContent = t('settingsWebNotice');
       webNoticeSection.appendChild(webNotice);
       aboutPane.appendChild(webNoticeSection);
-      activateSettingsTab('display');
+      activateSettingsTab(settingsActiveTab);
     }
 
     // Events
@@ -2866,6 +3116,7 @@ function getWebviewHtml(nonce) {
           state.contextBarOpacity = Number.isFinite(opacityVal) && opacityVal >= 0 && opacityVal <= 100 ? opacityVal : 30;
           state.autoStart = msg.autoStart !== false;
           state.autoOpenChat = msg.autoOpenChat !== false;
+          state.showArchivedSessions = msg.showArchivedSessions === true;
           applyFontSize();
           applyMaxWidth();
           updateContextBar(null);
@@ -2964,6 +3215,9 @@ function getWebviewHtml(nonce) {
           break;
         case 'autoOpenChat':
           state.autoOpenChat = msg.value !== false;
+          break;
+        case 'showArchivedSessions':
+          state.showArchivedSessions = msg.value === true;
           break;
         case 'conversation':
           if (msg.selectedSessionId !== undefined && msg.selectedSessionId !== null) {

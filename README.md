@@ -27,9 +27,11 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 #### 2. 工作区与会话管理
 - 自动将当前 VS Code 工作目录加入 dsh 工作区。
   - 已存在：按 canonical path 匹配后直接使用。
-  - 不存在：弹出确认框，经用户确认后创建。
+  - 不存在：打开插件界面时弹出确认框（启动阶段不打扰，后台静默初始化），经用户确认后创建。
+  - 未添加工作区时，聊天区显示"没有打开的工作区，无法开始会话。"提示及"将当前文件夹添加到DSH工作区"按钮，点击后重新弹出确认框。
   - VS Code 工作区文件夹变化时自动重新映射。
 - 会话列表、选择、新建、重命名。
+- 首次创建工作区且无会话时，自动创建并选中空白"新会话"（下拉不再显示"暂无会话"），聊天区显示"新会话已就绪。输入消息开始与 DeepSeek Harness 对话。"及工作模式选择。
 - 新会话内选择工作模式：标准 / PTC / 极简 / 创造。
 - 归档/关闭会话：
   - 操作前二次确认。
@@ -95,6 +97,8 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 启动行为：启动 VS Code 时自动启动 dsh web（开/关）；启动时自动打开面板（开/关）。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
 - 显示当前插件版本号。
+- dsh 服务地址：显示当前连接地址（超链接），点击在浏览器打开 dsh Web UI。
+- 管理工作区：查看当前/全部 dsh 工作区（会话数显示为"工作中+已归档"，如 3（工作中）+4（已归档），工作中数字加粗）；"显示已归档会话"开关；重命名/删除工作区（删除需二次确认）。
 - LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
 
 #### 7. 入口与命令
@@ -132,6 +136,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 | `dsh-vsc.contextBarOpacity` | number | 30 | 上下文进度条填充不透明度（%，0–100） |
 | `dsh-vsc.language` | string | zh | 插件界面语言：zh / en |
 | `dsh-vsc.autoOpenChat` | boolean | true | 检测到 dsh 已运行时，启动后自动打开工作区面板 |
+| `dsh-vsc.showArchivedSessions` | boolean | false | 是否在会话列表中显示已归档会话（默认隐藏） |
 | `dsh-vsc.enterToSend` | boolean | false | Enter 键行为：false（默认）= Shift+Enter 发送、Enter 换行；true = Enter 发送 |
 
 ### 三、运行环境
@@ -188,9 +193,11 @@ vsce package
 #### 1.2 Workspace and Session Management
 - Automatically adds the current VS Code workspace directory to the dsh workspace.
   - If it already exists: matched by canonical path and reused directly.
-  - If not: a confirmation dialog appears, and the workspace is created after user confirmation.
+  - If not: a confirmation dialog appears when the plugin UI is opened (no prompt during startup; background initialization stays silent), and the workspace is created after user confirmation.
+  - Without a workspace, the chat area shows "No workspace is open; the session cannot start." plus an "Add the current folder to the DSH workspace" button that re-opens the confirmation dialog.
   - Re-maps automatically when VS Code workspace folders change.
 - Session list, selection, creation, and renaming.
+- When a workspace is created for the first time with no sessions, a blank "New Session" is created and selected automatically (the dropdown no longer shows "No Sessions"), and the chat area shows "New session ready. Type a message to start chatting with DeepSeek Harness." along with the working-mode selection.
 - Working mode selection in a new session: Standard / PTC / Minimal / Creative.
 - Archive/close sessions:
   - Double confirmation before the operation.
@@ -256,6 +263,8 @@ vsce package
 - Startup behavior: auto-start dsh web when VS Code starts (on/off); auto-open the panel on startup (on/off).
 - Open settings.yaml (opens `$DSH_HOME/settings.yaml` inside VS Code).
 - Shows the current extension version.
+- dsh service URL: shows the current connection address (as a link); click to open the dsh Web UI in the browser.
+- Manage workspaces: view the current/all dsh workspaces (session counts shown as "active+archived", e.g. 3 (active) + 4 (archived), with the active number bold); a "show archived sessions" toggle; rename/delete workspaces (deletion requires confirmation).
 - LLM-related settings (API Key, Base URL, etc.) are configured in the dsh Web UI.
 
 #### 1.7 Entry Points and Commands
@@ -293,6 +302,7 @@ vsce package
 | `dsh-vsc.contextBarOpacity` | number | 30 | Context progress bar fill opacity (%, 0–100) |
 | `dsh-vsc.language` | string | zh | Extension UI language: zh / en |
 | `dsh-vsc.autoOpenChat` | boolean | true | Auto-open the workspace panel on startup when dsh is already running |
+| `dsh-vsc.showArchivedSessions` | boolean | false | Show archived sessions in the session list (hidden by default) |
 | `dsh-vsc.enterToSend` | boolean | false | Enter key behavior: false (default) = Shift+Enter sends, Enter inserts a newline; true = Enter sends |
 
 ### 3. Requirements

@@ -58,6 +58,7 @@ class ChatViewProvider {
     this.workspaceView = null
     this.workspacePromptedPath = null
     this.workspacePromptAccepted = false
+    this.showArchivedSessions = options.showArchivedSessions ?? false
   }
 
   static get viewType() { return viewType }
@@ -79,6 +80,7 @@ class ChatViewProvider {
     webviewView.onDidDispose(() => { this.webviews.delete(webviewView) })
     webviewView.webview.onDidReceiveMessage((msg) => { void this.handleMessage(msg) })
     this.flushQueue()
+    this.onUiOpened()
   }
 
   attachPanel(panel) {
@@ -88,6 +90,7 @@ class ChatViewProvider {
     panel.onDidDispose(() => { this.webviews.delete(panel) })
     panel.webview.onDidReceiveMessage((msg) => { void this.handleMessage(msg) })
     this.flushQueue()
+    this.onUiOpened()
   }
 
   refreshPanel(panel) {
@@ -119,6 +122,9 @@ class ChatViewProvider {
           break
         case 'newSession':
           await this.newSession()
+          break
+        case 'addWorkspace':
+          await this.addWorkspace()
           break
         case 'selectAgentPreset':
           await this.selectAgentPreset(msg.sessionId || this.selectedSessionId, msg.agentPreset)
@@ -155,6 +161,21 @@ class ChatViewProvider {
           break
         case 'settingsOpenDocument':
           await this.openSettingsDocument()
+          break
+        case 'openDshWeb':
+          await this.openDshWeb()
+          break
+        case 'workspaceRename':
+          await this.renameWorkspace(msg.workspaceId, msg.title)
+          break
+        case 'workspaceDelete':
+          await this.deleteWorkspace(msg.workspaceId)
+          break
+        case 'workspaceRefresh':
+          await this.refreshSettings()
+          break
+        case 'setShowArchivedSessions':
+          await this.setShowArchivedSessions(msg.value)
           break
         case 'setSessionDisplay':
           await this.setSessionDisplay(msg.value)
@@ -234,7 +255,7 @@ class ChatViewProvider {
   }
 
   async hydrate() {
-    const list = this.dsh.statusValue === 'ready' ? await this.sessions.listSessions(this.selectedSessionId) : []
+    const list = this.dsh.statusValue === 'ready' ? await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions) : []
     this.post({
       type: 'hydrate',
       status: this.dsh.statusValue,
@@ -253,6 +274,7 @@ class ChatViewProvider {
       contextBarOpacity: this.contextBarOpacity,
       autoStart: this.autoStart,
       autoOpenChat: this.autoOpenChat,
+      showArchivedSessions: this.showArchivedSessions,
       queue: this.queueSnapshot(this.selectedSessionId),
       hasMoreEarlier: this.hasMoreBySession.get(this.selectedSessionId) ?? false,
       question: this.questionSnapshot(this.selectedSessionId),
@@ -280,6 +302,15 @@ class ChatViewProvider {
       return this.workspaceView
     }
 
+    // 工作区尚不存在：仅当用户已经打开插件界面时才弹确认框；
+    // 启动阶段（后台静默初始化，webview 未打开）不打扰用户，
+    // 等用户打开侧边栏/面板后由 ensureWorkspaceAndSession() 再次触发询问。
+    if (this.webviews.size === 0) {
+      this.workspaceView = null
+      this.post({ type: 'workspace', workspace: null })
+      return null
+    }
+
     // 工作区尚不存在：弹确认框，而不是完全自动添加。
     if (this.workspacePromptedPath !== folder.uri.fsPath) {
       const answer = await vscode.window.showWarningMessage(
@@ -302,6 +333,35 @@ class ChatViewProvider {
     this.workspaceView = await this.sessions.createWorkspace(folder.uri.fsPath)
     this.post({ type: 'workspace', workspace: this.workspaceView })
     return this.workspaceView
+  }
+
+  // 用户打开插件界面（侧边栏/工作区面板）时：若 dsh 已就绪但工作区尚未建立
+  // （启动阶段被静默跳过确认框），在此补做初始化，确认框此时才会弹出。
+  onUiOpened() {
+    if (this.dsh.statusValue !== 'ready') return
+    if (this.workspaceView || this.workspacePromptedPath) return
+    void this.ensureWorkspaceAndSession()
+  }
+
+  async ensureWorkspaceAndSession() {
+    try {
+      this.sessions.reset()
+      await this.ensureWorkspace()
+      await this.refreshPresets()
+      await this.refreshSessions()
+      await this.autoAttachSession()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(message)
+      this.post({ type: 'notice', text: message })
+    }
+  }
+
+  // 空状态按钮"将当前文件夹添加到 dsh 工作区"：清除粘滞标记后重新询问并初始化。
+  async addWorkspace() {
+    this.workspacePromptedPath = null
+    this.workspacePromptAccepted = false
+    await this.ensureWorkspaceAndSession()
   }
 
   async autoAttachSession() {
@@ -540,6 +600,38 @@ class ChatViewProvider {
     if (!this.dsh.client) throw new Error('dsh web 尚未就绪')
     const client = this.sessions.requireClient()
     const settingsResult = await client.call('settings.describe', {})
+    // 工作区列表供"管理工作区"页使用；获取失败不阻断设置面板打开。
+    // 会话数按"工作中+已归档"统计：工作中 = 账本中未归档、非空白占位、非子代理的会话
+    // （与下拉列表可见会话一致）；已归档 = 账本中位于全局归档集合里的会话。
+    let workspaces = []
+    const archivedSet = new Set()
+    try {
+      const list = await client.call('workspace.list', {})
+      this.sessions.setArchived(list.archivedSessionIds || [])
+      for (const id of list.archivedSessionIds || []) archivedSet.add(id)
+      let sessionMeta = new Map()
+      try {
+        const { items } = await this.sessions.listAllSessions()
+        sessionMeta = new Map((items || []).map((s) => [s.sessionId, s]))
+      } catch (error) {
+        this.onLog(`session.list 获取失败: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      workspaces = (list.items || []).map((ws) => {
+        const ids = ws.sessionIds || []
+        let archivedCount = 0
+        let activeCount = 0
+        for (const id of ids) {
+          if (archivedSet.has(id)) { archivedCount++; continue }
+          const meta = sessionMeta.get(id)
+          if (meta && (meta.blank || meta.origin === 'subagent')) continue
+          activeCount++
+        }
+        return { ...ws, activeCount, archivedCount }
+      })
+    } catch (error) {
+      this.onLog(`workspace.list 获取失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    const folder = vscode.workspace.workspaceFolders?.[0]
     this.post({
       type: 'settingsData',
       data: {
@@ -555,9 +647,65 @@ class ChatViewProvider {
         contextBarOpacity: this.contextBarOpacity,
         autoStart: this.autoStart,
         autoOpenChat: this.autoOpenChat,
+        baseUrl: this.dsh.baseUrl || null,
+        workspaces,
+        currentWorkspaceId: this.workspaceView?.workspaceId ?? null,
+        currentFolderPath: folder ? folder.uri.fsPath : null,
+        showArchivedSessions: this.showArchivedSessions,
         version: extensionVersion,
       },
     })
+  }
+
+  async renameWorkspace(workspaceId, title) {
+    const next = String(title || '').trim()
+    if (!next) return
+    const result = await this.sessions.renameWorkspace(workspaceId, next)
+    if (this.workspaceView && result?.workspace && result.workspace.workspaceId === this.workspaceView.workspaceId) {
+      this.workspaceView = result.workspace
+    }
+    await this.refreshSettings()
+    await this.refreshSessions()
+  }
+
+  async deleteWorkspace(workspaceId) {
+    let targetPath = workspaceId
+    try {
+      const list = await this.sessions.listWorkspaces()
+      targetPath = (list.items || []).find((w) => w.workspaceId === workspaceId)?.path ?? workspaceId
+    } catch {
+      // 取不到工作区信息时用 workspaceId 展示
+    }
+    const answer = await vscode.window.showWarningMessage(
+      `删除工作区？\n${targetPath}\n该操作将删除该工作区及其全部会话，且不可恢复。`,
+      { modal: true },
+      '删除',
+      '取消',
+    )
+    if (answer !== '删除') return
+    await this.sessions.deleteWorkspace(workspaceId)
+    if (this.workspaceView && this.workspaceView.workspaceId === workspaceId) {
+      // 删除的是当前使用的工作区：清空映射并重新走确认流程（可重新添加）。
+      this.workspaceView = null
+      this.sessions.reset()
+      this.selectedSessionId = null
+      this.workspacePromptedPath = null
+      this.workspacePromptAccepted = false
+      this.post({ type: 'workspace', workspace: null })
+      this.post({ type: 'sessions', sessions: [], selectedSessionId: null })
+      void this.ensureWorkspaceAndSession()
+    }
+    await this.refreshSettings()
+  }
+
+  // 关于页的 dsh 服务地址链接：在浏览器中打开 dsh Web UI。
+  async openDshWeb() {
+    const url = this.dsh.baseUrl
+    if (!url) {
+      void vscode.window.showErrorMessage('dsh web 尚未就绪')
+      return
+    }
+    await vscode.env.openExternal(vscode.Uri.parse(url))
   }
 
   async openSettingsDocument() {
@@ -666,6 +814,15 @@ class ChatViewProvider {
     this.post({ type: 'autoOpenChat', value: next })
   }
 
+  async setShowArchivedSessions(value) {
+    const next = value === true
+    this.showArchivedSessions = next
+    const config = vscode.workspace.getConfiguration('dsh-vsc')
+    await config.update('showArchivedSessions', next, vscode.ConfigurationTarget.Global)
+    this.post({ type: 'showArchivedSessions', value: next })
+    await this.refreshSessions()
+  }
+
   // 状态徽标（已停止/错误）点击后：重新探测 dsh web 实例。
   // autoStart 开启则允许自动生成；关闭则只复用已手动运行的实例。
   async retryConnect() {
@@ -715,6 +872,11 @@ class ChatViewProvider {
     if (prefs.autoOpenChat !== undefined && prefs.autoOpenChat !== this.autoOpenChat) {
       this.autoOpenChat = prefs.autoOpenChat
       this.post({ type: 'autoOpenChat', value: prefs.autoOpenChat })
+    }
+    if (prefs.showArchivedSessions !== undefined && prefs.showArchivedSessions !== this.showArchivedSessions) {
+      this.showArchivedSessions = prefs.showArchivedSessions === true
+      this.post({ type: 'showArchivedSessions', value: this.showArchivedSessions })
+      void this.refreshSessions()
     }
   }
 
@@ -804,10 +966,11 @@ class ChatViewProvider {
       this.post({ type: 'sessions', sessions: [], selectedSessionId: this.selectedSessionId })
       return
     }
-    const list = await this.sessions.listSessions(this.selectedSessionId)
+    const list = await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions)
     for (const item of list) {
       const running = this.sessionRunning.get(item.sessionId)
       if (running !== undefined) item.running = item.running || running
+      item.archived = this.sessions.isArchived(item.sessionId)
       const title = item.projections?.values?.title
       if (!item.title && typeof title === 'string' && title) item.title = title
       if (item.projections) {

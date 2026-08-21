@@ -48,6 +48,35 @@ class SessionService {
     return existing
   }
 
+  async findWorkspaceById(workspaceId) {
+    const client = this.requireClient()
+    const list = await client.call('workspace.list', {})
+    this.archivedSessionIds = list.archivedSessionIds
+    const ws = list.items.find((w) => w.workspaceId === workspaceId) || null
+    if (ws) this.workspace = ws
+    return ws
+  }
+
+  async listWorkspaces() {
+    const client = this.requireClient()
+    return await client.call('workspace.list', {})
+  }
+
+  async listAllSessions() {
+    const client = this.requireClient()
+    return await client.call('session.list', {})
+  }
+
+  async renameWorkspace(workspaceId, title) {
+    const client = this.requireClient()
+    return await client.call('workspace.rename', { workspaceId, title })
+  }
+
+  async deleteWorkspace(workspaceId) {
+    const client = this.requireClient()
+    return await client.call('workspace.delete', { workspaceId })
+  }
+
   async createWorkspace(folderRoot) {
     const client = this.requireClient()
     const created = await client.call('workspace.create', { path: folderRoot })
@@ -72,7 +101,7 @@ class SessionService {
     return items
   }
 
-  async listSessions(selectedSessionId) {
+  async listSessions(selectedSessionId, includeArchived = false) {
     const workspace = this.workspace
     if (!workspace) return []
     const client = this.requireClient()
@@ -85,11 +114,15 @@ class SessionService {
     const archived = new Set(archivedSessionIds)
     const { items } = await client.call('session.list', {})
     return items
-      .filter((item) => accounted.has(item.sessionId))
+      .filter((item) => accounted.has(item.sessionId) || item.sessionId === selectedSessionId)
       .filter((item) => item.origin !== 'subagent')
-      .filter((item) => !archived.has(item.sessionId))
+      .filter((item) => includeArchived || !archived.has(item.sessionId))
       .filter((item) => !item.blank || item.sessionId === selectedSessionId)
       .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  isArchived(sessionId) {
+    return this.archivedSessionIds.includes(sessionId)
   }
 
   async resolveNewSession(agentPreset, occupiedBlankSessionIds = []) {
@@ -173,7 +206,9 @@ class SessionService {
 
   async executeCommand(sessionId, line) {
     const client = this.requireClient()
-    return await client.call('commands/execute', { args: { agentId: sessionId, line } })
+    // Typert 描述符要求 args 含 images（base64 图片附件，空数组 = 无附件）；缺字段会报
+    // `args fields do not match the descriptor: missing "images"`。
+    return await client.call('commands/execute', { args: { agentId: sessionId, line, images: [] } })
   }
 
   async prompt(sessionId, text, mode = 'queue') {

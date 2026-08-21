@@ -24,6 +24,7 @@ function activate(context) {
   const maxWidth = config.get('maxWidth', 1000)
   const language = config.get('language', 'zh')
   const autoOpenChat = config.get('autoOpenChat', true)
+  const showArchivedSessions = config.get('showArchivedSessions', false)
   const enterToSend = config.get('enterToSend', false)
   const showContextUsage = config.get('showContextUsage', true)
   const contextBarColor = config.get('contextBarColor', 'var(--accent)')
@@ -41,7 +42,7 @@ function activate(context) {
   })
 
   const sessions = new SessionService(() => dsh.client)
-  const provider = new ChatViewProvider(dsh, sessions, { onLog: (line) => log(line), sessionDisplay, fontSize, maxWidth, language, enterToSend, showContextUsage, contextBarColor, contextBarOpacity, autoStart, autoOpenChat })
+  const provider = new ChatViewProvider(dsh, sessions, { onLog: (line) => log(line), sessionDisplay, fontSize, maxWidth, language, enterToSend, showContextUsage, contextBarColor, contextBarOpacity, autoStart, autoOpenChat, showArchivedSessions })
   let chatPanel = null
 
   context.subscriptions.push(
@@ -131,24 +132,11 @@ function activate(context) {
     }
   }
 
-  const ensureWorkspaceAndSession = async () => {
-    try {
-      sessions.reset()
-      await provider.ensureWorkspace()
-      await provider.refreshPresets()
-      await provider.refreshSessions()
-      await provider.autoAttachSession()
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log(`工作区/会话初始化失败: ${message}`)
-      provider.post({ type: 'notice', text: message })
-    }
-  }
-
   dsh.on('status', (status) => {
     if (status === 'ready') {
       // 先做自动打开前的“当前目录已在 dsh 工作区中”校验，再走正常的工作区/会话初始化。
-      void maybeAutoOpen().then(() => ensureWorkspaceAndSession())
+      // （工作区确认框仅在用户打开插件界面后弹出，见 ChatViewProvider.ensureWorkspace）
+      void maybeAutoOpen().then(() => provider.ensureWorkspaceAndSession())
     }
   })
 
@@ -156,7 +144,7 @@ function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       sessions.reset()
-      if (dsh.statusValue === 'ready') void ensureWorkspaceAndSession()
+      if (dsh.statusValue === 'ready') void provider.ensureWorkspaceAndSession()
     }),
   )
 
@@ -177,6 +165,7 @@ function activate(context) {
         contextBarOpacity: config.get('contextBarOpacity', 30),
         autoStart: config.get('autoStart', true),
         autoOpenChat: config.get('autoOpenChat', true),
+        showArchivedSessions: config.get('showArchivedSessions', false),
       })
     }),
   )
