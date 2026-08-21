@@ -288,6 +288,23 @@ function getWebviewHtml(nonce) {
     }
     #composerInput:focus { outline: 1px solid var(--accent); }
     body.composer-expanded #composerInput { max-height: none; height: 40vh; min-height: 220px; }
+    /* hidden 属性必须优先于任何 display 规则（否则 display:flex 会盖掉它）。 */
+    [hidden] { display: none !important; }
+    .pending-images { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .pending-img { position: relative; }
+    .pending-img img { height: 56px; border-radius: 4px; display: block; border: 1px solid var(--border); }
+    .pending-img button {
+      position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; line-height: 14px;
+      padding: 0; border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--muted); cursor: pointer; font-size: 11px; text-align: center;
+    }
+    .composer-notice { color: #d9534f; font-size: 11px; margin: 2px 0 6px; }
+    .msg-images { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+    .msg-image img { max-height: 180px; max-width: 100%; border-radius: 6px; display: block; }
+    .img-placeholder {
+      display: inline-block; padding: 8px 12px; border: 1px dashed var(--border);
+      border-radius: 6px; color: var(--muted); font-size: 11px;
+    }
     .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
     .stats-bar {
       position: relative; margin-top: 4px; font-size: 11px; color: var(--muted);
@@ -385,6 +402,8 @@ function getWebviewHtml(nonce) {
       <div class="empty">正在连接 DeepSeek Harness…</div>
     </div>
     <div class="composer">
+      <div id="pendingImages" class="pending-images" hidden></div>
+      <div id="composerNotice" class="composer-notice" hidden></div>
       <div id="filePicker" class="file-picker"></div>
       <div id="commandPicker" class="file-picker command-picker"></div>
       <div id="todoDock" class="todo-dock"></div>
@@ -393,7 +412,9 @@ function getWebviewHtml(nonce) {
       <div id="approvalPanel" class="question-panel approval-panel" style="display:none"></div>
       <div id="composerRow" class="composer-row">
         <button id="permissionBtn" class="permission-button" title="选择权限">权</button>
+        <button id="imageBtn" title="选择图片">📷</button>
         <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
+        <input type="file" id="imageFileInput" accept="image/*" multiple hidden>
         <button id="expandBtn" title="展开/收起输入框">⤢</button>
         <button id="stopBtn" title="停止生成" style="display:none">■</button>
         <button id="sendBtn" class="primary" title="发送">发送</button>
@@ -500,6 +521,10 @@ function getWebviewHtml(nonce) {
     var conversationTimer = 0;
     // 设置弹窗当前激活标签页（settingsData 重渲染后恢复，用于"管理工作区"刷新）。
     var settingsActiveTab = 'display';
+    // 待发送图片（剪贴板粘贴，base64）与会话图片附件缓存。
+    var pendingImages = [];
+    var attachmentCache = {};      // attachmentId -> { mediaType, data }
+    var attachmentRequested = {};  // attachmentId -> true（避免重复请求）
 
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
@@ -529,6 +554,8 @@ function getWebviewHtml(nonce) {
     var approvalPanelEl = $('approvalPanel');
     var composerRowEl = $('composerRow');
     var permissionBtn = $('permissionBtn');
+    var imageBtn = $('imageBtn');
+    var imageFileInput = $('imageFileInput');
     var permissionPopover = $('permissionPopover');
     var modelBtn = $('modelBtn');
     var modelPopover = $('modelPopover');
@@ -580,6 +607,14 @@ function getWebviewHtml(nonce) {
         'send': '发送',
         'composerPlaceholder': 'Enter 发送 · Shift+Enter 换行 · @ 引用文件 · / 命令',
         'composerPlaceholderAlt': 'Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令',
+        'imageAttachment': '图片',
+        'imageRemove': '移除图片',
+        'imageReadFailed': '图片读取失败',
+        'imageLoading': '图片加载中…',
+        'imageLoadFailed': '图片加载失败',
+        'imageCommandRefuse': '该命令不接受图片附件，请移除图片后重试',
+        'imagePick': '选择图片',
+        'imagePicked': '已添加 {count} 张图片',
         'emptyReady': '新会话已就绪。输入消息开始与 DeepSeek Harness 对话。',
         'emptyNoWorkspace': '没有打开的工作区，无法开始会话。',
         'addWorkspaceBtn': '将当前文件夹添加到DSH工作区',
@@ -703,6 +738,14 @@ function getWebviewHtml(nonce) {
         'send': 'Send',
         'composerPlaceholder': 'Enter to send · Shift+Enter for newline · @ files · / commands',
         'composerPlaceholderAlt': 'Shift+Enter to send · Enter for newline · @ files · / commands',
+        'imageAttachment': 'Image',
+        'imageRemove': 'Remove image',
+        'imageReadFailed': 'Failed to read image',
+        'imageLoading': 'Loading image…',
+        'imageLoadFailed': 'Failed to load image',
+        'imageCommandRefuse': 'This command does not accept image attachments; remove the images and retry',
+        'imagePick': 'Pick image',
+        'imagePicked': 'Added {count} image(s)',
         'emptyReady': 'New session ready. Type a message to start chatting with DeepSeek Harness.',
         'emptyNoWorkspace': 'No workspace is open; the session cannot start.',
         'addWorkspaceBtn': 'Add the current folder to the DSH workspace',
@@ -829,8 +872,8 @@ function getWebviewHtml(nonce) {
       settingsBtn.title = t('settings');
       expandBtn.title = t('expand');
       stopBtn.title = t('stop');
-      sendBtn.textContent = t('send');
       sendBtn.title = t('send');
+      renderSendLabel();
       composerInput.placeholder = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
       settingsOpenDocBtn.textContent = t('settingsOpenDoc');
       settingsDoneBtn.textContent = t('settingsDone');
@@ -1412,6 +1455,37 @@ function getWebviewHtml(nonce) {
         var ctxSummary = item.summary || (item.text || '').split('\\n').find(function (line) { return line.trim().length > 0; }) || t('contextInjection');
         bubble.innerHTML = '<details class="context-details"><summary>' + escapeHtml(ctxSummary) + '</summary><pre>'
           + escapeHtml(item.text || '') + '</pre></details>';
+      } else if (item.type === 'user' && item.images && item.images.length) {
+        // 带图片的用户消息：先渲染图片缩略图，再渲染文本。
+        var imgWrap = document.createElement('div');
+        imgWrap.className = 'msg-images';
+        for (var ii = 0; ii < item.images.length; ii++) {
+          var ref = item.images[ii].attachment || {};
+          var aid = ref.attachmentId || '';
+          var slot = document.createElement('div');
+          slot.className = 'msg-image';
+          if (aid) slot.setAttribute('data-attachment-id', aid);
+          var cached = attachmentCache[aid];
+          if (cached && cached.data) {
+            var im = document.createElement('img');
+            im.src = 'data:' + (cached.mediaType || 'image/png') + ';base64,' + cached.data;
+            im.alt = t('imageAttachment');
+            slot.appendChild(im);
+          } else {
+            var ph = document.createElement('span');
+            ph.className = 'img-placeholder';
+            ph.textContent = aid ? t('imageLoading') : t('imageLoadFailed');
+            slot.appendChild(ph);
+            if (aid) requestAttachment(aid);
+          }
+          imgWrap.appendChild(slot);
+        }
+        bubble.appendChild(imgWrap);
+        if (item.text) {
+          var textDiv = document.createElement('div');
+          textDiv.innerHTML = renderMarkdown(item.text);
+          bubble.appendChild(textDiv);
+        }
       } else {
         bubble.innerHTML = renderMarkdown(item.text || '');
       }
@@ -1685,12 +1759,179 @@ function getWebviewHtml(nonce) {
 
     function sendMessage() {
       var text = inputEl.value.trim();
-      if (!text) return;
+      if (!text && pendingImages.length === 0) return;
       if (state.status !== 'ready') return;
-      post({ type: 'send', text: text });
+      if (pendingImages.length > 0 && text.charAt(0) === '/') {
+        var token = text.split(/\s+/)[0];
+        var known = null;
+        var cmds = state.commands || [];
+        for (var ci = 0; ci < cmds.length; ci++) {
+          if (cmds[ci].name === token) { known = cmds[ci]; break; }
+        }
+        if (known && !known.acceptsImages) {
+          showComposerNotice(t('imageCommandRefuse'));
+          return;
+        }
+      }
+      post({ type: 'send', text: text, images: pendingImages.slice(), clientTimeZone: clientTimeZoneName() });
       inputEl.value = '';
       inputEl.style.height = 'auto';
+      pendingImages = [];
+      renderPendingImages();
       closePicker();
+    }
+
+    function clientTimeZoneName() {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+      } catch (e) {
+        return undefined;
+      }
+    }
+
+    function showComposerNotice(text) {
+      var notice = $('composerNotice');
+      if (!notice) return;
+      notice.textContent = text;
+      notice.hidden = false;
+      clearTimeout(showComposerNotice._timer);
+      showComposerNotice._timer = setTimeout(function () { notice.hidden = true; }, 3000);
+    }
+
+    function renderSendLabel() {
+      sendBtn.textContent = pendingImages.length > 0
+        ? t('send') + ' 🖼' + pendingImages.length
+        : t('send');
+    }
+
+    function renderPendingImages() {
+      var rail = $('pendingImages');
+      if (!rail) return;
+      rail.innerHTML = '';
+      renderSendLabel();
+      if (pendingImages.length === 0) { rail.hidden = true; return; }
+      rail.hidden = false;
+      for (var i = 0; i < pendingImages.length; i++) {
+        (function (img, index) {
+          var box = document.createElement('div');
+          box.className = 'pending-img';
+          var im = document.createElement('img');
+          im.src = 'data:' + img.mediaType + ';base64,' + img.data;
+          im.alt = img.name || t('imageAttachment');
+          var rm = document.createElement('button');
+          rm.textContent = '×';
+          rm.title = t('imageRemove');
+          rm.addEventListener('click', function () {
+            pendingImages.splice(index, 1);
+            renderPendingImages();
+          });
+          box.appendChild(im);
+          box.appendChild(rm);
+          rail.appendChild(box);
+        })(pendingImages[i], i);
+      }
+    }
+
+    function readImageFiles(files) {
+      var added = 0;
+      var total = 0;
+      for (var j = 0; j < files.length; j++) (function (file) {
+        total++;
+        var reader = new FileReader();
+        reader.onload = function () {
+          var dataUrl = String(reader.result || '');
+          var m = /^data:([^;,]+);base64,(.+)$/.exec(dataUrl);
+          if (!m) return;
+          pendingImages.push({ mediaType: m[1], data: m[2], name: file.name || '' });
+          added++;
+          renderPendingImages();
+          if (added === total) showComposerNotice(t('imagePicked', { count: String(added) }));
+        };
+        reader.onerror = function () { showComposerNotice(t('imageReadFailed')); };
+        reader.readAsDataURL(file);
+      })(files[j]);
+    }
+
+    function imageFilesFrom(data) {
+      var out = [];
+      var items = data && data.items;
+      if (items) {
+        for (var i = 0; i < items.length; i++) {
+          var it = items[i];
+          if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0 && typeof it.getAsFile === 'function') {
+            var f = it.getAsFile();
+            if (f) out.push(f);
+          }
+        }
+      }
+      if (out.length === 0 && data && data.files) {
+        for (var k = 0; k < data.files.length; k++) {
+          var cf = data.files[k];
+          if (cf && cf.type && cf.type.indexOf('image/') === 0) out.push(cf);
+        }
+      }
+      return out;
+    }
+
+    function onComposerPaste(e) {
+      var files = imageFilesFrom(e.clipboardData);
+      if (files.length === 0) {
+        // 诊断：记录剪贴板内容形态，便于定位远程环境拿不到图片的问题。
+        var itemKinds = [];
+        var cbd = e.clipboardData;
+        if (cbd && cbd.items) {
+          for (var di = 0; di < cbd.items.length; di++) {
+            itemKinds.push(cbd.items[di].kind + ':' + cbd.items[di].type);
+          }
+        }
+        post({ type: 'log', message: '[image] 粘贴未发现图片文件，clipboardData.items=' + (itemKinds.join(',') || '(空)') });
+        // 部分 webview/远程环境剪贴板 items 不含文件：走 Clipboard API 兜底。
+        if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.read === 'function') {
+          navigator.clipboard.read().then(function (clipboardItems) {
+            for (var n = 0; n < clipboardItems.length; n++) {
+              var types = clipboardItems[n].types || [];
+              for (var ti = 0; ti < types.length; ti++) {
+                if (types[ti].indexOf('image/') === 0) {
+                  clipboardItems[n].getType(types[ti]).then(function (blob) {
+                    if (blob) readImageFiles([blob]);
+                  }).catch(function () {});
+                  return;
+                }
+              }
+            }
+          }).catch(function (err) {
+            post({ type: 'log', message: '[image] navigator.clipboard.read 失败: ' + String(err) });
+          });
+        } else {
+          post({ type: 'log', message: '[image] navigator.clipboard 不可用' });
+        }
+        return;
+      }
+      e.preventDefault();
+      readImageFiles(files);
+    }
+
+    function requestAttachment(attachmentId) {
+      if (!attachmentId || attachmentRequested[attachmentId]) return;
+      attachmentRequested[attachmentId] = true;
+      if (state.selectedSessionId) {
+        post({ type: 'loadAttachment', sessionId: state.selectedSessionId, attachmentId: attachmentId });
+      }
+    }
+
+    function fillImageSlot(slot, msg) {
+      slot.innerHTML = '';
+      if (msg.error || !msg.data) {
+        var ph = document.createElement('span');
+        ph.className = 'img-placeholder';
+        ph.textContent = msg.error ? t('imageLoadFailed') : t('imageLoading');
+        slot.appendChild(ph);
+        return;
+      }
+      var im = document.createElement('img');
+      im.src = 'data:' + (msg.mediaType || 'image/png') + ';base64,' + msg.data;
+      im.alt = t('imageAttachment');
+      slot.appendChild(im);
     }
 
     function workingPhase() {
@@ -3014,6 +3255,20 @@ function getWebviewHtml(nonce) {
 
     // Events
     sendBtn.addEventListener('click', sendMessage);
+    // 输入框粘贴图片 → 加入待发送列表（vision 支持）。
+    inputEl.addEventListener('paste', onComposerPaste);
+    // 📷 选择图片：本地文件对话框（本机/远程都可靠，不依赖剪贴板）。
+    imageBtn.addEventListener('click', function () {
+      imageBtn.title = t('imagePick');
+      imageFileInput.value = '';
+      imageFileInput.click();
+    });
+    imageFileInput.addEventListener('change', function () {
+      if (imageFileInput.files && imageFileInput.files.length) {
+        readImageFiles(imageFileInput.files);
+        imageFileInput.value = '';
+      }
+    });
     stopBtn.addEventListener('click', function () { post({ type: 'cancel' }); });
     // 状态徽标（stopped/error 时）点击 → 重新探测 dsh web 实例。
     $('statusText').parentElement.addEventListener('click', function () {
@@ -3102,7 +3357,7 @@ function getWebviewHtml(nonce) {
           state.status = msg.status;
           state.workspace = msg.workspace;
           state.sessions = msg.sessions || [];
-          state.selectedSessionId = msg.selectedSessionId;
+          if (msg.selectedSessionId) state.selectedSessionId = msg.selectedSessionId;
           state.conversation = msg.conversation || [];
           state.sessionDisplay = msg.sessionDisplay || 'concise';
           state.fontSize = Number(msg.fontSize) || 13;
@@ -3130,6 +3385,9 @@ function getWebviewHtml(nonce) {
           resetQuestionDrafts();
           setRunning(msg.running || false);
           renderAll();
+          // 首帧即渲染统计行/权限按钮/TODO 面板：hydrate 自带统计快照，
+          // 不依赖后续 stats 消息（可能因启动竞态丢失或晚到）。
+          renderStats(msg.stats || null);
           if (state.selectedSessionId) {
             post({ type: 'modelsOpen', sessionId: state.selectedSessionId });
             post({ type: 'commandsOpen', sessionId: state.selectedSessionId });
@@ -3146,10 +3404,15 @@ function getWebviewHtml(nonce) {
         case 'sessions': {
           var previousSessionId = state.selectedSessionId;
           state.sessions = msg.sessions || [];
-          state.selectedSessionId = msg.selectedSessionId;
+          if (msg.selectedSessionId) state.selectedSessionId = msg.selectedSessionId;
           renderSessions();
           renderConversation();
-          if (state.selectedSessionId && state.selectedSessionId !== previousSessionId) {
+          // 启动竞态兜底：若模型/命令目录从未成功加载（首帧 hydrate 早于会话就绪），
+          // 在会话快照刷新时补发打开请求，而不是等用户切换会话。
+          var needModels = !state.models && !!state.selectedSessionId;
+          var needCommands = !state.commandsAvailable && !!state.selectedSessionId;
+          if (state.selectedSessionId &&
+              (state.selectedSessionId !== previousSessionId || needModels || needCommands)) {
             post({ type: 'modelsOpen', sessionId: state.selectedSessionId });
             post({ type: 'commandsOpen', sessionId: state.selectedSessionId });
           }
@@ -3255,6 +3518,13 @@ function getWebviewHtml(nonce) {
               var sp = inputEl.value.indexOf(' ');
               renderCommandPicker(sp === -1 ? inputEl.value.slice(1) : inputEl.value.slice(1, sp));
             }
+          }
+          break;
+        case 'attachmentData':
+          if (msg.attachmentId) {
+            if (!msg.error) attachmentCache[msg.attachmentId] = { mediaType: msg.mediaType, data: msg.data };
+            var imgSlots = document.querySelectorAll('.msg-image[data-attachment-id="' + msg.attachmentId + '"]');
+            for (var si = 0; si < imgSlots.length; si++) fillImageSlot(imgSlots[si], msg);
           }
           break;
         case 'queue':

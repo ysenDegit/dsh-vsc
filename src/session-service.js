@@ -204,20 +204,31 @@ class SessionService {
     return await client.call('commands/list', { args: { agentId: sessionId } })
   }
 
-  async executeCommand(sessionId, line) {
+  async executeCommand(sessionId, line, images = []) {
     const client = this.requireClient()
     // Typert 描述符要求 args 含 images（base64 图片附件，空数组 = 无附件）；缺字段会报
     // `args fields do not match the descriptor: missing "images"`。
-    return await client.call('commands/execute', { args: { agentId: sessionId, line, images: [] } })
+    return await client.call('commands/execute', { args: { agentId: sessionId, line, images } })
   }
 
-  async prompt(sessionId, text, mode = 'queue') {
+  async prompt(sessionId, text, mode = 'queue', images = [], clientTimeZone) {
     const client = this.requireClient()
-    return await client.call('session.prompt', {
-      sessionId,
-      mode,
-      content: [{ type: 'text', text }],
-    })
+    const content = []
+    if (text) content.push({ type: 'text', text })
+    for (const img of images || []) {
+      if (!img || !img.data) continue
+      const part = { type: 'image', mediaType: img.mediaType || 'image/png', data: img.data }
+      if (img.name) part.name = img.name
+      content.push(part)
+    }
+    const payload = { sessionId, mode, content }
+    if (clientTimeZone) payload.clientTimeZone = clientTimeZone
+    return await client.call('session.prompt', payload)
+  }
+
+  async attachment(sessionId, attachmentId) {
+    const client = this.requireClient()
+    return await client.call('session.attachment', { sessionId, attachmentId })
   }
 
   async cancel(sessionId) {

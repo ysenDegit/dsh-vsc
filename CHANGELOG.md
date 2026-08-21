@@ -2,6 +2,20 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [1.0.5]
+
+### Added
+
+- 图片发送（vision，两种方式）：① 输入框粘贴截图/图片（PNG/JPEG/WebP）；② 输入框左侧 **📷 选择图片**按钮（隐藏 `<input type=file>` 打开本地文件对话框，本机/远程都可靠）。图片以缩略图显示在输入框上方（可逐张移除，发送按钮显示 🖼N 角标，"已添加 N 张图片"提示确认），随消息作为 `image` 附件提交给模型（配合 `deepseek-v4-flash-vision-exp` 等视觉模型使用，并补发浏览器时区 `clientTimeZone`）；部分远程环境剪贴板 items 不含图片文件时自动尝试 `navigator.clipboard.read()` 兜底，并在输出面板记录诊断日志；历史消息中的图片以缩略图渲染（通过 `session.attachment` 按需取回并缓存）；不接受图片附件的命令发送前提示并保留图片（命令目录携带 `input.images` 标志）；修复 `hidden` 属性被 `display:flex` 覆盖导致预览 rail 不显示的样式问题。
+
+### Fixed
+
+- 修复首次启动插件时 composer 栏元素缺失（权限选择按钮"权"与统计行/模型信息不显示）：启动阶段 webview 的 `ready` 请求可能早于工作区/会话初始化完成，`hydrate` 拿到空会话、模型/命令/统计均未拉取，且权限按钮与统计行此前只依赖 `stats` 消息触发渲染。现初始化请求合并为单轮并在 `hydrate` 前完成，`hydrate` 载荷携带统计快照（统计行/权限/TODO 首帧即渲染），`ready` 后补发 `stats` 快照，会话快照刷新时对未加载的模型/命令目录自动补发请求。
+
+### Removed
+
+- 移除"拖拽图片添加"功能：VS Code webview 的拖放拦截不稳定（拖拽经过 explorer 等区域后文件对象被 workbench 接管，会回退为"用 VS Code 打开图片"），保留粘贴与 📷 选择图片两条可靠路径。
+
 ## [1.0.4] - 2026-08-20
 
 ### Added

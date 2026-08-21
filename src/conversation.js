@@ -14,6 +14,12 @@ function extractReasoning(content) {
     .join('\n')
 }
 
+function extractImages(content) {
+  return (content || [])
+    .filter((block) => block && block.type === 'image' && block.attachment)
+    .map((block) => ({ attachment: block.attachment }))
+}
+
 function foldEvents(events) {
   const items = []
   const removedIndices = new Set()
@@ -48,8 +54,9 @@ function foldEvents(events) {
       }
       case 'user/message': {
         const text = extractText(data.content)
+        const images = extractImages(data.content)
         if (data.source?.kind === 'user') {
-          items.push({ type: 'user', text, id: 'user-' + event.seq })
+          items.push({ type: 'user', text, images, id: 'user-' + event.seq })
         } else {
           const sourceText = text || '（上下文注入）'
           const summary = sourceText.split('\n').map((line) => line.trim()).find((line) => line.length > 0) ?? sourceText
@@ -78,6 +85,7 @@ function foldEvents(events) {
           type: 'assistant',
           text: extractText(data.message?.content),
           reasoning: extractReasoning(data.message?.content),
+          images: extractImages(data.message?.content),
           partial: false,
           id: slot ? slot.item.id : ('assistant-' + event.seq),
         }
@@ -185,4 +193,4 @@ function foldEvents(events) {
 }
 
 
-module.exports = { foldEvents, extractText, extractReasoning }
+module.exports = { foldEvents, extractText, extractReasoning, extractImages }

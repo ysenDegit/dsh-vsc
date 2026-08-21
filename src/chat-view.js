@@ -59,6 +59,8 @@ class ChatViewProvider {
     this.workspacePromptedPath = null
     this.workspacePromptAccepted = false
     this.showArchivedSessions = options.showArchivedSessions ?? false
+    // 并发的初始化请求共享同一轮执行（onUiOpened / dsh ready / webview ready 可能同时触发）。
+    this.ensureWork = null
   }
 
   static get viewType() { return viewType }
@@ -111,6 +113,12 @@ class ChatViewProvider {
     try {
       switch (msg.type) {
         case 'ready':
+          // 竞态兜底：webview 首发 ready 往往早于工作区/会话初始化完成，
+          // 此时 hydrate 会拿到空会话、且模型/命令/统计都不会被拉取。
+          // 先等待（合并并发调用）初始化完成，保证首帧即带完整数据。
+          if (this.dsh.statusValue === 'ready' && !this.selectedSessionId) {
+            await this.ensureWorkspaceAndSession()
+          }
           await this.hydrate()
           if (this.dsh.statusValue === 'ready') {
             void this.refreshPresets()
@@ -118,6 +126,9 @@ class ChatViewProvider {
               void this.refreshModels(this.selectedSessionId)
               void this.refreshCommands(this.selectedSessionId)
             }
+            // 若初始化期间没有 session/projection 帧，统计行/权限按钮不会刷新；
+            // 这里补发一次当前快照，保证 composer 首帧渲染完整。
+            this.postStats(this.selectedSessionId)
           }
           break
         case 'newSession':
@@ -136,7 +147,13 @@ class ChatViewProvider {
           await this.loadEarlier(msg.sessionId || this.selectedSessionId)
           break
         case 'send':
-          await this.send(msg.text)
+          await this.send(msg.text, msg.images, msg.clientTimeZone)
+          break
+        case 'loadAttachment':
+          await this.loadAttachment(msg.sessionId, msg.attachmentId)
+          break
+        case 'log':
+          this.onLog(String(msg.message ?? ''))
           break
         case 'cancel':
           await this.cancel()
@@ -256,6 +273,8 @@ class ChatViewProvider {
 
   async hydrate() {
     const list = this.dsh.statusValue === 'ready' ? await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions) : []
+    // listSessions 返回的投影同样需要入缓存，供 statsSnapshot/permissions 读取。
+    this.seedProjectionsFromList(list)
     this.post({
       type: 'hydrate',
       status: this.dsh.statusValue,
@@ -281,6 +300,9 @@ class ChatViewProvider {
       approval: this.approvalSnapshot(this.selectedSessionId),
       todos: this.projectionValue(this.selectedSessionId, 'todos'),
       permissions: this.projectionValue(this.selectedSessionId, 'permissions'),
+      // 统计快照随 hydrate 一起下发：首帧即渲染统计行/权限按钮，
+      // 不依赖后续 session/projection 帧的到达时机。
+      stats: this.statsSnapshot(this.selectedSessionId),
     })
   }
 
@@ -343,7 +365,16 @@ class ChatViewProvider {
     void this.ensureWorkspaceAndSession()
   }
 
-  async ensureWorkspaceAndSession() {
+  ensureWorkspaceAndSession() {
+    // 并发合并：onUiOpened / dsh ready / webview ready 都可能触发初始化，
+    // 让它们共享同一轮执行，避免两轮并行初始化造成消息交错、首帧数据缺失。
+    if (!this.ensureWork) {
+      this.ensureWork = this.doEnsureWorkspaceAndSession().finally(() => { this.ensureWork = null })
+    }
+    return this.ensureWork
+  }
+
+  async doEnsureWorkspaceAndSession() {
     try {
       this.sessions.reset()
       await this.ensureWorkspace()
@@ -361,6 +392,7 @@ class ChatViewProvider {
   async addWorkspace() {
     this.workspacePromptedPath = null
     this.workspacePromptAccepted = false
+    this.ensureWork = null
     await this.ensureWorkspaceAndSession()
   }
 
@@ -429,7 +461,7 @@ class ChatViewProvider {
     this.postApproval(sessionId)
   }
 
-  async send(text) {
+  async send(text, images = [], clientTimeZone) {
     if (!this.dsh.client) throw new Error('dsh web 尚未就绪')
     let sessionId = this.selectedSessionId
     if (!sessionId) {
@@ -445,8 +477,8 @@ class ChatViewProvider {
     const line = String(text ?? '')
     // 与 web 端一致：完整斜杠命令行优先走命令执行，绝不发给模型；
     // 未注册命令才按普通消息发送。
-    if (isCommandLine(line) && await this.tryDispatchCommand(sessionId, line)) return
-    await this.sessions.prompt(sessionId, line, 'queue')
+    if (isCommandLine(line) && await this.tryDispatchCommand(sessionId, line, images)) return
+    await this.sessions.prompt(sessionId, line, 'queue', images, clientTimeZone)
     // 不乐观回显：用户消息通过 session/event(user/message) 下发。
   }
 
@@ -456,11 +488,11 @@ class ChatViewProvider {
    *   false 表示这不是已注册命令（调用方按普通消息发送）。
    *   已注册命令执行失败时抛错（调用方提示用户，不发送给模型）。
    */
-  async tryDispatchCommand(sessionId, line) {
+  async tryDispatchCommand(sessionId, line, images = []) {
     try {
       // commands/execute 的语义：已注册命令返回 {commandId, result}；
       // 未注册命令/非命令行返回 undefined；host 不支持该 RPC 时抛错。
-      const result = await this.sessions.executeCommand(sessionId, line)
+      const result = await this.sessions.executeCommand(sessionId, line, images)
       return Boolean(result && result.commandId)
     } catch (error) {
       if (this.isUnsupportedCommandRpc(error)) {
@@ -534,6 +566,7 @@ class ChatViewProvider {
         name: c.name,
         description: c.description,
         hint: c.input?.hint || c.hint,
+        acceptsImages: Boolean(c.input && c.input.images),
       }))
       this.post({ type: 'commands', sessionId, available: true, items: commands })
     } catch (error) {
@@ -542,9 +575,31 @@ class ChatViewProvider {
     }
   }
 
-  async executeCommand(sessionId, line) {
+  async executeCommand(sessionId, line, images = []) {
     if (!sessionId || !line) return
-    await this.sessions.executeCommand(sessionId, line)
+    await this.sessions.executeCommand(sessionId, line, images)
+  }
+
+  // 会话内图片：按 attachmentId 取回 base64 数据，回推给 webview 渲染缩略图。
+  async loadAttachment(sessionId, attachmentId) {
+    if (!sessionId || !attachmentId) return
+    try {
+      const result = await this.sessions.attachment(sessionId, attachmentId)
+      this.post({
+        type: 'attachmentData',
+        sessionId,
+        attachmentId,
+        mediaType: result.attachment?.mediaType || 'image/png',
+        data: result.data || '',
+      })
+    } catch (error) {
+      this.post({
+        type: 'attachmentData',
+        sessionId,
+        attachmentId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   async selectPermission(sessionId, preset) {
@@ -967,20 +1022,26 @@ class ChatViewProvider {
       return
     }
     const list = await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions)
+    this.seedProjectionsFromList(list)
     for (const item of list) {
       const running = this.sessionRunning.get(item.sessionId)
       if (running !== undefined) item.running = item.running || running
       item.archived = this.sessions.isArchived(item.sessionId)
       const title = item.projections?.values?.title
       if (!item.title && typeof title === 'string' && title) item.title = title
+    }
+    this.post({ type: 'sessions', sessions: list, selectedSessionId: this.selectedSessionId })
+    this.postStats(this.selectedSessionId)
+  }
+
+  seedProjectionsFromList(list) {
+    for (const item of list || []) {
       if (item.projections) {
         for (const [key, value] of Object.entries(item.projections.values ?? {})) {
           this.seedProjection(item.sessionId, key, value, item.projections.asOfSeq)
         }
       }
     }
-    this.post({ type: 'sessions', sessions: list, selectedSessionId: this.selectedSessionId })
-    this.postStats(this.selectedSessionId)
   }
 
   ensureProjectionStore(sessionId) {
@@ -1016,12 +1077,12 @@ class ChatViewProvider {
     return store?.get(key)?.value
   }
 
-  postStats(sessionId) {
-    if (!sessionId) return
+  statsSnapshot(sessionId) {
+    if (!sessionId) return null
     const store = this.projectionsBySession.get(sessionId)
-    if (!store) return
+    if (!store) return null
     const get = (key) => store.get(key)?.value
-    const stats = {
+    return {
       tokenUsage: get('tokenUsage'),
       sessionStats: get('sessionStats'),
       contextPressure: get('contextPressure'),
@@ -1029,7 +1090,11 @@ class ChatViewProvider {
       todos: get('todos'),
       permissions: get('permissions'),
     }
-    this.post({ type: 'stats', sessionId, stats })
+  }
+
+  postStats(sessionId) {
+    if (!sessionId) return
+    this.post({ type: 'stats', sessionId, stats: this.statsSnapshot(sessionId) })
   }
 
   queueSnapshot(sessionId) {

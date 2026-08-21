@@ -2,9 +2,34 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { foldEvents } = require('../src/conversation.js')
+const { foldEvents, extractImages } = require('../src/conversation.js')
 
 function ev(seq, type, data) { return { seq, time: seq, type, data } }
+
+test('extracts durable image attachment refs from content', () => {
+  const ref = { attachmentId: 'att-1', mediaType: 'image/png', bytes: 12, width: 4, height: 4 }
+  const images = extractImages([
+    { type: 'text', text: 'hello' },
+    { type: 'image', attachment: ref },
+    { type: 'tool-call', id: 'x', name: 'n', arguments: '{}' },
+  ])
+  assert.deepEqual(images, [{ attachment: ref }])
+  assert.equal(extractImages([]).length, 0)
+  assert.equal(extractImages([{ type: 'image' }]).length, 0)
+})
+
+test('user message carries image attachments', () => {
+  const ref = { attachmentId: 'att-2', mediaType: 'image/jpeg', bytes: 3, width: 1, height: 1 }
+  const { items } = foldEvents([
+    ev(1, 'user/message', {
+      content: [{ type: 'text', text: '看看这个' }, { type: 'image', attachment: ref }],
+      source: { kind: 'user' },
+    }),
+  ])
+  assert.equal(items[0].type, 'user')
+  assert.equal(items[0].text, '看看这个')
+  assert.deepEqual(items[0].images, [{ attachment: ref }])
+})
 
 test('folds user message and assistant chunks into items', () => {
   const events = [
