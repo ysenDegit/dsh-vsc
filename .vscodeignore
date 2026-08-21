@@ -1,5 +1,0 @@
-tests/**
-node_modules/**
-package-lock.json
-*.vsix
-.github/**
