@@ -10,23 +10,36 @@ function getWebviewHtml(nonce) {
   <title>DeepSeek Harness Chat</title>
   <style>
     :root {
-      --bg: var(--vscode-sideBar-background, #1e1e2e);
-      --fg: var(--vscode-foreground, #cdd6f4);
-      --muted: var(--vscode-descriptionForeground, #6c7086);
-      --border: var(--vscode-panel-border, #313244);
-      --input-bg: var(--vscode-input-background, #181825);
-      --input-fg: var(--vscode-input-foreground, #cdd6f4);
-      --accent: var(--vscode-focusBorder, #89b4fa);
-      --button-bg: var(--vscode-button-background, #89b4fa);
-      --button-fg: var(--vscode-button-foreground, #11111b);
-      --error: var(--vscode-errorForeground, #f38ba8);
-      --hover: var(--vscode-list-hoverBackground, #313244);
-      --code-bg: var(--vscode-textCodeBlock-background, #11111b);
-      --ok: var(--vscode-testing-iconPassed, #a6e3a1);
-      --warn: var(--vscode-editorWarning-foreground, #f9e2af);
-      --tool-bg: color-mix(in srgb, var(--input-bg) 65%, transparent);
-      --chip-bg: color-mix(in srgb, var(--accent) 14%, transparent);
-      --chip-border: color-mix(in srgb, var(--accent) 32%, transparent);
+      /* 语义色板：全部取自 VS Code Webview 主题变量，深浅色主题自适应。 */
+      --bg: var(--vscode-sideBar-background, var(--vscode-editor-background, #1f1f1f));
+      --fg: var(--vscode-foreground, #d4d4d4);
+      --muted: var(--vscode-descriptionForeground, var(--vscode-foreground, #9d9d9d));
+      --border: var(--vscode-panel-border, var(--vscode-editorWidget-border, #3c3c3c));
+      --input-bg: var(--vscode-input-background, var(--vscode-editor-background, #252526));
+      --input-fg: var(--vscode-input-foreground, var(--vscode-foreground, #d4d4d4));
+      --accent: var(--vscode-focusBorder, var(--vscode-textLink-foreground, #007acc));
+      --button-bg: var(--vscode-button-background, var(--accent));
+      --button-fg: var(--vscode-button-foreground, #ffffff);
+      --error: var(--vscode-errorForeground, #f48771);
+      --hover: var(--vscode-list-hoverBackground, var(--vscode-editorWidget-background, #2a2a2a));
+      --code-bg: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background, #1e1e1e));
+      --ok: var(--vscode-testing-iconPassed, var(--vscode-charts-green, #89d185));
+      --warn: var(--vscode-editorWarning-foreground, #cca700);
+      /* 语义层：在现有变量之上再定义一层，供统一视觉使用。 */
+      --surface: var(--input-bg);
+      --surface-2: var(--vscode-dropdown-background, var(--vscode-editorWidget-background, var(--input-bg)));
+      --text: var(--fg);
+      --border-soft: color-mix(in srgb, var(--border) 55%, transparent);
+      --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+      --accent-strong: color-mix(in srgb, var(--accent) 32%, transparent);
+      --active: var(--vscode-list-activeSelectionBackground, var(--hover));
+      --tool-bg: color-mix(in srgb, var(--code-bg) 45%, transparent);
+      --chip-bg: color-mix(in srgb, var(--accent) 12%, transparent);
+      --chip-border: color-mix(in srgb, var(--accent) 35%, transparent);
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -39,7 +52,7 @@ function getWebviewHtml(nonce) {
       flex-direction: column;
       overflow: hidden;
     }
-    #app { display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; max-width: var(--chat-max-width, none); margin: 0 auto; }
+    #app { position: relative; display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; max-width: var(--chat-max-width, none); margin: 0 auto; }
 
     /* Status badge (top integrated bar) */
     .status-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); flex: 0 0 auto; }
@@ -53,26 +66,101 @@ function getWebviewHtml(nonce) {
     .status-badge.retryable:hover { color: var(--accent); }
 
     button {
-      background: transparent; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;
-      font-family: inherit;
+      background: transparent; color: var(--fg); border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm); padding: 4px 8px; cursor: pointer; font-size: 12px;
+      font-family: inherit; transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
     }
-    button:hover { background: var(--hover); }
+    button:hover { background: var(--hover); border-color: var(--border); }
+    button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
     button.primary { background: var(--button-bg); color: var(--button-fg); border-color: transparent; }
-    button.primary:hover { filter: brightness(0.9); }
+    button.primary:hover { filter: brightness(0.92); }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 34%, transparent); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
+    ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted) 55%, transparent); background-clip: padding-box; }
+    ::-webkit-scrollbar-corner { background: transparent; }
 
-    /* Session strip */
-    .sessions-wrap {
-      display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+    /* Top bar */
+    .top-bar {
+      display: flex; align-items: center; gap: 6px; padding: 6px 8px;
       border-bottom: 1px solid var(--border); flex: 0 0 auto; min-width: 0;
     }
-    .sessions-wrap button { flex: 0 0 auto; height: 26px; padding: 0 8px; }
-    #sessionSelect {
-      flex: 1; min-width: 0; background: var(--input-bg); color: var(--input-fg);
-      border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
+    .top-bar-actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+    .top-bar-actions button { flex: 0 0 auto; height: 26px; min-width: 26px; padding: 0 6px; }
+    .session-title-btn {
+      flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 4px;
+      background: transparent; color: var(--fg); border: 1px solid transparent;
+      border-radius: var(--radius-sm); padding: 3px 6px; font: inherit; font-size: 12px;
+      cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .session-title-btn:hover { background: var(--hover); border-color: var(--border-soft); }
+    .session-title-btn .caret { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
+    #sessionTitle { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Sessions drawer */
+    .sessions-drawer {
+      position: absolute; top: 40px; right: 8px; left: 8px; z-index: 15;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow);
+      display: none; flex-direction: column; max-height: 320px; overflow: hidden;
+    }
+    .sessions-drawer.open { display: flex; }
+    .drawer-header { display: flex; align-items: center; gap: 6px; padding: 8px 8px 6px; }
+    .drawer-title { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
+    #drawerNewBtn { flex: 0 0 auto; }
+    .drawer-search {
+      margin: 0 8px 6px; background: var(--input-bg); color: var(--input-fg);
+      border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 5px 8px;
       font: inherit; font-size: 12px;
     }
+    .drawer-list { flex: 1 1 auto; overflow-y: auto; padding: 0 8px 8px; }
+    .drawer-item {
+      display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+      border-radius: var(--radius-sm); cursor: pointer; color: var(--fg); font-size: 12px;
+    }
+    .drawer-item:hover { background: var(--hover); }
+    .drawer-item.selected { background: var(--active); color: var(--vscode-list-activeSelectionForeground, var(--fg)); }
+    .drawer-item .drawer-main { flex: 1; min-width: 0; }
+    .drawer-item .drawer-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .drawer-item .drawer-meta { color: var(--muted); font-size: 11px; }
+    .drawer-item .drawer-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .drawer-item.running .drawer-dot { background: var(--ok); }
+    .drawer-item .drawer-actions { display: none; flex: 0 0 auto; gap: 2px; }
+    .drawer-item:hover .drawer-actions { display: inline-flex; }
+    .drawer-item .drawer-actions button { height: 20px; min-width: 24px; padding: 0 4px; font-size: 11px; line-height: 1; }
+    .drawer-empty { padding: 14px 8px; color: var(--muted); font-size: 12px; text-align: center; }
+
+    /* More menu */
+    .more-menu {
+      position: absolute; top: 40px; right: 8px; z-index: 15;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow);
+      display: none; flex-direction: column; min-width: 180px; padding: 4px;
+    }
+    .more-menu.open { display: flex; }
+    .more-menu button {
+      display: block; width: 100%; text-align: left; border: none; background: transparent;
+      color: var(--fg); padding: 6px 8px; border-radius: var(--radius-sm);
+      font: inherit; font-size: 12px; cursor: pointer;
+    }
+    .more-menu button:hover { background: var(--hover); }
+    .more-menu button:disabled { opacity: 0.45; }
+
+    /* Toast */
+    .toast {
+      position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+      z-index: 30; background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; color: var(--fg);
+      box-shadow: var(--shadow); display: none; align-items: center; gap: 8px;
+      max-width: calc(100% - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .toast.open { display: flex; }
+    .toast.ok { border-color: var(--ok); color: var(--ok); }
+    .toast.error { border-color: var(--error); color: var(--error); }
+    .toast .spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; flex: 0 0 auto; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
     .mode-row {
       display: flex; align-items: center; gap: 6px; padding: 6px 10px;
       border-bottom: 1px solid var(--border); flex: 0 0 auto; min-width: 0;
@@ -83,14 +171,14 @@ function getWebviewHtml(nonce) {
       border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
       font: inherit; font-size: 12px; cursor: pointer; height: auto;
     }
-    .mode-welcome { max-width: 420px; margin: 0 auto; text-align: left; }
-    .mode-welcome-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .mode-welcome { max-width: 460px; margin: 0 auto; text-align: left; }
+    .mode-welcome-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
     .mode-welcome-desc { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
     .mode-welcome-hint { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
     .mode-welcome .preset-list { max-height: none; }
 
     /* Chat area */
-    .chat { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 12px 10px; }
+    .chat { flex: 1 1 auto; min-width: 0; overflow-y: auto; overflow-x: hidden; padding: 16px 14px; }
     .empty { color: var(--muted); text-align: center; margin-top: 40px; line-height: 1.8; }
     .empty-actions { margin-top: 12px; text-align: center; }
     .empty-actions button { padding: 4px 14px; }
@@ -102,35 +190,50 @@ function getWebviewHtml(nonce) {
     .msg.tool, .msg.command { align-items: flex-start; }
     .msg .meta { font-size: 11px; color: var(--muted); margin-bottom: 3px; display: flex; gap: 6px; align-items: center; }
     .bubble {
-      border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+      border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 8px 10px;
       white-space: normal; overflow-wrap: anywhere; line-height: 1.55;
     }
     .msg.user .bubble {
-      background: color-mix(in srgb, var(--accent) 14%, transparent);
-      border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+      background: var(--accent-soft);
+      border-color: var(--accent-strong);
       border-radius: 8px 8px 2px 8px;
       max-width: 85%;
     }
     .msg.assistant .bubble { background: transparent; max-width: 100%; }
     .msg.context .bubble { border-style: dashed; color: var(--muted); font-size: 12px; }
     .msg.note .bubble { border-color: var(--error); color: var(--error); font-size: 12px; }
-    .msg.tool .bubble { border-left: 3px solid var(--accent); background: var(--tool-bg); font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; padding: 5px 8px; }
+    .produced { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 8px 0 2px; font-size: 12px; color: var(--muted); }
+    .produced-label { color: var(--muted); font-weight: 600; flex: 0 0 auto; }
+    .produced-list { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+    .produced-chip {
+      border: 1px solid var(--border-soft); border-radius: 12px; padding: 2px 8px;
+      background: var(--surface); color: var(--fg); font-size: 12px; cursor: pointer;
+      font-family: var(--vscode-editor-font-family, monospace);
+    }
+    .produced-chip:hover { border-color: var(--accent); color: var(--accent); }
+    .produced-more { color: var(--muted); font-size: 11px; }
+    .msg.tool .bubble { border: 0; background: transparent; font-size: 12px; padding: 1px 0; font-family: inherit; line-height: 1.5; }
     .msg.tool .tool-details { margin: 0; }
-    .msg.tool .tool-head { display: flex; align-items: baseline; gap: 6px; cursor: pointer; color: var(--accent); font-weight: 600; list-style: none; }
+    .msg.tool .tool-head { display: flex; align-items: baseline; gap: 5px; cursor: pointer; color: var(--muted); font-weight: 400; list-style: none; }
     .msg.tool .tool-head::-webkit-details-marker { display: none; }
-    .msg.tool .tool-head::before { content: '▸'; flex: 0 0 auto; color: var(--muted); margin-right: 2px; transition: transform 0.12s ease; }
-    .msg.tool .tool-details[open] > summary.tool-head::before { content: '▾'; }
-    .msg.tool .tool-arg { flex: 1 1 auto; min-width: 0; color: var(--muted); font-weight: 400; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .msg.tool .tool-icon { flex: 0 0 auto; color: var(--muted); }
+    .msg.tool .tool-name { font-weight: 600; color: var(--fg); }
+    .msg.tool .tool-arg {
+      flex: 0 1 auto; min-width: 0; color: var(--muted); font-weight: 400; font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .msg.tool .tool-details[open] > summary.tool-head .tool-name { color: var(--accent); }
     .msg.tool .tool-args, .msg.tool .tool-result {
-      margin: 6px 0 0; padding: 6px 8px; background: var(--code-bg);
-      border: 1px solid var(--border); border-radius: 4px;
+      margin: 4px 0 6px 22px; padding: 6px 8px; background: var(--code-bg);
+      border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
       max-height: 220px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      word-break: break-word; width: 100%; max-width: 100%; box-sizing: border-box;
       font-size: 11px;
     }
-    .msg.tool .tool-running { color: var(--muted); font-size: 11px; margin-top: 4px; }
-    .msg.tool .tool-done { color: var(--ok); font-size: 11px; margin-top: 4px; }
-    .msg.tool .tool-failed { color: var(--error); font-size: 11px; margin-top: 4px; }
-    .msg.tool .tool-name { font-weight: 600; color: var(--accent); }
+    .msg.tool .tool-running { color: var(--muted); font-size: 12px; margin: 2px 0 4px 22px; }
+    .msg.tool .tool-done { color: var(--ok); font-size: 12px; margin: 2px 0 4px 22px; }
+    .msg.tool .tool-failed { color: var(--error); font-size: 12px; margin: 2px 0 4px 22px; }
+    .msg.tool .tool-failed::before { content: '❌ '; }
     .msg.command .bubble { border-left: 3px solid var(--accent); background: var(--tool-bg); font-size: 12px; padding: 5px 8px; }
     .msg.command .command-line { font-family: var(--vscode-editor-font-family, monospace); font-weight: 600; color: var(--accent); }
     .msg.command .command-outcome { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -145,14 +248,19 @@ function getWebviewHtml(nonce) {
       font-size: 11px; line-height: 1; padding: 2px 8px; border-radius: 10px;
       background: var(--chip-bg); color: var(--accent); border: 1px solid var(--chip-border);
     }
-    .reasoning-details { margin: 0 0 6px; border-left: 3px solid var(--accent); background: var(--tool-bg); border-radius: 6px; padding: 5px 8px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
-    .reasoning-details > summary.reasoning-title { list-style: none; cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 600; user-select: none; }
+    .reasoning-details { margin: 0 0 2px; padding: 0; font-family: inherit; font-size: 12px; line-height: 1.5; min-width: 0; max-width: 100%; }
+    .reasoning-details > summary.reasoning-title { display: flex; align-items: baseline; gap: 6px; list-style: none; cursor: pointer; color: var(--muted); font-weight: 400; user-select: none; }
     .reasoning-details > summary.reasoning-title::-webkit-details-marker { display: none; }
-    .reasoning-title::before { content: '▸'; display: inline-block; margin-right: 2px; font-size: 12px; transition: transform 0.12s ease; color: var(--muted); }
-    .reasoning-details[open] > summary.reasoning-title::before { content: '▾'; }
-    .reasoning-body { color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0 0; padding-left: 12px; background: transparent; border: 0; }
-    .reasoning-live { align-self: stretch; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; margin-bottom: 6px; min-width: 0; border-left: 3px solid var(--accent); background: var(--tool-bg); border-radius: 6px; padding: 5px 8px; font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; line-height: 1.55; }
-    .reasoning-status { flex: 0 0 auto; color: var(--accent); font-weight: 600; font-size: 12px; }
+    .reasoning-label { flex: 0 0 auto; color: var(--muted); font-weight: 600; }
+    .reasoning-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-weight: 400; }
+    .reasoning-details[open] > summary.reasoning-title .reasoning-label { color: var(--accent); }
+    .reasoning-body {
+      color: var(--muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere;
+      word-break: break-word; width: 100%; max-width: 100%; box-sizing: border-box;
+      margin: 2px 0 4px 24px; padding: 0; background: transparent; border: 0;
+    }
+    .reasoning-live { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow: hidden; margin: 0 0 2px; min-width: 0; font-family: inherit; font-size: 12px; line-height: 1.5; }
+    .reasoning-status { flex: 0 0 auto; color: var(--muted); font-weight: 600; font-size: 12px; }
     .reasoning-sep { flex: 0 0 auto; color: var(--muted); }
     .reasoning-stream { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--muted); font-size: 12px; }
     .cursor::after { content: '▍'; color: var(--accent); animation: blink 1s step-end infinite; }
@@ -187,7 +295,12 @@ function getWebviewHtml(nonce) {
     .bubble td, .bubble th { border: 1px solid var(--border); padding: 3px 6px; }
 
     /* Composer */
-    .composer { flex: 0 0 auto; min-width: 0; border-top: 1px solid var(--border); padding: 8px 10px; position: relative; }
+    .composer { flex: 0 0 auto; min-width: 0; padding: 8px 10px; position: relative; }
+    .composer-capsule {
+      background: var(--surface); border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow);
+      padding: 6px; display: flex; flex-direction: column; gap: 4px;
+    }
     .file-picker {
       position: absolute; bottom: 100%; left: 10px; right: 10px; max-height: 220px; overflow-y: auto;
       background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; z-index: 10;
@@ -269,69 +382,97 @@ function getWebviewHtml(nonce) {
     .todo-dock .todo-toggle { flex: 0 0 auto; color: var(--muted); font-size: 11px; line-height: 1; user-select: none; }
     .todo-dock .todo-header:hover .todo-toggle { color: var(--accent); }
     .todo-dock.collapsed .todo-list { display: none; }
-    .permission-button {
-      display: none; min-width: 36px; max-width: 36px; padding: 0 4px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      font-weight: 600;
+    /* Mode pill + modes popover (permission/mode selector) */
+    .mode-pill {
+      flex: 0 0 auto; height: 36px; min-width: 64px; padding: 0 10px;
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--input-bg); color: var(--fg);
+      border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+      font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .permission-button.open { display: inline-block; }
-    .permission-popover {
-      position: absolute; left: 10px; bottom: calc(100% - 4px); width: 220px;
-      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    .mode-pill:hover { background: var(--hover); border-color: var(--border); }
+    .mode-pill:disabled { opacity: 0.45; }
+    .modes-popover {
+      position: absolute; left: 10px; bottom: calc(100% - 4px); width: 260px;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
       padding: 6px; z-index: 12; display: none;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
-      max-height: 200px; overflow-y: auto;
+      box-shadow: var(--shadow);
+      max-height: 240px; overflow-y: auto;
     }
-    .permission-popover.open { display: block; }
-    .permission-option {
+    .modes-popover.open { display: block; }
+    .mode-item {
       display: block; width: 100%; text-align: left; border: none;
-      background: transparent; color: var(--fg); padding: 5px 8px;
-      border-radius: 4px; font: inherit; font-size: 12px; cursor: pointer;
+      background: transparent; color: var(--fg); padding: 7px 8px;
+      border-radius: var(--radius-sm); font: inherit; font-size: 12px; cursor: pointer;
     }
-    .permission-option:hover { background: var(--hover); }
-    .permission-option.selected { background: var(--hover); color: var(--accent); }
+    .mode-item:hover { background: var(--hover); }
+    .mode-item.selected { background: var(--active); color: var(--vscode-list-activeSelectionForeground, var(--fg)); }
+    .mode-item .mode-name { font-weight: 600; }
+    .mode-item .mode-desc { color: var(--muted); font-size: 11px; margin-top: 2px; white-space: normal; }
+    .mode-item .mode-check { float: right; color: var(--accent); font-weight: 600; padding-left: 6px; }
+
     .queue-item .queue-action {
       flex: 0 0 auto; height: 20px; min-width: 24px; padding: 0 5px;
       font-size: 11px; line-height: 1;
     }
-    .composer-row { display: flex; gap: 6px; align-items: flex-end; min-width: 0; }
-    .composer-row button { flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 8px; }
+    .icon-btn {
+      flex: 0 0 auto; height: 36px; min-width: 36px; padding: 0 8px;
+      font-size: 14px; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .composer-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+    .composer-row button { flex: 0 0 auto; height: 30px; min-width: 30px; padding: 0 7px; }
+    .composer-row button.primary { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+    .send-count {
+      min-width: 16px; padding: 0 5px; border-radius: 8px; font-size: 11px; line-height: 1.4;
+      background: rgba(0,0,0,0.28); color: var(--button-fg); text-align: center;
+    }
     #stopBtn { font-size: 14px; padding: 0 10px; }
-    .model-button { min-width: 36px; max-width: 36px; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-    .model-popover {
-      position: absolute; right: 10px; bottom: calc(100% - 4px); width: 300px; max-width: calc(100% - 20px);
-      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+    .slash-btn { position: relative; }
+    .slash-btn .slash-icon {
+      display: block; width: 16px; height: 16px; margin: 0 auto;
+      border: 1px solid var(--fg); border-radius: 3px; position: relative;
+    }
+    .slash-btn .slash-icon::after {
+      content: ''; position: absolute; left: 3px; top: 7px; width: 8px; height: 1px;
+      background: var(--fg); transform: rotate(45deg); transform-origin: center;
+    }
+    .composer-popover {
+      position: absolute; right: 10px; bottom: calc(100% - 4px); width: 280px; max-width: calc(100% - 20px);
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg);
       padding: 8px; z-index: 11; display: none;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      box-shadow: var(--shadow);
     }
-    .model-popover.open { display: block; }
-    .model-popover-row {
-      display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
-      font-size: 12px; color: var(--muted);
-    }
-    .model-popover-row:last-of-type { margin-bottom: 4px; }
-    .model-popover-row label { flex: 0 0 auto; }
-    .model-popover-row select {
+    .composer-popover.open { display: block; }
+    .cp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+    .cp-row label { flex: 0 0 auto; }
+    .cp-row select {
       flex: 1; min-width: 0; background: var(--input-bg); color: var(--input-fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
       font: inherit; font-size: 12px;
     }
-    .model-popover .hint { margin-top: 2px; }
-    .model-custom-sep { border-top: 1px dashed var(--border); margin: 6px 0; }
-    .model-popover-row input[type=text] {
-      flex: 1; min-width: 0; background: var(--input-bg); color: var(--input-fg);
-      border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px;
-      font: inherit; font-size: 12px;
-    }
-    .model-popover-row button { height: 26px; padding: 0 8px; }
+    .composer-popover .hint { margin-top: 2px; }
+    .cp-sep { border-top: 1px dashed var(--border); margin: 6px 0; }
+    .cp-group-title { color: var(--muted); font-size: 11px; font-weight: 600; margin: 4px 0 4px; padding: 0 4px; }
     #composerInput {
-      flex: 1; min-width: 0; resize: none; min-height: 36px; max-height: 180px;
+      flex: 1; min-width: 0; resize: none; min-height: 30px; max-height: 120px;
       background: var(--input-bg); color: var(--input-fg);
-      border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px;
+      border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 6px 10px;
       font: inherit; line-height: 1.5;
     }
     #composerInput:focus { outline: 1px solid var(--accent); }
-    body.composer-expanded #composerInput { max-height: none; height: 40vh; min-height: 220px; }
+    /* 面板较窄（<900px）时隐藏中间的缓存命中/LLM 用量，保留 working 与右下角模型/权限信息。 */
+    @media (max-width: 900px) {
+      #statsText { display: none; }
+    }
+    /* 窄面板响应式：收紧内边距。 */
+    @media (max-width: 600px) {
+      .chat { padding: 12px 10px; }
+      .composer { padding: 6px 8px; }
+      .top-bar { padding: 4px 6px; gap: 4px; }
+      .composer-capsule { padding: 4px; }
+    }
     /* hidden 属性必须优先于任何 display 规则（否则 display:flex 会盖掉它）。 */
     [hidden] { display: none !important; }
     .pending-images { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
@@ -352,11 +493,13 @@ function getWebviewHtml(nonce) {
     .hint { color: var(--muted); font-size: 11px; margin-top: 4px; }
     .stats-bar {
       position: relative; margin-top: 4px; font-size: 11px; color: var(--muted);
+      min-height: 16px;
       text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .stats-bar .model-info {
       position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-      max-width: 45%; overflow: hidden; text-overflow: ellipsis;
+      max-width: calc(100% - 80px); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     /* New session modal */
@@ -366,9 +509,9 @@ function getWebviewHtml(nonce) {
     }
     .modal-overlay.open { display: flex; }
     .modal {
-      width: min(360px, calc(100% - 24px)); background: var(--bg);
-      border: 1px solid var(--border); border-radius: 8px; padding: 12px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      width: min(360px, calc(100% - 24px)); background: var(--surface-2);
+      border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px;
+      box-shadow: var(--shadow);
     }
     .modal-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 600; }
     .modal-header .spacer { flex: 1; }
@@ -397,7 +540,10 @@ function getWebviewHtml(nonce) {
     .settings-nav-item.active { background: var(--hover); color: var(--accent); font-weight: 600; }
     .settings-pane { display: none; flex-direction: column; gap: 10px; }
     .settings-pane.active { display: flex; }
-    .settings-section { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+    .settings-section {
+      background: var(--surface); border: 1px solid var(--border-soft);
+      border-radius: var(--radius-md); padding: 10px;
+    }
     .settings-section h3 { margin: 0 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
     .settings-subsection { margin: 8px 0 2px 10px; padding-left: 10px; border-left: 1px solid var(--border); }
     .settings-subsection-title { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
@@ -432,16 +578,29 @@ function getWebviewHtml(nonce) {
 </head>
 <body>
   <div id="app">
-    <div class="sessions-wrap">
+    <div class="top-bar">
       <span class="status-badge"><span id="statusDot" class="status-dot stopped"></span><span id="statusText">stopped</span></span>
-      <button id="settingsBtn" title="设置">⚙</button>
-      <button id="refreshBtn" title="刷新会话">⟳</button>
-      <button id="newSessionBtn" class="primary" title="新建会话">＋</button>
-      <select id="sessionSelect" title="选择会话"></select>
-      <button id="renameSessionBtn" title="重命名会话">✎</button>
-      <button id="closeSessionBtn" title="归档/关闭会话">✕</button>
-      <button id="downloadSessionBtn" title="下载当前会话上下文">⬇</button>
+      <button id="sessionTitleBtn" class="session-title-btn" title="选择会话"><span id="sessionTitle">会话</span><span class="caret">▾</span></button>
+      <div class="top-bar-actions">
+        <button id="refreshBtn" title="刷新会话">⟳</button>
+        <button id="settingsBtn" title="设置">⚙</button>
+        <button id="moreBtn" title="更多">⋯</button>
+      </div>
     </div>
+    <div id="sessionsDrawer" class="sessions-drawer">
+      <div class="drawer-header">
+        <span id="drawerTitle" class="drawer-title">Sessions</span>
+        <span class="spacer" style="flex:1"></span>
+        <button id="drawerNewBtn" class="primary">＋ New Session</button>
+        <button id="drawerCloseBtn" title="关闭">✕</button>
+      </div>
+      <input id="drawerSearch" class="drawer-search" type="text" placeholder="Search sessions…" />
+      <div id="drawerList" class="drawer-list"></div>
+    </div>
+    <div id="moreMenu" class="more-menu">
+      <button id="moreOpenWebBtn">🌐 打开 dsh Web</button>
+    </div>
+    <div id="toast" class="toast"></div>
     <div id="chat" class="chat">
       <div class="empty">正在连接 DeepSeek Harness…</div>
     </div>
@@ -454,28 +613,30 @@ function getWebviewHtml(nonce) {
       <div id="queueDock" class="queue-dock"></div>
       <div id="questionPanel" class="question-panel" style="display:none"></div>
       <div id="approvalPanel" class="question-panel approval-panel" style="display:none"></div>
-      <div id="composerRow" class="composer-row">
-        <button id="permissionBtn" class="permission-button" title="选择权限">权</button>
-        <button id="imageBtn" title="选择图片">📷</button>
-        <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
-        <input type="file" id="imageFileInput" accept="image/*" multiple hidden>
-        <button id="expandBtn" title="展开/收起输入框">⤢</button>
-        <button id="stopBtn" title="停止生成" style="display:none">■</button>
-        <button id="sendBtn" class="primary" title="发送">发送</button>
-        <button id="modelBtn" class="model-button" title="模型与推理强度">模</button>
+      <div class="composer-capsule">
+        <div id="composerRow" class="composer-row">
+          <button id="imageBtn" class="icon-btn" title="选择图片">📷</button>
+          <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
+          <input type="file" id="imageFileInput" accept="image/*" multiple hidden>
+          <button id="sendBtn" class="primary" title="发送"><span class="send-label">发送</span><span class="send-count" hidden></span></button>
+          <button id="actionsBtn" class="icon-btn slash-btn" title="模型与权限"><span class="slash-icon"></span></button>
+          <button id="stopBtn" class="icon-btn" title="停止生成" style="display:none">■</button>
+        </div>
       </div>
-      <div id="modelPopover" class="model-popover">
-        <div class="model-popover-row">
+      <div id="modelPopover" class="composer-popover">
+        <div class="cp-row">
           <label id="modelLabel">模型</label>
           <select id="modelSelect" title="选择模型"></select>
         </div>
-        <div class="model-popover-row">
+        <div class="cp-row">
           <label id="effortLabel">推理</label>
           <select id="effortSelect" title="选择推理等级"></select>
         </div>
         <span id="modelStatus" class="hint" style="margin-top:0"></span>
+        <div class="cp-sep"></div>
+        <div class="cp-group-title" id="permissionGroupTitle">权限/模式</div>
+        <div id="permissionGroupList"></div>
       </div>
-      <div id="permissionPopover" class="permission-popover"></div>
       <div id="statsBar" class="stats-bar">
       <span id="workIndicator" class="work-indicator idle">
         <span class="work-bulb"></span>
@@ -572,18 +733,25 @@ function getWebviewHtml(nonce) {
 
     var $ = function (id) { return document.getElementById(id); };
     var chatEl = $('chat');
-    var selectEl = $('sessionSelect');
     var inputEl = $('composerInput');
     var composerInput = inputEl;
-    var newSessionBtn = $('newSessionBtn');
     var refreshBtn = $('refreshBtn');
     var sendBtn = $('sendBtn');
     var stopBtn = $('stopBtn');
     var filePicker = $('filePicker');
-    var expandBtn = $('expandBtn');
-    var closeSessionBtn = $('closeSessionBtn');
-    var renameSessionBtn = $('renameSessionBtn');
-    var downloadSessionBtn = $('downloadSessionBtn');
+    var sessionTitleBtn = $('sessionTitleBtn');
+    var sessionTitleEl = $('sessionTitle');
+    var sessionsDrawer = $('sessionsDrawer');
+    var drawerTitleEl = $('drawerTitle');
+    var drawerNewBtn = $('drawerNewBtn');
+    var drawerCloseBtn = $('drawerCloseBtn');
+    var drawerSearch = $('drawerSearch');
+    var drawerList = $('drawerList');
+    var moreBtn = $('moreBtn');
+    var moreMenu = $('moreMenu');
+    var moreOpenWebBtn = $('moreOpenWebBtn');
+    var toastEl = $('toast');
+    var toastTimer = 0;
     var commandPicker = $('commandPicker');
     var modelSelectEl = $('modelSelect');
     var effortSelectEl = $('effortSelect');
@@ -598,11 +766,11 @@ function getWebviewHtml(nonce) {
     var questionPanelEl = $('questionPanel');
     var approvalPanelEl = $('approvalPanel');
     var composerRowEl = $('composerRow');
-    var permissionBtn = $('permissionBtn');
     var imageBtn = $('imageBtn');
     var imageFileInput = $('imageFileInput');
-    var permissionPopover = $('permissionPopover');
-    var modelBtn = $('modelBtn');
+    var permissionPopover = $('permissionGroupList');
+    var permissionGroupTitleEl = $('permissionGroupTitle');
+    var modelBtn = $('actionsBtn');
     var modelPopover = $('modelPopover');
     var settingsBtn = $('settingsBtn');
     var settingsModal = $('settingsModal');
@@ -646,6 +814,14 @@ function getWebviewHtml(nonce) {
         'refreshTitle': '刷新会话',
         'renameSession': '重命名会话',
         'closeSession': '归档/关闭会话',
+        'sessions': 'Sessions',
+        'sessionsDrawerTitle': 'Sessions',
+        'searchSessions': '搜索会话…',
+        'forkSession': 'Fork 会话',
+        'openDshWeb': '打开 dsh Web UI',
+        'selectHint': '选择会话',
+        'closePanel': '关闭',
+        'more': '更多',
         'settings': '设置',
         'expand': '展开/收起输入框',
         'stop': '停止生成',
@@ -667,6 +843,8 @@ function getWebviewHtml(nonce) {
         'blankTitle': '新会话',
         'session': '会话',
         'noSessions': '暂无会话',
+        'archived': '已归档',
+        'running': '工作中',
         'selectMode': '选择工作模式',
         'selectModeDesc': '当前是新会话。选择一种工作模式后，即可在下方输入消息开始对话。',
         'loadingModes': '正在加载工作模式…',
@@ -692,6 +870,7 @@ function getWebviewHtml(nonce) {
         'reasoningTitle': 'Think',
         'generating': '生成中…',
         'contextInjection': '上下文注入',
+        'producedLabel': '产物',
         'toolRunning': '运行中…',
         'commandRunning': '执行中…',
         'commandDone': '已执行',
@@ -702,8 +881,17 @@ function getWebviewHtml(nonce) {
         'modelFallback': '模型 · 推理',
         'modelLabel': '模型',
         'effortLabel': '推理',
+        'actions': '动作',
+        'filterActions': '筛选动作…',
+        'modeTitle': '工作模式',
+        'modelGroup': '模型',
+        'contextGroup': '上下文',
+        'accountUsage': '账户与用量',
+        'permissionGroup': '权限/模式',
+        'mentionFile': '引用项目文件…',
+        'attachImage': '附加图片…',
         'archiveTitle': '归档/关闭会话',
-        'archiveMessage': '将归档会话「{title}」。归档后会从会话列表移除，但会话记录副本会保存到当前工作目录的 .dsh-vsc/archived-sessions/ 下。',
+        'archiveMessage': '将归档会话「{title}」？归档后会从会话列表移除。',
         'confirmArchive': '确认归档',
         'cancel': '取消',
         'settingsOpenDoc': '打开 settings.yaml',
@@ -779,6 +967,14 @@ function getWebviewHtml(nonce) {
         'refreshTitle': 'Refresh Sessions',
         'renameSession': 'Rename Session',
         'closeSession': 'Archive/Close Session',
+        'sessions': 'Sessions',
+        'sessionsDrawerTitle': 'Sessions',
+        'searchSessions': 'Search sessions…',
+        'forkSession': 'Fork Session',
+        'openDshWeb': 'Open the dsh Web UI',
+        'selectHint': 'Select Session',
+        'closePanel': 'Close',
+        'more': 'More',
         'settings': 'Settings',
         'expand': 'Expand/Collapse Input',
         'stop': 'Stop Generation',
@@ -800,6 +996,8 @@ function getWebviewHtml(nonce) {
         'blankTitle': 'New Session',
         'session': 'Session',
         'noSessions': 'No Sessions',
+        'archived': 'Archived',
+        'running': 'Running',
         'selectMode': 'Select Working Mode',
         'selectModeDesc': 'This is a new session. Choose a working mode to start chatting below.',
         'loadingModes': 'Loading working modes…',
@@ -825,6 +1023,7 @@ function getWebviewHtml(nonce) {
         'reasoningTitle': 'Think',
         'generating': 'Generating…',
         'contextInjection': 'Context Injection',
+        'producedLabel': 'Produced',
         'toolRunning': 'Running…',
         'commandRunning': 'Running…',
         'commandDone': 'Done',
@@ -835,8 +1034,17 @@ function getWebviewHtml(nonce) {
         'modelFallback': 'Model · Reasoning',
         'modelLabel': 'Model',
         'effortLabel': 'Reasoning',
+        'actions': 'Actions',
+        'filterActions': 'Filter actions…',
+        'modeTitle': 'Mode',
+        'modelGroup': 'Model',
+        'contextGroup': 'Context',
+        'accountUsage': 'Account & usage',
+        'permissionGroup': 'Permission / Mode',
+        'mentionFile': 'Mention file from this project…',
+        'attachImage': 'Attach image…',
         'archiveTitle': 'Archive/Close Session',
-        'archiveMessage': 'Archive session "{title}"? It will be removed from the list and a copy will be saved to .dsh-vsc/archived-sessions/ in the current workspace.',
+        'archiveMessage': 'Archive session "{title}"? It will be removed from the list.',
         'confirmArchive': 'Archive',
         'cancel': 'Cancel',
         'settingsOpenDoc': 'Open settings.yaml',
@@ -914,12 +1122,10 @@ function getWebviewHtml(nonce) {
     }
 
     function applyLanguage() {
-      newSessionBtn.title = t('newSessionTitle');
       refreshBtn.title = t('refreshTitle');
-      renameSessionBtn.title = t('renameSession');
-      closeSessionBtn.title = t('closeSession');
       settingsBtn.title = t('settings');
-      expandBtn.title = t('expand');
+      sessionTitleBtn.title = t('selectHint');
+      moreBtn.title = t('more');
       stopBtn.title = t('stop');
       sendBtn.title = t('send');
       renderSendLabel();
@@ -930,8 +1136,11 @@ function getWebviewHtml(nonce) {
       archiveConfirmBtn.textContent = t('confirmArchive');
       document.querySelector('#settingsModal .modal-header span').textContent = t('settings');
       document.querySelector('#archiveModal .modal-header span').textContent = t('archiveTitle');
-      permissionBtn.textContent = '权';
-      modelBtn.textContent = '模';
+      drawerTitleEl.textContent = t('sessionsDrawerTitle');
+      drawerNewBtn.textContent = '＋ ' + t('newSessionTitle');
+      drawerCloseBtn.title = t('closePanel');
+      drawerSearch.placeholder = t('searchSessions');
+      moreOpenWebBtn.textContent = '🌐 ' + t('openDshWeb');
       $('modelLabel').textContent = t('modelLabel');
       $('effortLabel').textContent = t('effortLabel');
       renderStatus();
@@ -1461,6 +1670,16 @@ function getWebviewHtml(nonce) {
       // 未在底部时保持原滚动位置（节点复用不会重置滚动）。
     }
 
+    function toolIconClass(name) {
+      var n = String(name || '').toLowerCase();
+      var map = {
+        write: '✍️', read: '📖', edit: '✏️', bash: '⌨️', terminal: '💻',
+        glob: '🔍', grep: '🔍', todo: '✅', plan: '📋', web: '🌐',
+        skill: '🧩', list: '📄'
+      };
+      return map[n] || '⚙️';
+    }
+
     function renderItem(item) {
       var wrap = document.createElement('div');
       wrap.className = 'msg ' + item.type;
@@ -1484,7 +1703,7 @@ function getWebviewHtml(nonce) {
             live.className = 'reasoning-live';
             var statusEl = document.createElement('span');
             statusEl.className = 'reasoning-status';
-            statusEl.textContent = 'Thinking';
+            statusEl.textContent = '💭 Thinking';
             var sepEl = document.createElement('span');
             sepEl.className = 'reasoning-sep';
             sepEl.textContent = '·';
@@ -1503,7 +1722,18 @@ function getWebviewHtml(nonce) {
             rd.className = 'reasoning-details';
             var rsum = document.createElement('summary');
             rsum.className = 'reasoning-title';
-            rsum.textContent = 'Think';
+            var rlabel = document.createElement('span');
+            rlabel.className = 'reasoning-label';
+            rlabel.textContent = '💭 Think';
+            rsum.appendChild(rlabel);
+            var rprev = document.createElement('span');
+            rprev.className = 'reasoning-preview';
+            // 预览强制单行：换行折叠为空格，避免完成后的思考内容撑开多行。
+            rprev.textContent = String(item.reasoning || '')
+              .split(String.fromCharCode(10)).join(' ')
+              .split(String.fromCharCode(13)).join(' ')
+              .replace(/\s+/g, ' ');
+            rsum.appendChild(rprev);
             rd.appendChild(rsum);
             var rbody = document.createElement('pre');
             rbody.className = 'reasoning-body';
@@ -1515,7 +1745,8 @@ function getWebviewHtml(nonce) {
         if (hasText) bubble.innerHTML += renderMarkdown(item.text);
         if (item.partial) bubble.classList.add('cursor');
       } else if (item.type === 'tool') {
-        var toolName = escapeHtml(item.name || 'tool');
+        var rawToolName = item.name || 'tool';
+        var toolName = escapeHtml(rawToolName);
         var toolArgFull = '';
         var toolArgShort = '';
         if (item.arguments) {
@@ -1525,13 +1756,23 @@ function getWebviewHtml(nonce) {
             var toolKeys = Object.keys(toolArgs);
             if (toolKeys.length) {
               var toolFirst = toolArgs[toolKeys[0]];
-              var toolVal = typeof toolFirst === 'string' ? toolFirst : JSON.stringify(toolFirst);
+              var toolVal;
+              if (typeof toolFirst === 'string') {
+                toolVal = toolFirst;
+                // 路径参数只显示文件名（basename），避免完整路径把时间线拉长。
+                if (toolVal.indexOf('/') >= 0 || toolVal.indexOf(BS) >= 0) {
+                  var segs = toolVal.split('/').join(BS).split(BS);
+                  toolVal = segs[segs.length - 1] || toolVal;
+                }
+              } else {
+                toolVal = JSON.stringify(toolFirst);
+              }
               if (toolVal.length > 60) toolVal = toolVal.slice(0, 60) + '…';
               toolArgShort = toolVal;
             }
           } catch (e) { toolArgFull = item.arguments; }
         }
-        var toolHead = '<summary class="tool-head"><span class="tool-name">' + toolName + '</span>'
+        var toolHead = '<summary class="tool-head"><span class="tool-icon">' + escapeHtml(toolIconClass(rawToolName)) + '</span><span class="tool-name">' + toolName + '</span>'
           + (toolArgShort ? '<span class="tool-arg">' + escapeHtml(toolArgShort) + '</span>' : '')
           + '</summary>';
         var toolBody = '';
@@ -1601,6 +1842,38 @@ function getWebviewHtml(nonce) {
           textDiv.innerHTML = renderMarkdown(item.text);
           bubble.appendChild(textDiv);
         }
+      } else if (item.type === 'produced') {
+        needBubble = false;
+        var prodWrap = document.createElement('div');
+        prodWrap.className = 'produced';
+        var pulabel = document.createElement('span');
+        pulabel.className = 'produced-label';
+        pulabel.textContent = t('producedLabel');
+        prodWrap.appendChild(pulabel);
+        var puchips = document.createElement('div');
+        puchips.className = 'produced-list';
+        var ppaths = item.paths || [];
+        var pmax = 5;
+        for (var pj = 0; pj < ppaths.length && pj < pmax; pj++) {
+          (function (path) {
+            var puchip = document.createElement('button');
+            puchip.className = 'produced-chip';
+            var psegs = path.split('/').join(String.fromCharCode(92)).split(String.fromCharCode(92));
+            var pbase = psegs[psegs.length - 1] || path;
+            puchip.textContent = pbase;
+            puchip.title = path;
+            puchip.addEventListener('click', function () { post({ type: 'openFile', path: path }); });
+            puchips.appendChild(puchip);
+          })(ppaths[pj]);
+        }
+        if (ppaths.length > pmax) {
+          var pumore = document.createElement('span');
+          pumore.className = 'produced-more';
+          pumore.textContent = '+' + (ppaths.length - pmax);
+          puchips.appendChild(pumore);
+        }
+        prodWrap.appendChild(puchips);
+        wrap.appendChild(prodWrap);
       } else {
         bubble.innerHTML = renderMarkdown(item.text || '');
       }
@@ -1622,24 +1895,147 @@ function getWebviewHtml(nonce) {
 
     function renderSessions() {
       var current = state.selectedSessionId;
-      selectEl.innerHTML = '';
       var sessions = state.sessions || [];
+      var cur = null;
+      for (var i = 0; i < sessions.length; i++) {
+        if (sessions[i].sessionId === current) { cur = sessions[i]; break; }
+      }
+      sessionTitleEl.textContent = cur ? sessionDisplayTitle(cur) : t('noSessions');
+      renderDrawerList(sessions, current);
+      moreOpenWebBtn.disabled = false;
+    }
+
+    function makeDrawerAction(kind, label, title) {
+      var btn = document.createElement('button');
+      btn.textContent = label;
+      btn.setAttribute('data-action', kind);
+      btn.title = title;
+      return btn;
+    }
+
+    function relativeTime(ts) {
+      var n = Number(ts);
+      if (!n) return '';
+      var diff = Date.now() - n;
+      var min = Math.floor(diff / 60000);
+      if (min < 1) return '刚刚';
+      if (min < 60) return min + ' 分钟前';
+      var hr = Math.floor(min / 60);
+      if (hr < 24) return hr + ' 小时前';
+      var day = Math.floor(hr / 24);
+      if (day < 7) return day + ' 天前';
+      var d = new Date(n);
+      return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
+    }
+
+    function renderDrawerList(sessions, current) {
+      drawerList.innerHTML = '';
+      var query = (drawerSearch.value || '').trim().toLowerCase();
+      var shown = 0;
       for (var i = 0; i < sessions.length; i++) {
         var s = sessions[i];
-        var opt = document.createElement('option');
-        opt.value = s.sessionId;
-        opt.textContent = (s.archived ? '🗄 ' : '') + (s.running ? '● ' : '') + sessionDisplayTitle(s);
-        opt.selected = s.sessionId === current;
-        selectEl.appendChild(opt);
+        var title = sessionDisplayTitle(s);
+        if (query && title.toLowerCase().indexOf(query) < 0) continue;
+        shown++;
+        var item = document.createElement('div');
+        item.className = 'drawer-item'
+          + (s.sessionId === current ? ' selected' : '')
+          + (s.running ? ' running' : '');
+        item.setAttribute('data-session-id', s.sessionId);
+        var dot = document.createElement('span');
+        dot.className = 'drawer-dot';
+        item.appendChild(dot);
+        var main = document.createElement('div');
+        main.className = 'drawer-main';
+        var titleEl = document.createElement('div');
+        titleEl.className = 'drawer-title-text';
+        titleEl.textContent = title;
+        main.appendChild(titleEl);
+        var meta = document.createElement('div');
+        meta.className = 'drawer-meta';
+        var parts = [];
+        if (s.archived) parts.push(t('archived'));
+        if (s.running) parts.push(t('running'));
+        if (s.updatedAt) parts.push(relativeTime(s.updatedAt));
+        meta.textContent = parts.join(' · ');
+        main.appendChild(meta);
+        item.appendChild(main);
+        var actions = document.createElement('div');
+        actions.className = 'drawer-actions';
+        actions.appendChild(makeDrawerAction('forkSession', '⧉', t('forkSession')));
+        actions.appendChild(makeDrawerAction('renameSession', '✎', t('renameSession')));
+        actions.appendChild(makeDrawerAction('closeSession', '✕', t('closeSession')));
+        item.appendChild(actions);
+        item.addEventListener('click', function (ev) {
+          var itemEl = ev.currentTarget;
+          var sid = itemEl.getAttribute('data-session-id');
+          var btn = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+          if (btn) {
+            var kind = btn.getAttribute('data-action');
+            if (kind === 'forkSession') {
+              showToast('正在 fork 会话…', '', true);
+              post({ type: 'forkSession', sessionId: sid });
+            } else if (kind === 'renameSession') post({ type: 'renameSession', sessionId: sid });
+            else if (kind === 'closeSession') openArchiveModal(sid);
+            closeSessionDrawer();
+            return;
+          }
+          if (sid && sid !== state.selectedSessionId) post({ type: 'selectSession', sessionId: sid });
+          closeSessionDrawer();
+        });
+        drawerList.appendChild(item);
       }
-      if (!sessions.length) {
-        var empty = document.createElement('option');
-        empty.value = '';
+      if (!shown) {
+        var empty = document.createElement('div');
+        empty.className = 'drawer-empty';
         empty.textContent = t('noSessions');
-        selectEl.appendChild(empty);
+        drawerList.appendChild(empty);
       }
-      closeSessionBtn.disabled = !current;
-      renameSessionBtn.disabled = !current;
+    }
+
+    function openSessionDrawer() {
+      sessionsDrawer.classList.add('open');
+      moreMenu.classList.remove('open');
+      drawerSearch.value = '';
+      renderSessions();
+      drawerSearch.focus();
+    }
+
+    function closeSessionDrawer() { sessionsDrawer.classList.remove('open'); }
+
+    function toggleSessionDrawer() {
+      if (sessionsDrawer.classList.contains('open')) closeSessionDrawer();
+      else openSessionDrawer();
+    }
+
+    function openMoreMenu() {
+      moreMenu.classList.add('open');
+      sessionsDrawer.classList.remove('open');
+      renderSessions();
+    }
+
+    function closeMoreMenu() { moreMenu.classList.remove('open'); }
+
+    function showToast(text, kind, persist) {
+      toastEl.className = 'toast open' + (kind ? ' ' + kind : '');
+      toastEl.innerHTML = '';
+      if (persist) {
+        var sp = document.createElement('span');
+        sp.className = 'spinner';
+        toastEl.appendChild(sp);
+      }
+      var span = document.createElement('span');
+      span.textContent = text;
+      toastEl.appendChild(span);
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+      if (!persist) {
+        toastTimer = setTimeout(function () { toastEl.classList.remove('open'); toastTimer = 0; }, 1800);
+      }
+    }
+
+    function hideToast() {
+      if (toastTimer) { clearTimeout(toastTimer); toastTimer = 0; }
+      toastEl.classList.remove('open');
     }
 
     function renderStatus() {
@@ -1681,6 +2077,33 @@ function getWebviewHtml(nonce) {
       return id || '选择…';
     }
 
+    // 内置工作模式的名称/描述按界面语言本地化（插件自定义 preset 保留宿主返回的文案）。
+    function builtInPresetText(id, lang) {
+      var isEn = lang === 'en';
+      var names = {
+        standard: isEn ? 'Standard' : '标准模式',
+        code: isEn ? 'PTC Mode' : 'PTC 模式',
+        minimal: isEn ? 'Minimal' : '极简模式',
+        cordis: isEn ? 'Creative' : '创造模式',
+      };
+      var descs = {
+        standard: isEn
+          ? 'Full-featured coding Agent with file editing, Shell, file/web search, Skills, planning, goals, subagents, and workflows.'
+          : '功能完整的编码 Agent，支持文件编辑、Shell、文件与网页检索、Skills、计划、目标、子代理和工作流。',
+        code: isEn
+          ? 'All Standard capabilities, presenting tools through the Code Mode SDK so the model composes multi-step operations in a TypeScript program.'
+          : '具备标准模式的全部能力，并通过 Code Mode SDK 呈现工具，让模型用一个 TypeScript 程序组合多步操作。',
+        minimal: isEn
+          ? 'A dual-tool coding Agent with only persistent bash and str_replace_editor.'
+          : '仅提供持久 bash 与 str_replace_editor 的双工具编码 Agent。',
+        cordis: isEn
+          ? 'For creating custom Agent presets: all Standard capabilities plus runtime inspection, plugin experiments, and preset authoring guidance.'
+          : '用于创建自定义 Agent preset：具备标准模式的全部能力，并提供运行时检查、插件实验和 preset 创作指导。',
+      };
+      if (names[id] === undefined && descs[id] === undefined) return null;
+      return { name: names[id] || id, desc: descs[id] || '' };
+    }
+
     function renderBlankSessionWelcome() {
       chatEl.innerHTML = '';
       var session = currentSession();
@@ -1707,12 +2130,13 @@ function getWebviewHtml(nonce) {
           var div = document.createElement('div');
           div.className = 'preset-item';
           if (session && session.agentPreset === preset.id) div.classList.add('selected');
+          var localized = builtInPresetText(preset.id, state.language);
           var name = document.createElement('div');
           name.className = 'pname';
-          name.textContent = preset.name || preset.id;
+          name.textContent = localized ? localized.name : (preset.name || preset.id);
           var desc = document.createElement('div');
           desc.className = 'pdesc';
-          desc.textContent = preset.description || '';
+          desc.textContent = localized ? localized.desc : (preset.description || '');
           div.appendChild(name);
           div.appendChild(desc);
           div.addEventListener('click', function () {
@@ -1845,18 +2269,7 @@ function getWebviewHtml(nonce) {
 
     function autoResize() {
       inputEl.style.height = 'auto';
-      if (document.body.classList.contains('composer-expanded')) {
-        inputEl.style.height = '40vh';
-      } else {
-        inputEl.style.height = Math.min(inputEl.scrollHeight, 180) + 'px';
-      }
-    }
-
-    function toggleExpand() {
-      document.body.classList.toggle('composer-expanded');
-      expandBtn.textContent = document.body.classList.contains('composer-expanded') ? '⤡' : '⤢';
-      inputEl.focus();
-      autoResize();
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
     }
 
     function renderAll() {
@@ -1914,9 +2327,14 @@ function getWebviewHtml(nonce) {
     }
 
     function renderSendLabel() {
-      sendBtn.textContent = pendingImages.length > 0
-        ? t('send') + ' 🖼' + pendingImages.length
-        : t('send');
+      var labelEl = sendBtn.querySelector('.send-label');
+      var countEl = sendBtn.querySelector('.send-count');
+      if (labelEl) labelEl.textContent = t('send');
+      if (countEl) {
+        countEl.hidden = pendingImages.length === 0;
+        countEl.textContent = String(pendingImages.length);
+      }
+      sendBtn.title = t('send');
     }
 
     function renderPendingImages() {
@@ -2189,41 +2607,46 @@ function getWebviewHtml(nonce) {
     }
 
     function updatePermissionUi() {
-      var permissions = state.permissions;
-      var available = !!(permissions && Array.isArray(permissions.options) && permissions.options.length);
-      var canSwitch = state.status === 'ready' && !state.running;
-      permissionBtn.disabled = !canSwitch;
-      permissionBtn.title = state.running ? t('permissionRunning') : t('permissionTitle', { label: currentPermissionLabel() });
+      // 权限已集成到动作弹层；底部模型信息一并显示当前权限。
+      updateModelInfo();
     }
 
-    function closePermissionPopover() {
-      permissionPopover.classList.remove('open');
-    }
+    function closePermissionPopover() { /* 权限已集成到动作弹层，无独立弹层 */ }
 
-    function togglePermissionPopover() {
-      permissionPopover.classList.toggle('open');
-    }
+    function togglePermissionPopover() { /* 权限已集成到动作弹层，无独立弹层 */ }
 
     function renderPermissions() {
       var permissions = state.permissions;
       if (!permissions || !Array.isArray(permissions.options) || !permissions.options.length) {
-        permissionBtn.classList.remove('open');
-        permissionPopover.classList.remove('open');
+        permissionPopover.innerHTML = '';
+        updatePermissionUi();
         return;
       }
-      permissionBtn.classList.add('open');
-      permissionBtn.textContent = '权';
       updatePermissionUi();
       permissionPopover.innerHTML = '';
       for (var i = 0; i < permissions.options.length; i++) {
         (function (option) {
           var item = document.createElement('button');
-          item.className = 'permission-option' + (option.value === permissions.currentValue ? ' selected' : '');
-          item.textContent = option.name || option.value;
+          item.className = 'mode-item' + (option.value === permissions.currentValue ? ' selected' : '');
+          if (state.running) item.disabled = true;
+          var nameSpan = document.createElement('span');
+          nameSpan.className = 'mode-name';
+          nameSpan.textContent = option.name || option.value;
+          if (option.value === permissions.currentValue) {
+            var check = document.createElement('span');
+            check.className = 'mode-check';
+            check.textContent = '✓';
+            nameSpan.appendChild(check);
+          }
+          item.appendChild(nameSpan);
+          var desc = document.createElement('div');
+          desc.className = 'mode-desc';
+          desc.textContent = option.description || '';
+          item.appendChild(desc);
           item.title = option.description || '';
           item.addEventListener('click', function () {
             post({ type: 'permissionSelect', sessionId: state.selectedSessionId, preset: option.value });
-            closePermissionPopover();
+            closeModelPopover();
             // 不乐观更新 currentValue：以 dsh 随后广播的 permissions 投影为唯一确认。
           });
           permissionPopover.appendChild(item);
@@ -2632,15 +3055,16 @@ function getWebviewHtml(nonce) {
     // 统计行右下角：模型名 | 推理强度（无推理强度时只显示模型名）。
     function updateModelInfo() {
       var models = state.models;
-      if (!models || !models.current) {
-        modelInfoEl.textContent = '';
-        modelInfoEl.title = '';
-        return;
+      var parts = [];
+      if (models && models.current) {
+        var groups = models.groups || [];
+        var name = modelDisplayName(models.current, groups);
+        var effort = effortDisplayName(models.current, groups);
+        parts.push(effort ? name + ' | ' + effort : name);
       }
-      var groups = models.groups || [];
-      var name = modelDisplayName(models.current, groups);
-      var effort = effortDisplayName(models.current, groups);
-      modelInfoEl.textContent = effort ? name + ' | ' + effort : name;
+      var perm = currentPermissionLabel();
+      if (perm && perm !== '权限') parts.push(perm);
+      modelInfoEl.textContent = parts.join(' | ');
       modelInfoEl.title = modelInfoEl.textContent;
     }
 
@@ -2653,7 +3077,6 @@ function getWebviewHtml(nonce) {
         label = name || models.current.model || label;
         if (models.current.reasoningEffort) label += ' · ' + models.current.reasoningEffort;
       }
-      modelBtn.textContent = '模';
       modelBtn.title = t('modelTitle', { label: label });
       updateModelInfo();
     }
@@ -3396,20 +3819,24 @@ function getWebviewHtml(nonce) {
       var s = state.status;
       if (s === 'stopped' || s === 'error') post({ type: 'retryConnect' });
     });
-    $('newSessionBtn').addEventListener('click', function () {
-      post({ type: 'newSession' });
-    });
     settingsBtn.addEventListener('click', openSettingsModal);
     settingsCloseBtn.addEventListener('click', closeSettingsModal);
     settingsDoneBtn.addEventListener('click', closeSettingsModal);
     settingsOpenDocBtn.addEventListener('click', function () { post({ type: 'settingsOpenDocument' }); });
-    closeSessionBtn.addEventListener('click', function () {
-      if (!state.selectedSessionId) return;
-      openArchiveModal(state.selectedSessionId);
+    sessionTitleBtn.addEventListener('click', toggleSessionDrawer);
+    drawerCloseBtn.addEventListener('click', closeSessionDrawer);
+    drawerNewBtn.addEventListener('click', function () {
+      post({ type: 'newSession' });
+      closeSessionDrawer();
     });
-    downloadSessionBtn.addEventListener('click', function () {
-      if (!state.selectedSessionId) return;
-      post({ type: 'downloadSession', sessionId: state.selectedSessionId });
+    drawerSearch.addEventListener('input', function () { renderDrawerList(state.sessions || [], state.selectedSessionId); });
+    moreBtn.addEventListener('click', function () {
+      if (moreMenu.classList.contains('open')) closeMoreMenu();
+      else openMoreMenu();
+    });
+    moreOpenWebBtn.addEventListener('click', function () {
+      post({ type: 'openDshWeb' });
+      closeMoreMenu();
     });
     archiveCloseBtn.addEventListener('click', closeArchiveModal);
     archiveCancelBtn.addEventListener('click', closeArchiveModal);
@@ -3419,17 +3846,14 @@ function getWebviewHtml(nonce) {
       if (!sessionId) return;
       post({ type: 'closeSession', sessionId: sessionId });
     });
-    renameSessionBtn.addEventListener('click', function () {
-      if (!state.selectedSessionId) return;
-      post({ type: 'renameSession', sessionId: state.selectedSessionId });
-    });
-    expandBtn.addEventListener('click', toggleExpand);
     modelBtn.addEventListener('click', function () {
       toggleModelPopover();
     });
     document.addEventListener('click', function (event) {
-      if (event.target !== modelBtn && !modelPopover.contains(event.target)) closeModelPopover();
-      if (event.target !== permissionBtn && !permissionPopover.contains(event.target)) closePermissionPopover();
+      var t = event.target;
+      if (!modelBtn.contains(t) && !modelPopover.contains(t)) closeModelPopover();
+      if (!sessionsDrawer.contains(t) && !sessionTitleBtn.contains(t)) closeSessionDrawer();
+      if (!moreMenu.contains(t) && !moreBtn.contains(t)) closeMoreMenu();
     });
     modelSelectEl.addEventListener('change', function () {
       var val = modelSelectEl.value;
@@ -3446,14 +3870,7 @@ function getWebviewHtml(nonce) {
       if (effort === '__default__') effort = undefined;
       post({ type: 'modelSelect', provider: cur.provider, model: cur.model, effort: effort });
     });
-    permissionBtn.addEventListener('click', function () {
-      togglePermissionPopover();
-    });
     $('refreshBtn').addEventListener('click', function () { post({ type: 'refreshSessions' }); });
-    selectEl.addEventListener('change', function () {
-      var id = selectEl.value;
-      if (id) post({ type: 'selectSession', sessionId: id });
-    });
     inputEl.addEventListener('keydown', function (event) {
       if (event.key !== 'Enter') return;
       // enterToSend=true：Enter 发送、Shift+Enter 换行（默认行为，不拦截）。
@@ -3671,6 +4088,12 @@ function getWebviewHtml(nonce) {
           break;
         case 'notice':
           // 状态栏提示可忽略，保持界面安静
+          break;
+        case 'forkDone':
+          showToast('fork 完成：' + (msg.title || '新会话'), 'ok', false);
+          break;
+        case 'forkError':
+          showToast(msg.message || 'fork 失败', 'error', false);
           break;
       }
     });

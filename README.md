@@ -12,6 +12,8 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 ![插件截图](assets/Screenshot.png)
 
+![插件截图（英文）](assets/Screenshot-en.png)
+
 ---
 
 ## 中文
@@ -34,17 +36,18 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - 不存在：打开插件界面时弹出确认框（启动阶段不打扰，后台静默初始化），经用户确认后创建。
   - 未添加工作区时，聊天区显示"没有打开的工作区，无法开始会话。"提示及"将当前文件夹添加到DSH工作区"按钮，点击后重新弹出确认框。
   - VS Code 工作区文件夹变化时自动重新映射。
-- 会话列表、选择、新建、重命名。
-- 首次创建工作区且无会话时，自动创建并选中空白"新会话"（下拉不再显示"暂无会话"），聊天区显示"新会话已就绪。输入消息开始与 DeepSeek Harness 对话。"及工作模式选择。
-- 新会话内选择工作模式：标准 / PTC / 极简 / 创造。
-- 归档/关闭会话：
-  - 操作前二次确认。
-  - 归档副本保存到当前工作目录 `.dsh-vsc/archived-sessions/`。
+- 会话列表、选择、新建、重命名、fork（复制会话）。
+- 顶栏：会话标题 + 状态点 + 刷新/设置/⋯；点击会话标题打开 Sessions 抽屉（搜索 + New Session + 会话列表，每行显示工作中/已归档/相对时间与 fork/重命名/归档操作）；新建会话入口在抽屉内。
+- 首次创建工作区且无会话时，自动创建并选中空白"新会话"（不再显示"暂无会话"），聊天区显示"新会话已就绪。输入消息开始与 DeepSeek Harness 对话。"及工作模式选择。
+- 新会话 Hero：问候语 + 工作模式卡片（标准 / PTC / 极简 / 创造）。
+- 设置弹窗采用 VS Code 设置风格卡片（分组/卡片化）；窄面板（≤600px）自动收紧顶栏/聊天区/composer 内边距。
+- 归档/关闭会话：操作前二次确认；归档后仅从会话列表移除，不再保存会话副本到工作区。
 - 会话标题 fallback 优化，不再显示裸 `session-`。
 
 #### 3. 聊天界面与会话内容显示
 - 简洁会话 / 详细会话两种模式，默认简洁。
   - 简洁模式隐藏工具调用与思考流程，只保留用户、Assistant 最终输出与命令节点。
+  - 详细模式（web 端风格时间线）：工具调用显示为单行 `✍️ Write file.ext`（路径只显示文件名、无下划线，点击展开参数与结果，错误显示 `❌` 红字）；思考过程显示为单行 `💭 Think · 预览`（换行折叠为单行，点击展开完整思维链），流式思考为 `💭 Thinking · …`；回合结束时若成功修改了文件，会像 dsh web 端一样显示 **产物** 列表（文件名 chips，点击在 VS Code 中打开；超过 5 个显示 `+N`）。
   - 简洁模式下底部统计行为同一行：左侧常驻 `working` 标识（圆点颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中）、居中 LLM 统计信息（缓存命中 / 输入输出）、右下角当前模型与推理强度。
 - 流式 Assistant 输出。
 - 工具调用与工具结果按 `callId` 配对。
@@ -65,20 +68,20 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 发送方式可配置：
   - `Shift+Enter` 发送，`Enter` 换行（默认）。
   - 或反过来：`Enter` 发送，`Shift+Enter` 换行。
-- 输入框展开/收起：只有输入框向上展开，附近按钮位置不变。
 - 停止按钮使用 `■` 图标。
 - `@` 文件引用：输入 `@` 弹出当前工作区文件列表，实时过滤。
-- 图片发送（vision，两种方式）：① 输入框粘贴截图/图片（PNG/JPEG/WebP）；② 输入框左侧 **📷 选择图片**按钮（打开本地文件对话框，本机/远程环境都可靠）。图片会以缩略图显示在输入框上方（可逐张移除，发送按钮显示 🖼N 角标，添加成功有"已添加 N 张图片"提示），发送时随消息作为 `image` 附件提交给模型（配合 `deepseek-v4-flash-vision-exp` 等视觉模型使用）；部分远程环境剪贴板拿不到图片文件时会自动尝试 Clipboard API 兜底；若命令不接受图片附件会在发送前提示。（拖拽添加图片因 VS Code webview 平台限制不稳定，已移除。）
+- 图片发送（vision，两种方式）：① 输入框粘贴截图/图片（PNG/JPEG/WebP）；② 输入框左侧 **📷 选择图片**按钮（打开本地文件对话框，本机/远程环境都可靠）。图片会以缩略图显示在输入框上方（可逐张移除，发送按钮显示数字角标，添加成功有"已添加 N 张图片"提示），发送时随消息作为 `image` 附件提交给模型（配合 `deepseek-v4-flash-vision-exp` 等视觉模型使用）；部分远程环境剪贴板拿不到图片文件时会自动尝试 Clipboard API 兜底；若命令不接受图片附件会在发送前提示。（拖拽添加图片因 VS Code webview 平台限制不稳定，已移除。）
 - `/` 命令菜单：输入 `/` 弹出 dsh 命令列表。
 - `/` 命令执行：发送以 `/` 开头的完整命令行时直接调用 `commands/execute`——已注册命令被 host 执行（不会作为普通对话发给模型，结果以命令节点显示在会话中）；未注册命令返回空（`undefined`），与 web 端一致按普通消息发送；旧版 dsh 不支持命令 RPC 时自动回退普通消息。
 - 发送队列显示：显示“排队中”队列，支持编辑、插话（steer）、删除。
-- 模型与推理强度合并为一个 `模` 按钮，支持自定义模型名称。
-- 权限选择压缩为输入框左侧 `权` 按钮。
+- 动作按钮：输入框右侧的"方框斜杠"按钮，点击打开一个简单卡片，仅含 **模型 / 推理** 选择与 **权限/模式** 列表（不调用 VS Code 原生选择器，也不用搜索式动作弹层）；点选权限即切换并关闭。
+- 发送按钮：位于输入框右侧，文字"发送"；带 N 张图片时在按钮内显示一个小数字徽标。
+- Composer 整体为一个圆角胶囊区域；输入框默认带外边框；面板宽度 <900px 时，底部统计行隐藏中间"缓存命中 / LLM 用量"，保留左侧 `working` 与右下角模型/权限信息。
 - 上下文占用：以输入框背景按占用比例填充显示，悬停输入框可见具体百分比；可在设置中关闭，并可自定义进度条颜色（默认与用户消息框同色）。
-- 底部统计行（同一行，左起 working 指示器、居中缓存命中与输入输出、右下角当前模型与推理强度）：
+- 底部统计行（同一行，左起 working 指示器、居中缓存命中与输入输出、右下角当前模型与推理强度 + 当前权限）：
   - 中文：`缓存命中 42% | 输入 12.3K tokens · 输出 2.1K tokens`
   - 英文：`cache hit 42% | input 12.3K tokens · output 2.1K tokens`
-  - 右下角模型信息：`Deepseek V4 Flash | Max`（模型名 | 推理强度，无推理强度时只显示模型名）。
+  - 右下角模型信息：`Deepseek V4 Flash | Max | workspace-write`（模型名 | 推理强度 | 当前权限，缺失部分省略）。
 
 #### 5. 工具审批 / 计划条 / 权限 / 问题 / 命令节点
 - 工具审批（Approval）：输入框区域切换为审批面板，支持 `允许一次` / `拒绝`。
@@ -120,10 +123,11 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - `dsh: Open Web UI in Browser`
   - `dsh: Open Chat Panel`
 
-#### 8. 下载会话上下文
-- 顶栏最右侧 `⬇` 按钮。
-- 将当前会话导出为 Markdown 或 JSON。
-- Markdown 仅保留用户消息与 Assistant 最终回复。
+#### 8. Fork 会话（复制会话）
+- 会话管理入口统一在 Sessions 抽屉每个会话行悬停操作中（`⧉` fork / `✎` 重命名 / `✕` 归档），顶栏 `⋯` 菜单不再重复这些入口。
+- 调用 dsh 的 `session.fork` 能力，从当前会话的已完成回合复制出一个新会话；新会话继承源会话的工作目录、最新模型与 `parentSessionId` 血缘，并自动切换选中。
+- fork 出的新会话会以"源会话标题（fork YYYY-MM-DD HH:mm）"自动命名，便于区分。
+- 当源会话没有已完成回合时（如刚创建的空会话），会提示"无可 fork 的已完成回合"。
 
 ### 二、配置项
 
@@ -201,17 +205,18 @@ vsce package
   - If not: a confirmation dialog appears when the plugin UI is opened (no prompt during startup; background initialization stays silent), and the workspace is created after user confirmation.
   - Without a workspace, the chat area shows "No workspace is open; the session cannot start." plus an "Add the current folder to the DSH workspace" button that re-opens the confirmation dialog.
   - Re-maps automatically when VS Code workspace folders change.
-- Session list, selection, creation, and renaming.
-- When a workspace is created for the first time with no sessions, a blank "New Session" is created and selected automatically (the dropdown no longer shows "No Sessions"), and the chat area shows "New session ready. Type a message to start chatting with DeepSeek Harness." along with the working-mode selection.
-- Working mode selection in a new session: Standard / PTC / Minimal / Creative.
-- Archive/close sessions:
-  - Double confirmation before the operation.
-  - Archived copies are saved to the current workspace `.dsh-vsc/archived-sessions/`.
+- Session list, selection, creation, renaming, and fork (clone a session).
+- Top bar: session title + status dot + Refresh/Settings/⋯; clicking the session title opens a Sessions drawer (search + New Session + a session list with running/archived/relative-time and fork/rename/archive actions per row). The new-session entry lives inside the drawer.
+- When a workspace is created for the first time with no sessions, a blank "New Session" is created and selected automatically (no longer shows "No Sessions"), and the chat area shows "New session ready. Type a message to start chatting with DeepSeek Harness." along with the working-mode selection.
+- New-session hero: greeting + working-mode cards (Standard / PTC / Minimal / Creative).
+- The settings modal uses VS Code-style grouped cards; on narrow panels (≤600px) the top bar/chat/composer paddings tighten automatically.
+- Archive/close sessions: double confirmation before the operation; archiving only removes the session from the list and no longer saves a copy to the workspace.
 - Improved session title fallback, no longer showing a bare `session-`.
 
 #### 1.3 Chat Interface and Conversation Display
 - Two display modes: concise / detailed, concise by default.
   - Concise mode hides tool calls and thinking traces, keeping only user messages, the Assistant's final output, and command nodes.
+  - Detailed mode (web-style timeline): tool calls appear as one-line `✍️ Write file.ext` (paths show only the file name, no underline; click to expand arguments and results; errors show `❌` in red); thinking appears as one-line `💭 Think · preview` (newlines collapsed to a single line; click to expand the full chain), with streaming shown as `💭 Thinking · …`; when a turn ends having successfully modified files, a **Produced** list appears like the dsh web UI (file-name chips, click to open in VS Code; `+N` when there are more than 5).
   - In concise mode, the bottom stats row is a single line: a persistent `working` indicator on the left (dot color shows session status: gray = idle, green = thinking, red = tool call, blue = streaming output), LLM stats in the center (cache hit / input-output), and the current model and reasoning effort at the bottom right.
 - Streaming Assistant output.
 - Tool calls and tool results are paired by `callId`.
@@ -232,20 +237,20 @@ vsce package
 - Configurable send behavior:
   - `Shift+Enter` to send, `Enter` for a newline (default).
   - Or the reverse: `Enter` to send, `Shift+Enter` for a newline.
-- Input box expand/collapse: only the input box expands upward; nearby buttons stay in place.
 - Stop button uses the `■` icon.
 - `@` file references: typing `@` pops up a list of files in the current workspace, filtered in real time.
-- Image sending (vision, two ways): ① paste a screenshot/image (PNG/JPEG/WebP) into the input box; ② use the **📷 Pick image** button on the left of the input box (opens the local file dialog — reliable on both local and remote). Images appear as thumbnails above the input (removable one by one; the Send button shows a 🖼N badge; a "Added N image(s)" notice confirms success), and are submitted as `image` attachments with the message (for vision models such as `deepseek-v4-flash-vision-exp`); in some remote environments where the clipboard exposes no image files, a Clipboard API fallback is attempted automatically; commands that do not accept image attachments are blocked with a notice before sending. (Drag-and-drop image insertion was removed — it was unstable due to VS Code webview platform limitations.)
+- Image sending (vision, two ways): ① paste a screenshot/image (PNG/JPEG/WebP) into the input box; ② use the **📷 Pick image** button on the left of the input box (opens the local file dialog — reliable on both local and remote). Images appear as thumbnails above the input (removable one by one; the Send button shows a numeric badge; a "Added N image(s)" notice confirms success), and are submitted as `image` attachments with the message (for vision models such as `deepseek-v4-flash-vision-exp`); in some remote environments where the clipboard exposes no image files, a Clipboard API fallback is attempted automatically; commands that do not accept image attachments are blocked with a notice before sending. (Drag-and-drop image insertion was removed — it was unstable due to VS Code webview platform limitations.)
 - `/` command menu: typing `/` pops up the dsh command list.
 - `/` command execution: sending a full command line starting with `/` calls `commands/execute` directly — registered commands are executed by the host (they are not sent to the model as normal conversation; results appear as command nodes in the session); unregistered commands return empty (`undefined`) and are sent as normal messages, matching the web frontend behavior; if an older dsh version doesn't support the command RPC, it automatically falls back to a normal message.
 - Send queue display: shows a "queued" list supporting edit, steer (interrupt), and delete.
-- Model and reasoning effort are merged into one `模` button; custom model names are supported.
-- Permission selector is compressed into a `权` button on the left of the input box.
+- Actions button: the "square-with-slash" button to the right of the input box opens a simple card containing only the **Model / reasoning** selectors and the **Permission / Mode** list (no VS Code native picker and no searchable actions popover); selecting a permission switches and closes it.
+- Send button: the text "Send" button to the right of the input box; when images are pending it shows a small numeric badge.
+- The composer is a rounded capsule; the input box keeps its outer border by default. When the panel is narrower than 900px, the bottom stats row hides the middle "cache hit / LLM usage" text, keeping the `working` indicator and the model/permission info on the right.
 - Context usage: shown as background fill in the input box proportional to usage; hovering the input box reveals the exact percentage. It can be disabled in settings, and the progress bar color is customizable (default matches the user message box).
-- Bottom stats row (single line: `working` indicator on the left, cache hit and input/output in the center, current model and reasoning effort at the bottom right):
+- Bottom stats row (single line: `working` indicator on the left, cache hit and input/output in the center, current model / reasoning effort / permission at the bottom right):
   - Chinese: `缓存命中 42% | 输入 12.3K tokens · 输出 2.1K tokens`
   - English: `cache hit 42% | input 12.3K tokens · output 2.1K tokens`
-  - Model info at the bottom right: `Deepseek V4 Flash | Max` (model name | reasoning effort; only the model name when there is no reasoning effort).
+  - Model info at the bottom right: `Deepseek V4 Flash | Max | workspace-write` (model name | reasoning effort | current permission; missing parts are omitted).
 
 #### 1.5 Tool Approval / Todo Bar / Permissions / Questions / Command Nodes
 - Tool approval: the input area switches to an approval panel, supporting `Allow once` / `Reject`.
@@ -287,10 +292,11 @@ vsce package
   - `dsh: Open Web UI in Browser`
   - `dsh: Open Chat Panel`
 
-#### 1.8 Download Session Context
-- `⬇` button at the far right of the top bar.
-- Exports the current session as Markdown or JSON.
-- Markdown keeps only user messages and the Assistant's final replies.
+#### 1.8 Fork Session (Clone a Session)
+- Session-management entries live in the Sessions drawer per-session hover actions (`⧉` fork / `✎` rename / `✕` archive); they were removed from the top-bar `⋯` menu.
+- Calls dsh's `session.fork` capability to clone a new session from the source's completed turns; the child inherits the source `cwd`, latest model target and `parentSessionId` lineage, and is selected automatically.
+- A forked session is auto-named "source title (fork YYYY-MM-DD HH:mm)" for identification.
+- When the source session has no completed turn (e.g. a freshly created blank session), a "no completed turn to fork" notice is shown.
 
 ### 2. Configuration
 

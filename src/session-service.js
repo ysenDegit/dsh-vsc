@@ -248,6 +248,13 @@ class SessionService {
     return await client.call('session.history', payload)
   }
 
+  async forkSession(sessionId, atSeq) {
+    const client = this.requireClient()
+    const payload = { sessionId }
+    if (atSeq !== undefined && atSeq !== null) payload.atSeq = atSeq
+    return await client.call('session.fork', payload)
+  }
+
   async sessionCwd(sessionId) {
     if (!sessionId) return null
     const client = this.requireClient()

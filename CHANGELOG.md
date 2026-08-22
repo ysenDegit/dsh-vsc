@@ -4,6 +4,44 @@
 
 ## [1.0.8]
 
+### Changed
+
+- 界面视觉基线（Phase 0）：聊天界面全面改用 VS Code Webview 主题变量（`--vscode-*`），替换原写死的深色回退色板；引入语义色板（`--surface`/`--surface-2`/`--border-soft`/`--accent-soft`/`--active` 等）并统一圆角（4/6/8px）、默认柔化边框、弹层阴影与滚动条样式，使界面随 VS Code 主题自适应深浅色，向 Copilot / Claude Code 插件的“工具化、内容优先”观感靠拢。
+- 打包精简：`.vscodeignore` 增加 `assets/hahawhale.svg`（未在任何代码/文档中被引用的闲置 104KB 装饰资产），避免其混入安装包。
+- 界面改版 Phase 1（顶栏 + Sessions 抽屉）：顶部从"一排小按钮 + 下拉"改为精简顶栏（会话标题 + 状态点 + 新建/刷新/Sessions/设置/⋯）；点击会话标题或 `☰` 打开 Sessions 抽屉，含搜索、New Session、会话列表（工作中/已归档/相对时间 + fork/重命名/归档每行操作）；当前会话的归档/重命名/fork/打开 dsh Web 移入顶栏 `⋯` 菜单。
+- 功能变更：
+  - 移除"下载当前会话上下文"（`⬇`）功能与相关导出代码。
+  - 归档/关闭会话不再把会话副本保存到工作区 `.dsh-vsc/archived-sessions/`，仅归档并从会话列表移除。
+  - 新增 fork 会话：通过 dsh `session.fork` RPC 复制当前会话（继承 cwd、模型与 `parentSessionId` 血缘，自动切换新会话）；无可 fork 完成回合时给出提示。新增 `SessionService.forkSession` 与 `ChatViewProvider.forkSession`，并补充 `session.fork` 载荷单元测试。
+- 测试：19 → 21（新增 2 条 `session.fork` 载荷测试）。
+- 顶栏细节调整：
+  - 修复点击会话标题按钮中间区域无法打开 Sessions 抽屉的问题（原 document 点击风控把内层 `<span>` 当作"外部点击"而立即关闭，现改为 `sessionTitleBtn.contains(t)` 判定）。
+  - 删除顶栏 `☰`（Sessions）与 `＋`（新建会话）按钮——Sessions 抽屉由点击会话标题打开，新建会话入口在抽屉内。
+  - `⋯` 菜单移除"重命名 / fork / 归档"会话管理入口，仅保留"打开 dsh Web UI"；会话管理统一在抽屉每行操作。
+  - fork 出的新会话自动以"源会话标题（fork YYYY-MM-DD HH:mm）"命名。
+- fork 会话增加通知反馈：点击 fork 后立即在顶栏下方弹出"正在 fork 会话…"（带 spinner），fork 完成替换为"fork 完成：<标题>"，失败时提示原因（无可 fork 完成回合）。webview 新增 toast 组件与 `forkDone`/`forkError` 消息，`ChatViewProvider.forkSession` 在成功/失败时发送对应消息。
+- 界面改版 Phase 2（Composer + 动作/模式弹层，Claude Code 风格）：
+  - Composer 改为 `＋`(动作) / `📷`(图片) / 输入框 / `⤢` / `■` / `Auto`(模式胶囊) / `发送`。
+  - `＋` 打开"筛选动作…"搜索框，分 **Model**（切换模型 / 推理强度 / 账户与用量）与 **Context**（引用项目文件 / 附加图片）两组。
+  - `Auto` 模式胶囊打开 Modes 弹层（Manual / Plan / Auto 等工作模式，映射 dsh 权限预设），当前模式高亮显示在胶囊上。
+  - 原有 `模`（模型）与 `权`（权限）按钮分别并入动作弹层与模式胶囊。
+- Composer 交互修正（Phase 2 修订）：
+  - 权限与模型控制合并：删除独立的工作模式（`Auto`/`workspace-write`）胶囊按钮，`＋` 的动作弹层统一集成 **Model**、**权限/模式**、**Context** 三组；选择权限后自动关闭动作弹层。
+  - 发送按钮改为输入框内右侧 `↑` 圆形箭头，不再占用底部工具栏。
+  - Composer 改为圆角胶囊；"展开/收起"只把输入框向上浮出为独立面板，底部工具栏保持紧凑。
+  - 底部统计行右下角显示"模型 | 推理强度 | 当前权限"，如 `Deepseek V4 Flash | Max | workspace-write`。
+- Composer 交互调整（Phase 2 修订 2）：
+  - 删除"展开/收起输入框"功能（输入框已支持 Enter/Shift+Enter 换行）。
+  - 发送按钮改为输入框右侧的"发送"文字按钮（有图片时在按钮内显示小数字徽标）。
+  - 动作按钮改为"方框斜杠"图标并置于发送按钮右侧；点击打开一个简单卡片，仅含 **模型/推理** 选择与 **权限/模式** 列表（不再使用搜索式"筛选动作"弹层，也不调用 VS Code 原生选择器）。
+  - Composer 仍为圆角胶囊；输入框默认保留外边框；面板宽度 <900px 时，底部统计行隐藏中间"缓存命中 / LLM 用量"，保留 `working` 与右下角模型/权限信息。
+- 界面改版 Phase 4（对话流与 Hero 空状态）：新会话 Hero 增加问候语与工作模式卡片（`mode-welcome` 最大宽度、标题样式微调）。
+- 底栏信息完整显示：`.stats-bar .model-info` 的 `max-width` 由 45% 放宽为 `calc(100% - 80px)`，窄面板下不再截断"模型 | 推理强度 | 当前权限"。
+- 界面改版 Phase 5（设置与响应式）：设置弹窗分组改为 VS Code 设置风格卡片（`settings-section` 背景/圆角/柔化边框）；窄面板（≤600px）自动收紧顶栏、聊天区与 composer 内边距。
+- 界面改版 Phase 6（发布收尾）：更新 README / CHANGELOG / context.md，重打包并核验（版本号按约定仍为 1.0.8，等用户声明后再 bump）。
+- 详细会话模式向 web 端靠拢：工具调用改为紧凑时间线（图标 + 工具名 + 文件名（去路径下划线），点击展开参数/结果，错误显示 ❌ 红字）；思考过程改为单行 `💭 Think · 预览`（预览折叠换行为单行，点击展开完整思维链且保留换行），流式思考为 `💭 Thinking · …`；去掉卡片底色/左侧色条/等宽字体。
+- 适配 dsh web 端“产物”列表：live 流 `session/event` 附带工具渲染意图（callView：diff 或 generic/edit）且工具成功时，回合结束自动输出“产物”行（成功修改文件按首次出现顺序去重，最多显示 5 个 chip + “+N”），点击 chip 在 VS Code 中打开对应文件；历史回放（无 view）不下发产物行。新增 `producedFromCallView` 派生、`openFile` 消息与 2 条折叠测试。
+
 ## [1.0.7] - 2026-08-22
 
 ### Changed

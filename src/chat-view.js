@@ -3,7 +3,6 @@
 const vscode = require('vscode')
 const { randomUUID } = require('node:crypto')
 const { relative, join } = require('node:path')
-const { mkdirSync, writeFileSync } = require('node:fs')
 const { homedir } = require('node:os')
 const { getWebviewHtml } = require('./webview.js')
 const { version: extensionVersion } = require('../package.json')
@@ -13,14 +12,6 @@ const { isCommandLine } = require('./commands.js')
 const viewType = 'dsh-vsc.chat'
 
 function toPosix(p) { return p.split('\\').join('/') }
-
-function sanitizeFileName(value) {
-  return String(value || 'session')
-    .replace(/[\\/:*?"<>|]/g, '_')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120) || 'session'
-}
 
 class ChatViewProvider {
   constructor(dsh, sessions, options = {}) {
@@ -239,6 +230,9 @@ class ChatViewProvider {
         case 'pickFiles':
           await this.pickFiles()
           break
+        case 'openFile':
+          await this.openFile(msg.path)
+          break
         case 'queueRemove':
           await this.removeQueuedItem(msg.sessionId, msg.itemId)
           break
@@ -257,8 +251,8 @@ class ChatViewProvider {
         case 'queueSteer':
           await this.steerQueuedItem(msg.sessionId, msg.itemId)
           break
-        case 'downloadSession':
-          await this.downloadSession(msg.sessionId || this.selectedSessionId)
+        case 'forkSession':
+          await this.forkSession(msg.sessionId || this.selectedSessionId)
           break
         case 'permissionSelect':
           await this.selectPermission(msg.sessionId || this.selectedSessionId, msg.preset)
@@ -938,48 +932,6 @@ class ChatViewProvider {
   async closeSession(sessionId) {
     if (!sessionId) return
 
-    const folder = vscode.workspace.workspaceFolders?.[0]
-    if (!folder) throw new Error('没有打开的工作区，无法归档会话')
-
-    // 归档前先把会话记录保存到当前工作目录，避免关闭后丢失可追溯的会话副本。
-    const archiveDir = join(folder.uri.fsPath, '.dsh-vsc', 'archived-sessions')
-    let session
-    let history
-    try {
-      session = await this.sessions.getSession(sessionId)
-      history = await this.sessions.history(sessionId)
-    } catch (error) {
-      throw new Error(`读取会话信息失败，未执行归档: ${error instanceof Error ? error.message : String(error)}`)
-    }
-
-    const fallbackTitle = session?.blank ? '新会话' : sessionId.slice(0, 8)
-    const title = typeof session?.title === 'string' && session.title.trim()
-      ? session.title.trim()
-      : fallbackTitle
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const archiveFileName = `${stamp}-${sanitizeFileName(title)}-${sessionId}.json`
-    const archivePath = join(archiveDir, archiveFileName)
-    const record = {
-      archivedAt: new Date().toISOString(),
-      workspace: folder.uri.fsPath,
-      session: {
-        sessionId,
-        title: session?.title ?? null,
-        blank: session?.blank ?? false,
-        agentPreset: session?.agentPreset ?? null,
-        cwd: session?.cwd ?? folder.uri.fsPath,
-        updatedAt: session?.updatedAt ?? null,
-      },
-      history,
-    }
-
-    try {
-      mkdirSync(archiveDir, { recursive: true })
-      writeFileSync(archivePath, JSON.stringify(record, null, 2), 'utf8')
-    } catch (error) {
-      throw new Error(`保存会话归档失败，未执行归档: ${archivePath} — ${error instanceof Error ? error.message : String(error)}`)
-    }
-
     await this.sessions.archiveSession(sessionId)
     // 归档后清理该会话的所有本地缓存，避免长期运行后内存持续增长。
     if (this.conversationFlushTimer) {
@@ -997,9 +949,68 @@ class ChatViewProvider {
     await this.refreshSessions()
     if (!this.selectedSessionId) await this.autoAttachSession()
 
-    const notice = `会话已归档，副本保存在 ${archivePath}`
+    const notice = '会话已归档'
     this.post({ type: 'notice', text: notice })
     void vscode.window.showInformationMessage(notice)
+  }
+
+  async forkSession(sessionId) {
+    if (!sessionId) throw new Error('请先选择会话')
+    let child
+    try {
+      child = await this.sessions.forkSession(sessionId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (this.isForkUnavailable(error)) {
+        const notice = '当前会话无可 fork 的已完成回合'
+        this.post({ type: 'forkError', message: notice })
+        void vscode.window.showErrorMessage(notice)
+        this.onLog(`fork 不可用: ${message}`)
+        return
+      }
+      throw error
+    }
+    const childId = child && child.sessionId
+    if (!childId) throw new Error('fork 会话失败：未返回子会话 ID')
+
+    // 继承源会话标题并把 fork 时间追加到名称后，便于区分刚 fork 出的子会话。
+    let sourceTitle = '会话'
+    try {
+      const source = await this.sessions.getSession(sessionId)
+      const title = source && source.title
+      if (typeof title === 'string' && title.trim()) sourceTitle = title.trim()
+    } catch (error) {
+      this.onLog(`读取源会话标题失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    const now = new Date()
+    const pad2 = (n) => ('0' + n).slice(-2)
+    const forkTime = now.getFullYear() + '-' + pad2(now.getMonth() + 1) + '-' + pad2(now.getDate()) + ' ' + pad2(now.getHours()) + ':' + pad2(now.getMinutes())
+    const forkTitle = sourceTitle + '（fork ' + forkTime + '）'
+    try {
+      await this.sessions.renameSession(childId, forkTitle)
+    } catch (error) {
+      // 重命名失败不阻塞 fork 完成，仅记录日志。
+      this.onLog(`fork 后重命名新会话失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    this.clearConversationPost()
+    this.selectedSessionId = childId
+    await this.refreshSessions()
+    await this.loadHistory(childId)
+    await this.refreshModels(childId)
+    await this.refreshCommands(childId)
+    this.postQueue(childId)
+    this.postQuestion(childId)
+    this.postApproval(childId)
+    const doneNotice = 'fork 完成：' + forkTitle
+    this.post({ type: 'forkDone', title: forkTitle })
+    void vscode.window.showInformationMessage(doneNotice)
+  }
+
+  isForkUnavailable(error) {
+    const message = String(error && error.message || '')
+    if (error instanceof DshRpcError && error.code === 'fork-unavailable') return true
+    return /fork-unavailable|no completed turn/u.test(message)
   }
 
   async renameSession(sessionId) {
@@ -1262,61 +1273,6 @@ class ChatViewProvider {
     await this.sessions.updateQueue(sessionId, itemId, { kind: 'steer' })
   }
 
-  formatConversationMarkdown(session, history) {
-    const events = (history.events || []).map((item) => item.event)
-    const folded = foldEvents(events)
-    const lines = []
-    lines.push('# 会话上下文')
-    lines.push('')
-    lines.push('- 会话: ' + (session?.sessionId || ''))
-    lines.push('- 标题: ' + (session?.title || '未命名'))
-    lines.push('- 工作目录: ' + (session?.cwd || ''))
-    lines.push('- 导出时间: ' + new Date().toISOString())
-    lines.push('')
-    for (const item of folded.items) {
-      if (item.type === 'user') {
-        lines.push('## 用户');
-        lines.push('');
-        lines.push(item.text || '');
-      } else if (item.type === 'assistant') {
-        lines.push('## Assistant');
-        lines.push('');
-        lines.push(item.text || '');
-      } else {
-        continue
-      }
-      lines.push('');
-    }
-    return lines.join('\n')
-  }
-
-  async downloadSession(sessionId) {
-    if (!sessionId) throw new Error('请先选择会话')
-    const session = await this.sessions.getSession(sessionId)
-    const history = await this.sessions.history(sessionId)
-    const fallbackTitle = session?.blank ? '新会话' : sessionId.slice(0, 8)
-    const title = typeof session?.title === 'string' && session.title.trim()
-      ? session.title.trim()
-      : fallbackTitle
-    const defaultName = `${sanitizeFileName(title)}-context.md`
-    const folder = vscode.workspace.workspaceFolders?.[0]
-    const defaultDir = folder ? folder.uri.fsPath : homedir()
-    const saveUri = await vscode.window.showSaveDialog({
-      defaultUri: vscode.Uri.file(join(defaultDir, defaultName)),
-      filters: {
-        Markdown: ['md'],
-        JSON: ['json'],
-      },
-    })
-    if (!saveUri) return
-    const isJson = saveUri.fsPath.toLowerCase().endsWith('.json')
-    const content = isJson
-      ? JSON.stringify({ session: session || { sessionId }, history }, null, 2)
-      : this.formatConversationMarkdown(session, history)
-    writeFileSync(saveUri.fsPath, content, 'utf8')
-    void vscode.window.showInformationMessage(`会话上下文已保存到 ${saveUri.fsPath}`)
-  }
-
   async pickFiles() {
     const folder = vscode.workspace.workspaceFolders?.[0]
     if (!folder) {
@@ -1333,6 +1289,18 @@ class ChatViewProvider {
       .filter((p) => p && p !== '.' && !p.startsWith('..'))
       .sort((a, b) => a.localeCompare(b))
     this.post({ type: 'filePickList', files })
+  }
+
+  // 打开“产物”列表中的文件（点击 chip）。
+  async openFile(path) {
+    if (!path) return
+    try {
+      const uri = vscode.Uri.file(path)
+      const doc = await vscode.workspace.openTextDocument(uri)
+      await vscode.window.showTextDocument(doc)
+    } catch (error) {
+      void vscode.window.showErrorMessage(`无法打开 ${path}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   // ---- conversation state ----
@@ -1394,13 +1362,14 @@ class ChatViewProvider {
     this.postConversation(sessionId)
   }
 
-  ingestEvent(sessionId, event) {
+  ingestEvent(sessionId, event, view) {
     // 所有会话的事件都入缓存（按 seq 去重）；只有选中会话需要推送渲染。
     // 未选中会话的事件在切回时由 loadHistory 兜底，这里缓存可避免重复拉取。
+    // view 是宿主在 live 流上附带的工具渲染意图（call/result），历史回放不含。
     const entry = this.getEventsEntry(sessionId, true)
     if (entry.seen.has(event.seq)) return
     entry.seen.add(event.seq)
-    entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
+    entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data, view })
     // 事件基本按 seq 顺序到达：仅在乱序时做插入，避免每个 chunk 都全量 sort。
     if (entry.events.length > 1 && entry.events[entry.events.length - 1].seq < entry.events[entry.events.length - 2].seq) {
       const item = entry.events.pop()
@@ -1478,7 +1447,7 @@ class ChatViewProvider {
   applyMuxFrame(frame) {
     const payload = frame.payload
     if (frame.method === 'session/event') {
-      this.ingestEvent(payload.sessionId, payload.event)
+      this.ingestEvent(payload.sessionId, payload.event, payload.view)
     } else if (frame.method === 'session/queue') {
       this.ingestQueue(payload.sessionId, payload.items)
     } else if (frame.method === 'question/requested') {

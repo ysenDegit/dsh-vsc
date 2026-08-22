@@ -20,18 +20,34 @@ function extractImages(content) {
     .map((block) => ({ attachment: block.attachment }))
 }
 
+function producedFromCallView(callView) {
+  if (!callView) return []
+  if (callView.card === 'diff') {
+    return (callView.locations || []).map((location) => location.path).filter(Boolean)
+  }
+  if (callView.card === 'generic' && callView.kind === 'edit') {
+    return (callView.locations || []).map((location) => location.path).filter(Boolean)
+  }
+  return []
+}
+
 function foldEvents(events) {
   const items = []
   const removedIndices = new Set()
   const partials = new Map() // key turn:step -> {item, key}
   const commandByIndex = new Map() // commandId -> items index（command/run 与 command/done 配对）
   let running = false
+  // 当前回合“产物”文件（成功修改的文件路径，按首次出现顺序去重）。
+  let turnProduced = []
+  let turnProducedSeen = new Set()
 
   for (const event of events) {
     const data = event.data || {}
     switch (event.type) {
       case 'turn/start':
         running = true
+        turnProduced = []
+        turnProducedSeen = new Set()
         break
       case 'turn/end': {
         running = false
@@ -50,6 +66,12 @@ function foldEvents(events) {
         } else if (data.reason?.kind === 'max-tokens') {
           items.push({ type: 'note', text: '达到输出上限' })
         }
+        // 回合结束时输出“产物”列表（与 dsh web 端一致）。
+        if (turnProduced.length) {
+          items.push({ type: 'produced', paths: turnProduced.slice(), id: 'produced-' + event.seq })
+        }
+        turnProduced = []
+        turnProducedSeen = new Set()
         break
       }
       case 'user/message': {
@@ -97,7 +119,8 @@ function foldEvents(events) {
         }
         break
       }
-      case 'tool/call':
+      case 'tool/call': {
+        const callView = event.view && event.view.for === 'call' ? event.view.view : null
         items.push({
           type: 'tool',
           id: 'tool-' + (data.callId || event.seq),
@@ -106,8 +129,10 @@ function foldEvents(events) {
           arguments: data.arguments,
           status: 'call',
           resultText: '',
+          callView,
         })
         break
+      }
       case 'tool/result': {
         const text = extractText(data.message?.content)
         // dsh 的 tool/result 把 callId 挂在 data.message.callId 上（tool/call 的 data.callId 与之相等）；
@@ -119,6 +144,15 @@ function foldEvents(events) {
           existing.status = 'result'
           existing.resultText = text
           existing.isError = isError
+          if (!isError && existing.callView) {
+            const producedPaths = producedFromCallView(existing.callView)
+            for (const p of producedPaths) {
+              if (!turnProducedSeen.has(p)) {
+                turnProducedSeen.add(p)
+                turnProduced.push(p)
+              }
+            }
+          }
         } else {
           items.push({
             type: 'tool',

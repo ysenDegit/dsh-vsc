@@ -122,3 +122,31 @@ test('running command stays visible until done', () => {
   assert.equal(items[0].status, 'run')
   assert.equal(items[0].outcome, null)
 })
+
+test('turn emits a produced row from diff call views, deduped by path', () => {
+  const events = [
+    ev(1, 'turn/start', { turn: 1 }),
+    { seq: 2, time: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'c1', name: 'edit', arguments: '{}' }, view: { for: 'call', view: { card: 'diff', locations: [{ path: '/a/b.txt' }, { path: '/c.txt' }] } } },
+    { seq: 3, time: 3, type: 'tool/result', data: { turn: 1, step: 1, message: { callId: 'c1', content: [{ type: 'text', text: 'ok' }], isError: false } } },
+    { seq: 4, time: 4, type: 'tool/call', data: { turn: 1, step: 2, callId: 'c2', name: 'write', arguments: '{}' }, view: { for: 'call', view: { card: 'generic', kind: 'edit', locations: [{ path: '/a/b.txt' }] } } },
+    { seq: 5, time: 5, type: 'tool/result', data: { turn: 1, step: 2, message: { callId: 'c2', content: [{ type: 'text', text: 'ok' }], isError: false } } },
+    ev(6, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+  ]
+  const { items } = foldEvents(events)
+  const produced = items.filter((i) => i.type === 'produced')
+  assert.equal(produced.length, 1)
+  assert.deepEqual(produced[0].paths, ['/a/b.txt', '/c.txt'])
+})
+
+test('produced row skips failed calls and non-mutation views', () => {
+  const events = [
+    ev(1, 'turn/start', { turn: 1 }),
+    { seq: 2, time: 2, type: 'tool/call', data: { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{}' }, view: { for: 'call', view: { card: 'generic', kind: 'read', locations: [{ path: '/a.txt' }] } } },
+    { seq: 3, time: 3, type: 'tool/result', data: { turn: 1, step: 1, message: { callId: 'c1', content: [{ type: 'text', text: 'ok' }], isError: false } } },
+    { seq: 4, time: 4, type: 'tool/call', data: { turn: 1, step: 2, callId: 'c2', name: 'edit', arguments: '{}' }, view: { for: 'call', view: { card: 'diff', locations: [{ path: '/x.txt' }] } } },
+    { seq: 5, time: 5, type: 'tool/result', data: { turn: 1, step: 2, message: { callId: 'c2', content: [{ type: 'text', text: 'boom' }], isError: true } } },
+    ev(6, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+  ]
+  const { items } = foldEvents(events)
+  assert.equal(items.filter((i) => i.type === 'produced').length, 0)
+})
