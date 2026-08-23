@@ -62,6 +62,39 @@ class SessionService {
     return await client.call('workspace.list', {})
   }
 
+  // 未分组会话：未被任何工作区记账、且 cwd 与目标工作区路径一致的会话。
+  // dsh 侧没有独立的 attach RPC，收纳走 session.create 的幂等采用路径
+  // （同 sessionId + workspaceId），见 attachUngroupedSession。
+  async listUngroupedSessions(workspaceId) {
+    const client = this.requireClient()
+    const [{ items: workspaces, archivedSessionIds }, { items }] = await Promise.all([
+      client.call('workspace.list', {}),
+      client.call('session.list', {}),
+    ])
+    const target = workspaces.find((w) => w.workspaceId === workspaceId) || null
+    if (!target) return { workspaceId, items: [] }
+    const accounted = new Set()
+    for (const ws of workspaces) {
+      for (const id of ws.sessionIds) accounted.add(id)
+    }
+    const archived = new Set(archivedSessionIds)
+    const ungrouped = items
+      .filter((item) => !accounted.has(item.sessionId))
+      .filter((item) => item.origin !== 'subagent')
+      .filter((item) => !archived.has(item.sessionId))
+      .filter((item) => item.cwd === target.path)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+    return { workspaceId, items: ungrouped }
+  }
+
+  // 用原 sessionId 再次调用 session.create（workspaceId 分支）即可把
+  // 已存在的未分组会话收纳进工作区；cwd 与工作区路径不一致时后端返回
+  // session-conflict，由调用方展示。
+  async attachUngroupedSession(sessionId, workspaceId) {
+    const client = this.requireClient()
+    return await client.call('session.create', { sessionId, workspaceId })
+  }
+
   async listAllSessions() {
     const client = this.requireClient()
     return await client.call('session.list', {})

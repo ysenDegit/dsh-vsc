@@ -38,6 +38,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - VS Code 工作区文件夹变化时自动重新映射。
 - 会话列表、选择、新建、重命名、fork（复制会话）。
 - 顶栏：会话标题 + 状态点 + 刷新/设置/⋯；点击会话标题打开 Sessions 抽屉（搜索 + New Session + 会话列表，每行显示工作中/已归档/相对时间与 fork/重命名/归档操作）；新建会话入口在抽屉内。
+- Sessions 抽屉标题旁提供“未分组”勾选：勾选后列出 `cwd` 与当前工作区一致的未分组会话（未被任何工作区记账），可逐条“加载到当前工作区”或一键“全部加载”。
 - 首次创建工作区且无会话时，自动创建并选中空白"新会话"（不再显示"暂无会话"），聊天区显示"新会话已就绪。输入消息开始与 DeepSeek Harness 对话。"及工作模式选择。
 - 新会话 Hero：问候语 + 工作模式卡片（标准 / PTC / 极简 / 创造）。
 - 设置弹窗采用 VS Code 设置风格卡片（分组/卡片化）；窄面板（≤600px）自动收紧顶栏/聊天区/composer 内边距。
@@ -207,6 +208,7 @@ vsce package
   - Re-maps automatically when VS Code workspace folders change.
 - Session list, selection, creation, renaming, and fork (clone a session).
 - Top bar: session title + status dot + Refresh/Settings/⋯; clicking the session title opens a Sessions drawer (search + New Session + a session list with running/archived/relative-time and fork/rename/archive actions per row). The new-session entry lives inside the drawer.
+- The Sessions drawer header has an "Ungrouped" checkbox: when checked it lists ungrouped sessions whose `cwd` matches the current workspace (not accounted by any workspace), with a per-row "Load into current workspace" action and a "Load all" shortcut.
 - When a workspace is created for the first time with no sessions, a blank "New Session" is created and selected automatically (no longer shows "No Sessions"), and the chat area shows "New session ready. Type a message to start chatting with DeepSeek Harness." along with the working-mode selection.
 - New-session hero: greeting + working-mode cards (Standard / PTC / Minimal / Creative).
 - The settings modal uses VS Code-style grouped cards; on narrow panels (≤600px) the top bar/chat/composer paddings tighten automatically.

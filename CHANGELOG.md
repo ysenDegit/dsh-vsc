@@ -2,7 +2,18 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [1.0.8]
+## [1.0.9]
+
+### Added
+
+- Sessions 抽屉新增“未分组”勾选项（位于标题旁）：勾选后显示 `cwd` 与当前工作区路径一致的未分组会话（未被任何 dsh 工作区记账、非子代理、未归档），并可按会话“加载到当前工作区”或一键“全部加载”。实现基于 dsh `session.create` 的幂等采用路径（同 `sessionId` + `workspaceId` 再次调用即把已存在会话纳入工作区，要求会话 cwd 与工作区路径一致，否则后端返回 `session-conflict`）。新增 `SessionService.listUngroupedSessions` / `attachUngroupedSession`，`ChatViewProvider` 的 `getUngroupedSessions` / `attachUngroupedSession` / `attachAllUngroupedSessions`，webview 勾选状态与未分组分区渲染（中英文文案、加载中/成功/失败 toast）。测试 23 → 26（新增 3 条 `listUngroupedSessions` / `attachUngroupedSession` 载荷与过滤测试）。
+
+### Fixed
+
+- 修复详细模式展开 Think 后整个页面大幅上跳的问题：`<details>` 展开/收起会让聊天区高度突变，浏览器滚动锚定（scroll anchoring）会把视线整体拉走（思考链越长越明显）。现在点击 summary 时记录其视口位置，下一帧按实际位移补偿 `chatEl.scrollTop`，使展开/收起前后点击处保持不动；同一机制也覆盖上下文注入（Context）等其它 `details` 摘要。改动 src/webview.js。
+- 修复会话区顶部残留“新会话已就绪。输入消息开始与 DeepSeek Harness 对话。”提示的问题：切换会话/打开历史会话时，如果历史尚未加载完成，界面会先渲染空状态提示；随后历史消息到达后直接追加在提示下方，导致翻到最上方仍能看到空状态文案。现在渲染消息列表前会清理残留的 `.empty` / `.empty-actions` / 空白新会话欢迎节点，只保留“加载更早”按钮与真实的会话内容。
+
+## [1.0.8] - 2026-08-23
 
 ### Changed
 

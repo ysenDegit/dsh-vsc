@@ -130,6 +130,16 @@ function getWebviewHtml(nonce) {
     .drawer-item:hover .drawer-actions { display: inline-flex; }
     .drawer-item .drawer-actions button { height: 20px; min-width: 24px; padding: 0 4px; font-size: 11px; line-height: 1; }
     .drawer-empty { padding: 14px 8px; color: var(--muted); font-size: 12px; text-align: center; }
+    .drawer-ungrouped-toggle { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--muted); cursor: pointer; user-select: none; }
+    .drawer-ungrouped-toggle input { margin: 0; accent-color: var(--accent); }
+    .drawer-ungrouped-toggle:hover { color: var(--fg); }
+    .drawer-section { margin-top: 4px; border-top: 1px solid var(--border-soft); padding-top: 4px; }
+    .drawer-section-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 2px; font-size: 11px; color: var(--muted); font-weight: 600; }
+    .drawer-section-head .section-spacer { flex: 1; }
+    .drawer-section-head button { font-weight: 400; }
+    .drawer-load-all { font-size: 11px; padding: 1px 8px; height: auto; }
+    .drawer-item.ungrouped .drawer-actions { display: inline-flex; }
+    .drawer-item.ungrouped .drawer-actions button { height: auto; padding: 2px 8px; }
 
     /* More menu */
     .more-menu {
@@ -590,6 +600,10 @@ function getWebviewHtml(nonce) {
     <div id="sessionsDrawer" class="sessions-drawer">
       <div class="drawer-header">
         <span id="drawerTitle" class="drawer-title">Sessions</span>
+        <label id="ungroupedToggle" class="drawer-ungrouped-toggle">
+          <input type="checkbox" id="ungroupedCheck" />
+          <span id="ungroupedToggleLabel">未分组</span>
+        </label>
         <span class="spacer" style="flex:1"></span>
         <button id="drawerNewBtn" class="primary">＋ New Session</button>
         <button id="drawerCloseBtn" title="关闭">✕</button>
@@ -709,6 +723,9 @@ function getWebviewHtml(nonce) {
       queueItems: [],
       hasMoreEarlier: false,
       loadingEarlier: false,
+      ungroupedOpen: false,
+      ungroupedItems: [],
+      ungroupedError: null,
       pendingQuestion: null,
       pendingApproval: null,
       todos: [],
@@ -747,6 +764,9 @@ function getWebviewHtml(nonce) {
     var drawerCloseBtn = $('drawerCloseBtn');
     var drawerSearch = $('drawerSearch');
     var drawerList = $('drawerList');
+    var ungroupedToggleEl = $('ungroupedToggle');
+    var ungroupedCheck = $('ungroupedCheck');
+    var ungroupedToggleLabelEl = $('ungroupedToggleLabel');
     var moreBtn = $('moreBtn');
     var moreMenu = $('moreMenu');
     var moreOpenWebBtn = $('moreOpenWebBtn');
@@ -843,6 +863,16 @@ function getWebviewHtml(nonce) {
         'blankTitle': '新会话',
         'session': '会话',
         'noSessions': '暂无会话',
+        'ungroupedToggle': '未分组',
+        'ungroupedToggleTitle': '显示 cwd 为当前工作区的未分组会话',
+        'ungroupedTitle': '未分组会话',
+        'loadUngrouped': '加载到当前工作区',
+        'loadUngroupedAll': '全部加载',
+        'ungroupedEmpty': '没有 cwd 为当前工作区的未分组会话',
+        'loadingUngrouped': '正在加载未分组会话…',
+        'ungroupedLoaded': '已将 {count} 个未分组会话加载到当前工作区',
+        'ungroupedLoadedOne': '已加载「{title}」到当前工作区',
+        'ungroupedLoadFailed': '加载未分组会话失败：{message}',
         'archived': '已归档',
         'running': '工作中',
         'selectMode': '选择工作模式',
@@ -996,6 +1026,16 @@ function getWebviewHtml(nonce) {
         'blankTitle': 'New Session',
         'session': 'Session',
         'noSessions': 'No Sessions',
+        'ungroupedToggle': 'Ungrouped',
+        'ungroupedToggleTitle': 'Show ungrouped sessions with cwd matching the current workspace',
+        'ungroupedTitle': 'Ungrouped Sessions',
+        'loadUngrouped': 'Load into current workspace',
+        'loadUngroupedAll': 'Load all',
+        'ungroupedEmpty': 'No ungrouped sessions with cwd matching the current workspace',
+        'loadingUngrouped': 'Loading ungrouped sessions…',
+        'ungroupedLoaded': 'Loaded {count} ungrouped session(s) into the current workspace',
+        'ungroupedLoadedOne': 'Loaded "{title}" into the current workspace',
+        'ungroupedLoadFailed': 'Failed to load ungrouped session: {message}',
         'archived': 'Archived',
         'running': 'Running',
         'selectMode': 'Select Working Mode',
@@ -1140,6 +1180,8 @@ function getWebviewHtml(nonce) {
       drawerNewBtn.textContent = '＋ ' + t('newSessionTitle');
       drawerCloseBtn.title = t('closePanel');
       drawerSearch.placeholder = t('searchSessions');
+      ungroupedToggleLabelEl.textContent = t('ungroupedToggle');
+      ungroupedToggleEl.title = t('ungroupedToggleTitle');
       moreOpenWebBtn.textContent = '🌐 ' + t('openDshWeb');
       $('modelLabel').textContent = t('modelLabel');
       $('effortLabel').textContent = t('effortLabel');
@@ -1638,6 +1680,15 @@ function getWebviewHtml(nonce) {
         return;
       }
 
+      // 清除残留的空状态/欢迎节点：切换会话时可能先渲染了“新会话已就绪”或
+      // 空白新会话欢迎页，随后历史加载完成才追加消息，若不清理会一直留在顶部。
+      var staleEmpty = chatEl.querySelector('.empty');
+      if (staleEmpty) staleEmpty.remove();
+      var staleEmptyActions = chatEl.querySelector('.empty-actions');
+      if (staleEmptyActions) staleEmptyActions.remove();
+      var staleWelcome = chatEl.querySelector('.mode-welcome');
+      if (staleWelcome) staleWelcome.remove();
+
       var seen = new Set();
       for (var i = 0; i < displayItems.length; i++) {
         var item = displayItems[i];
@@ -1678,6 +1729,19 @@ function getWebviewHtml(nonce) {
         skill: '🧩', list: '📄'
       };
       return map[n] || '⚙️';
+    }
+
+    function anchorSummaryToggle(summaryEl) {
+      // details 展开/收起会改变聊天区高度；浏览器滚动锚定可能把视线拉走。
+      // 这里在点击时记住 summary 的视口位置，下一帧按实际位移补偿 scrollTop，
+      // 使展开前后的点击位置保持不动（也覆盖 Context 等其它 details 摘要）。
+      summaryEl.addEventListener('click', function () {
+        var anchorTop = summaryEl.getBoundingClientRect().top;
+        requestAnimationFrame(function () {
+          var delta = summaryEl.getBoundingClientRect().top - anchorTop;
+          if (Math.abs(delta) > 1) chatEl.scrollTop += delta;
+        });
+      });
     }
 
     function renderItem(item) {
@@ -1739,6 +1803,10 @@ function getWebviewHtml(nonce) {
             rbody.className = 'reasoning-body';
             rbody.textContent = item.reasoning;
             rd.appendChild(rbody);
+            // 展开/收起时把 summary 锚定在点击前的视口位置：details 高度突变会让
+            // 浏览器滚动锚定把视线整体拉走（长思考链的展开尤其明显），这里在
+            // 下一帧按实际位移补偿回 scrollTop，保证展开前后点击处纹丝不动。
+            anchorSummaryToggle(rsum);
             wrap.appendChild(rd);
           }
         }
@@ -1811,6 +1879,8 @@ function getWebviewHtml(nonce) {
         var ctxSummary = item.summary || (item.text || '').split('\\n').find(function (line) { return line.trim().length > 0; }) || t('contextInjection');
         bubble.innerHTML = '<details class="context-details"><summary>' + escapeHtml(ctxSummary) + '</summary><pre>'
           + escapeHtml(item.text || '') + '</pre></details>';
+        var ctxSummaryEl = bubble.querySelector('.context-details summary');
+        if (ctxSummaryEl) anchorSummaryToggle(ctxSummaryEl);
       } else if (item.type === 'user' && item.images && item.images.length) {
         // 带图片的用户消息：先渲染图片缩略图，再渲染文本。
         var imgWrap = document.createElement('div');
@@ -1985,12 +2055,95 @@ function getWebviewHtml(nonce) {
         });
         drawerList.appendChild(item);
       }
-      if (!shown) {
+      if (!shown && !state.ungroupedOpen) {
         var empty = document.createElement('div');
         empty.className = 'drawer-empty';
         empty.textContent = t('noSessions');
         drawerList.appendChild(empty);
       }
+      if (state.ungroupedOpen) renderUngroupedSection(query);
+    }
+
+    function renderUngroupedSection(query) {
+      var sec = document.createElement('div');
+      sec.className = 'drawer-section';
+      var head = document.createElement('div');
+      head.className = 'drawer-section-head';
+      var headTitle = document.createElement('span');
+      headTitle.textContent = t('ungroupedTitle');
+      head.appendChild(headTitle);
+      var items = state.ungroupedItems || [];
+      if (query) {
+        items = items.filter(function (s) {
+          return sessionDisplayTitle(s).toLowerCase().indexOf(query) >= 0;
+        });
+      }
+      if (!state.ungroupedError && items.length > 1) {
+        var spacer = document.createElement('span');
+        spacer.className = 'section-spacer';
+        head.appendChild(spacer);
+        var allBtn = document.createElement('button');
+        allBtn.className = 'drawer-load-all';
+        allBtn.textContent = t('loadUngroupedAll');
+        allBtn.title = t('loadUngroupedAll');
+        allBtn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          showToast(t('loadingUngrouped'), '', true);
+          post({ type: 'attachUngroupedAll' });
+        });
+        head.appendChild(allBtn);
+      }
+      sec.appendChild(head);
+      if (!items.length) {
+        var empty = document.createElement('div');
+        empty.className = 'drawer-empty';
+        empty.textContent = state.ungroupedError
+          ? t('ungroupedLoadFailed', { message: state.ungroupedError })
+          : t('ungroupedEmpty');
+        sec.appendChild(empty);
+        drawerList.appendChild(sec);
+        return;
+      }
+      for (var i = 0; i < items.length; i++) {
+        (function (s) {
+          var item = document.createElement('div');
+          item.className = 'drawer-item ungrouped' + (s.running ? ' running' : '');
+          item.setAttribute('data-session-id', s.sessionId);
+          var dot = document.createElement('span');
+          dot.className = 'drawer-dot';
+          item.appendChild(dot);
+          var main = document.createElement('div');
+          main.className = 'drawer-main';
+          var titleEl = document.createElement('div');
+          titleEl.className = 'drawer-title-text';
+          titleEl.textContent = sessionDisplayTitle(s);
+          main.appendChild(titleEl);
+          var meta = document.createElement('div');
+          meta.className = 'drawer-meta';
+          var parts = [];
+          if (s.running) parts.push(t('running'));
+          if (s.updatedAt) parts.push(relativeTime(s.updatedAt));
+          meta.textContent = parts.join(' · ');
+          main.appendChild(meta);
+          item.appendChild(main);
+          var actions = document.createElement('div');
+          actions.className = 'drawer-actions';
+          var loadBtn = makeDrawerAction('loadUngrouped', t('loadUngrouped'), t('loadUngrouped'));
+          loadBtn.classList.add('primary');
+          actions.appendChild(loadBtn);
+          item.appendChild(actions);
+          item.addEventListener('click', function (ev) {
+            var btn = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+            if (!btn) return;
+            if (btn.getAttribute('data-action') === 'loadUngrouped') {
+              showToast(t('loadingUngrouped'), '', true);
+              post({ type: 'attachUngrouped', sessionId: s.sessionId });
+            }
+          });
+          sec.appendChild(item);
+        })(items[i]);
+      }
+      drawerList.appendChild(sec);
     }
 
     function openSessionDrawer() {
@@ -1998,6 +2151,7 @@ function getWebviewHtml(nonce) {
       moreMenu.classList.remove('open');
       drawerSearch.value = '';
       renderSessions();
+      if (state.ungroupedOpen) post({ type: 'getUngroupedSessions' });
       drawerSearch.focus();
     }
 
@@ -3830,6 +3984,15 @@ function getWebviewHtml(nonce) {
       closeSessionDrawer();
     });
     drawerSearch.addEventListener('input', function () { renderDrawerList(state.sessions || [], state.selectedSessionId); });
+    ungroupedCheck.addEventListener('change', function () {
+      state.ungroupedOpen = ungroupedCheck.checked;
+      if (state.ungroupedOpen) {
+        state.ungroupedItems = [];
+        state.ungroupedError = null;
+        post({ type: 'getUngroupedSessions' });
+      }
+      renderSessions();
+    });
     moreBtn.addEventListener('click', function () {
       if (moreMenu.classList.contains('open')) closeMoreMenu();
       else openMoreMenu();
@@ -4094,6 +4257,29 @@ function getWebviewHtml(nonce) {
           break;
         case 'forkError':
           showToast(msg.message || 'fork 失败', 'error', false);
+          break;
+        case 'ungroupedSessions':
+          state.ungroupedItems = msg.items || [];
+          state.ungroupedError = msg.error || null;
+          renderSessions();
+          break;
+        case 'ungroupedAttachDone':
+          hideToast();
+          if (msg.ok) {
+            showToast(msg.title
+              ? t('ungroupedLoadedOne', { title: msg.title })
+              : t('ungroupedLoaded', { count: 1 }), 'ok', false);
+          } else {
+            showToast(t('ungroupedLoadFailed', { message: msg.message || '' }), 'error', false);
+          }
+          break;
+        case 'ungroupedAttachAllDone':
+          hideToast();
+          if (msg.failed > 0) {
+            showToast(t('ungroupedLoadFailed', { message: msg.message || (msg.done + ' ok / ' + msg.failed + ' failed') }), 'error', false);
+          } else {
+            showToast(t('ungroupedLoaded', { count: msg.done }), 'ok', false);
+          }
           break;
       }
     });

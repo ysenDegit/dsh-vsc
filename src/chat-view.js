@@ -254,6 +254,15 @@ class ChatViewProvider {
         case 'forkSession':
           await this.forkSession(msg.sessionId || this.selectedSessionId)
           break
+        case 'getUngroupedSessions':
+          await this.getUngroupedSessions()
+          break
+        case 'attachUngrouped':
+          await this.attachUngroupedSession(msg.sessionId)
+          break
+        case 'attachUngroupedAll':
+          await this.attachAllUngroupedSessions()
+          break
         case 'permissionSelect':
           await this.selectPermission(msg.sessionId || this.selectedSessionId, msg.preset)
           break
@@ -1011,6 +1020,81 @@ class ChatViewProvider {
     const message = String(error && error.message || '')
     if (error instanceof DshRpcError && error.code === 'fork-unavailable') return true
     return /fork-unavailable|no completed turn/u.test(message)
+  }
+
+  // ---- ungrouped sessions (未分组会话) ----
+
+  async getUngroupedSessions() {
+    const workspaceId = this.workspaceView?.workspaceId ?? null
+    if (!workspaceId) {
+      this.post({ type: 'ungroupedSessions', workspaceId: null, items: [], error: null })
+      return
+    }
+    try {
+      const { items } = await this.sessions.listUngroupedSessions(workspaceId)
+      this.post({ type: 'ungroupedSessions', workspaceId, items, error: null })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`列出未分组会话失败: ${message}`)
+      this.post({ type: 'ungroupedSessions', workspaceId, items: [], error: message })
+    }
+  }
+
+  async attachUngroupedSession(sessionId) {
+    if (!sessionId) return
+    const workspaceId = this.workspaceView?.workspaceId
+    if (!workspaceId) return
+    try {
+      // dsh 的 session.create 对已存在会话是幂等采用：同 sessionId + workspaceId
+      // 即把未分组会话纳入当前工作区（要求 cwd 与工作区路径一致）。
+      await this.sessions.attachUngroupedSession(sessionId, workspaceId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`加载未分组会话失败: ${message}`)
+      this.post({ type: 'ungroupedAttachDone', sessionId, ok: false, message })
+      return
+    }
+    let title = null
+    try {
+      const session = await this.sessions.getSession(sessionId)
+      title = session && session.title ? session.title : null
+    } catch (error) {
+      this.onLog(`读取会话标题失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    await this.refreshSessions()
+    await this.getUngroupedSessions()
+    this.post({ type: 'ungroupedAttachDone', sessionId, ok: true, title })
+  }
+
+  async attachAllUngroupedSessions() {
+    const workspaceId = this.workspaceView?.workspaceId
+    if (!workspaceId) return
+    let items = []
+    try {
+      const result = await this.sessions.listUngroupedSessions(workspaceId)
+      items = result.items
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`列出未分组会话失败: ${message}`)
+      this.post({ type: 'ungroupedAttachAllDone', done: 0, failed: 0, message })
+      return
+    }
+    let done = 0
+    let failed = 0
+    let lastMessage = null
+    for (const item of items) {
+      try {
+        await this.sessions.attachUngroupedSession(item.sessionId, workspaceId)
+        done++
+      } catch (error) {
+        failed++
+        lastMessage = error instanceof Error ? error.message : String(error)
+        this.onLog(`加载未分组会话 ${item.sessionId} 失败: ${lastMessage}`)
+      }
+    }
+    await this.refreshSessions()
+    await this.getUngroupedSessions()
+    this.post({ type: 'ungroupedAttachAllDone', done, failed, message: lastMessage })
   }
 
   async renameSession(sessionId) {
