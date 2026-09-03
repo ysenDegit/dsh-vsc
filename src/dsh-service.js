@@ -46,7 +46,7 @@ class DshService extends EventEmitter {
     try {
       this.setStatus('discovering')
 
-      // 要求 2：优先复用已在后台运行的 dsh web 实例（显式 URL → 状态文件 → dsh 默认端口）。
+      // 要求 2：优先复用已在后台运行的 dsh web 实例（显式 URL → 用户手动启动的默认端口 → 状态文件记录的插件实例）。
       const existing = await this.findExistingInstance()
       if (existing) {
         this.baseUrlValue = existing
@@ -80,7 +80,7 @@ class DshService extends EventEmitter {
       this.baseUrlValue = this.server.baseUrl
       this.ownsInstance = true
       this.options.onLog?.(`dsh web service ready: ${this.server.baseUrl}`)
-      this.writeStateFile(this.server.baseUrl)
+      this.writeStateFile(this.server.baseUrl, this.server.child?.pid)
 
       const server = this.server
       server.exited.then((code) => {
@@ -143,7 +143,9 @@ class DshService extends EventEmitter {
       return explicitUrl.replace(/\/+$/u, '')
     }
 
-    const candidates = []
+    // 用户手动在默认端口启动的实例优先；状态文件只在默认端口不可用时作为
+    // “上次插件实例仍存活”的兜底，避免插件自启的随机端口实例盖掉用户的 3080。
+    const candidates = [DEFAULT_DSH_URL]
     try {
       if (existsSync(STATE_FILE)) {
         const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'))
@@ -152,7 +154,6 @@ class DshService extends EventEmitter {
     } catch {
       // 状态文件损坏/不可读：忽略，继续探测默认端口。
     }
-    candidates.push(DEFAULT_DSH_URL)
 
     for (const url of candidates) {
       if (await this.probeDsh(url)) {
@@ -186,10 +187,10 @@ class DshService extends EventEmitter {
     }
   }
 
-  writeStateFile(baseUrl) {
+  writeStateFile(baseUrl, childPid) {
     try {
       mkdirSync(dirname(STATE_FILE), { recursive: true })
-      writeFileSync(STATE_FILE, JSON.stringify({ baseUrl, pid: process.pid, at: new Date().toISOString() }, null, 2))
+      writeFileSync(STATE_FILE, JSON.stringify({ baseUrl, pid: childPid ?? process.pid, at: new Date().toISOString() }, null, 2))
     } catch {
       // 状态文件仅是复用提示；写失败不影响主流程。
     }

@@ -4,6 +4,7 @@ const vscode = require('vscode')
 const { randomUUID } = require('node:crypto')
 const { relative, join } = require('node:path')
 const { homedir } = require('node:os')
+const { existsSync } = require('node:fs')
 const { getWebviewHtml } = require('./webview.js')
 const { version: extensionVersion } = require('../package.json')
 const { DshRpcError } = require('./wire.js')
@@ -52,6 +53,9 @@ class ChatViewProvider {
     this.showArchivedSessions = options.showArchivedSessions ?? false
     // 并发的初始化请求共享同一轮执行（onUiOpened / dsh ready / webview ready 可能同时触发）。
     this.ensureWork = null
+    // 会话列表刷新的并发合并/防抖：host 状态帧高频到达时避免重复 RPC。
+    this.refreshSessionsWork = null
+    this.refreshSessionsTimer = null
   }
 
   static get viewType() { return viewType }
@@ -456,9 +460,12 @@ class ChatViewProvider {
     this.clearConversationPost()
     this.selectedSessionId = sessionId
     await this.refreshSessions()
-    await this.loadHistory(sessionId)
-    await this.refreshModels(sessionId)
-    await this.refreshCommands(sessionId)
+    // 历史/模型/命令目录互不依赖，并行加载以降低切换感知延迟。
+    await Promise.all([
+      this.loadHistory(sessionId),
+      this.refreshModels(sessionId),
+      this.refreshCommands(sessionId),
+    ])
     this.postQueue(sessionId)
     this.postQuestion(sessionId)
     this.postApproval(sessionId)
@@ -655,7 +662,35 @@ class ChatViewProvider {
   }
 
   async refreshSettings() {
-    if (!this.dsh.client) throw new Error('dsh web 尚未就绪')
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    if (!this.dsh.client) {
+      // dsh 未连接：设置面板仍可打开，只下发本地可编辑项，后端相关能力标记不可用。
+      this.post({
+        type: 'settingsData',
+        data: {
+          writable: false,
+          hasDocument: false,
+          connected: false,
+          sessionDisplay: this.sessionDisplay,
+          fontSize: this.fontSize,
+          maxWidth: this.maxWidth,
+          language: this.language,
+          enterToSend: this.enterToSend,
+          showContextUsage: this.showContextUsage,
+          contextBarColor: this.contextBarColor,
+          contextBarOpacity: this.contextBarOpacity,
+          autoStart: this.autoStart,
+          autoOpenChat: this.autoOpenChat,
+          baseUrl: null,
+          workspaces: [],
+          currentWorkspaceId: null,
+          currentFolderPath: folder ? folder.uri.fsPath : null,
+          showArchivedSessions: this.showArchivedSessions,
+          version: extensionVersion,
+        },
+      })
+      return
+    }
     const client = this.sessions.requireClient()
     const settingsResult = await client.call('settings.describe', {})
     // 工作区列表供"管理工作区"页使用；获取失败不阻断设置面板打开。
@@ -689,12 +724,12 @@ class ChatViewProvider {
     } catch (error) {
       this.onLog(`workspace.list 获取失败: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const folder = vscode.workspace.workspaceFolders?.[0]
     this.post({
       type: 'settingsData',
       data: {
         writable: settingsResult.writable,
         hasDocument: settingsResult.hasDocument,
+        connected: true,
         sessionDisplay: this.sessionDisplay,
         fontSize: this.fontSize,
         maxWidth: this.maxWidth,
@@ -767,16 +802,25 @@ class ChatViewProvider {
   }
 
   async openSettingsDocument() {
-    const client = this.sessions.requireClient()
-    // 先让 dsh 侧物化 settings.yaml（缺失时创建）；即使远端没有桌面可打开，
-    // 插件也会在 VS Code 中打开该文件，保证用户有可见反馈。
-    try {
-      await client.call('settings.openDocument', {})
-    } catch (error) {
-      this.onLog(`dsh settings.openDocument 调用失败: ${error instanceof Error ? error.message : String(error)}`)
+    // dsh 未连接时跳过 RPC（settings.yaml 可能尚未生成），直接尝试打开本地文件。
+    if (this.dsh.client) {
+      const client = this.sessions.requireClient()
+      // 先让 dsh 侧物化 settings.yaml（缺失时创建）；即使远端没有桌面可打开，
+      // 插件也会在 VS Code 中打开该文件，保证用户有可见反馈。
+      try {
+        await client.call('settings.openDocument', {})
+      } catch (error) {
+        this.onLog(`dsh settings.openDocument 调用失败: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    } else {
+      this.onLog('dsh 未启动，跳过 settings.openDocument RPC，仅尝试打开本地 settings.yaml')
     }
     const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
     const settingsPath = join(dshHome, 'settings.yaml')
+    if (!existsSync(settingsPath)) {
+      void vscode.window.showErrorMessage('dsh 尚未启动，settings.yaml 尚未生成；连接 dsh 后可再点“打开 settings.yaml”生成。')
+      return
+    }
     const uri = vscode.Uri.file(settingsPath)
     try {
       const document = await vscode.workspace.openTextDocument(uri)
@@ -793,6 +837,9 @@ class ChatViewProvider {
     // 避免“当前会话生效、重启后恢复默认”且用户无感知。
     const config = vscode.workspace.getConfiguration('dsh-vsc')
     await config.update('sessionDisplay', next, vscode.ConfigurationTarget.Global)
+    // 先按新模式重新折叠并推送会话内容，再通知 webview 切换模式，
+    // 避免 webview 先切模式后仍用旧模式的会话数据渲染出错误内容。
+    this.postConversation(this.selectedSessionId)
     this.post({ type: 'sessionDisplay', value: next })
   }
 
@@ -893,6 +940,7 @@ class ChatViewProvider {
   updatePreferences(prefs) {
     if (prefs.sessionDisplay !== undefined && prefs.sessionDisplay !== this.sessionDisplay) {
       this.sessionDisplay = prefs.sessionDisplay
+      this.postConversation(this.selectedSessionId)
       this.post({ type: 'sessionDisplay', value: prefs.sessionDisplay })
     }
     if (prefs.fontSize !== undefined && prefs.fontSize !== this.fontSize) {
@@ -1111,7 +1159,16 @@ class ChatViewProvider {
     await this.sessions.cancel(sessionId)
   }
 
-  async refreshSessions() {
+  refreshSessions() {
+    // 并发合并：同一轮共享一次执行，避免 host 状态帧/用户刷新叠加成多次 RPC。
+    if (this.refreshSessionsWork) return this.refreshSessionsWork
+    this.refreshSessionsWork = this.doRefreshSessions().finally(() => {
+      this.refreshSessionsWork = null
+    })
+    return this.refreshSessionsWork
+  }
+
+  async doRefreshSessions() {
     if (!this.dsh.client || !this.workspaceView) {
       this.post({ type: 'sessions', sessions: [], selectedSessionId: this.selectedSessionId })
       return
@@ -1127,6 +1184,17 @@ class ChatViewProvider {
     }
     this.post({ type: 'sessions', sessions: list, selectedSessionId: this.selectedSessionId })
     this.postStats(this.selectedSessionId)
+  }
+
+  // host 事件（session-status/added/workspace-changed/archived-changed）触发时防抖：
+  // 短时间内的多次状态帧只刷一次；用户主动刷新仍走上面的 refreshSessions()。
+  scheduleRefreshSessions(delayMs = 120) {
+    if (this.refreshSessionsTimer) return
+    this.refreshSessionsTimer = setTimeout(() => {
+      this.refreshSessionsTimer = null
+      void this.refreshSessions()
+    }, delayMs)
+    this.refreshSessionsTimer.unref?.()
   }
 
   seedProjectionsFromList(list) {
@@ -1403,7 +1471,7 @@ class ChatViewProvider {
     if (!sessionId) return []
     const entry = this.eventsBySession.get(sessionId)
     if (!entry) return []
-    const folded = foldEvents(entry.events)
+    const folded = foldEvents(entry.events, { mode: this.sessionDisplay })
     return folded.items
   }
 
@@ -1412,7 +1480,7 @@ class ChatViewProvider {
     if (this.sessionRunning.has(sessionId)) return this.sessionRunning.get(sessionId)
     const entry = this.eventsBySession.get(sessionId)
     if (!entry) return false
-    return foldEvents(entry.events).running
+    return foldEvents(entry.events, { mode: this.sessionDisplay }).running
   }
 
   async loadHistory(sessionId) {
@@ -1474,7 +1542,7 @@ class ChatViewProvider {
     if (sessionId !== this.selectedSessionId) return
     const entry = this.eventsBySession.get(sessionId)
     if (!entry) return
-    const folded = foldEvents(entry.events)
+    const folded = foldEvents(entry.events, { mode: this.sessionDisplay })
     this.post({
       type: 'conversation',
       sessionId,
@@ -1555,13 +1623,13 @@ class ChatViewProvider {
     switch (frame.method) {
       case 'host/session-status':
         this.sessionRunning.set(payload.sessionId, payload.running)
-        void this.refreshSessions()
+        this.scheduleRefreshSessions()
         break
       case 'host/session-added':
       case 'host/workspace-changed':
       case 'host/archived-sessions-changed':
         if (payload.archivedSessionIds) this.sessions.setArchived(payload.archivedSessionIds)
-        void this.refreshSessions()
+        this.scheduleRefreshSessions()
         break
       case 'host/agent-error':
         if (payload.sessionId === this.selectedSessionId) this.appendNote(payload.sessionId, `Agent 错误：${payload.message}`)

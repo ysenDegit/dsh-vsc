@@ -3,6 +3,9 @@
 const { randomUUID } = require('node:crypto')
 const { EventEmitter } = require('node:events')
 
+// 普通 RPC 的默认超时：dsh 服务卡住时不无限挂起界面。
+const DEFAULT_RPC_TIMEOUT_MS = 60_000
+
 class DshRpcError extends Error {
   constructor(error) {
     super(error.message)
@@ -28,7 +31,12 @@ class WireClient {
     this.baseUrl = baseUrl.replace(/\/+$/u, '')
   }
 
-  async respond(message, signal) {
+  async respond(message, signal, timeoutMs = DEFAULT_RPC_TIMEOUT_MS) {
+    let timeout = null
+    if (!signal) {
+      timeout = withTimeout(timeoutMs)
+      signal = timeout.signal
+    }
     let response
     try {
       response = await fetch(`${this.baseUrl}/api/respond`, {
@@ -38,7 +46,12 @@ class WireClient {
         signal,
       })
     } catch (error) {
+      if (timeout && timeout.signal.aborted) {
+        throw new Error(`dsh web respond 超时（${timeoutMs}ms）`)
+      }
       throw new Error(`dsh web respond 传输失败: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      timeout?.cancel()
     }
     if (!response.ok) {
       throw new Error(`dsh web respond 载体错误: HTTP ${response.status}`)
@@ -50,9 +63,14 @@ class WireClient {
     }
   }
 
-  async call(method, payload, signal) {
+  async call(method, payload, signal, timeoutMs = DEFAULT_RPC_TIMEOUT_MS) {
     const rpcId = randomUUID()
     const body = { type: 'client-request', rpcId, method, payload }
+    let timeout = null
+    if (!signal) {
+      timeout = withTimeout(timeoutMs)
+      signal = timeout.signal
+    }
     let response
     try {
       response = await fetch(`${this.baseUrl}/api/${method}`, {
@@ -62,7 +80,12 @@ class WireClient {
         signal,
       })
     } catch (error) {
+      if (timeout && timeout.signal.aborted) {
+        throw new Error(`dsh web RPC ${method} 超时（${timeoutMs}ms）`)
+      }
       throw new Error(`dsh web RPC ${method} 传输失败: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      timeout?.cancel()
     }
     if (!response.ok) {
       throw new Error(`dsh web RPC ${method} 载体错误: HTTP ${response.status}`)
@@ -161,8 +184,7 @@ class EventStream extends EventEmitter {
 function withTimeout(ms) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), ms)
-  timer.unref?.()
   return { signal: controller.signal, cancel: () => clearTimeout(timer) }
 }
 
-module.exports = { WireClient, EventStream, DshRpcError, withTimeout, loadWebSocketImpl }
+module.exports = { WireClient, EventStream, DshRpcError, withTimeout, loadWebSocketImpl, DEFAULT_RPC_TIMEOUT_MS }

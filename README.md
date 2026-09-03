@@ -2,13 +2,21 @@
 
 [中文](#中文) | [English](#english)
 
+> VS Code 1.136 的拓展注册可能存在bug，插件图标无法正常显示，但是可以正常点击使用。
+
 将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与双 WebSocket 事件流直接与 dsh 后端通信。
 
 > 由于本人测试环境有限，陆陆续续发现了很多 BUG；如遇恶性 BUG，请邮件 ysen96@qq.com，我将尽快修复。
 
+> 鉴于最新 DeepSeek Harness alpha 版本的快速破坏性更新，本插件暂时不对其进行适配，插件支持 dsh 版本仍为 0.1.1-rc.2。
+
 Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and workspace panel. The extension does not embed the dsh web frontend; instead it talks directly to the dsh backend over HTTP RPC and dual WebSocket event streams.
 
 > Due to a limited testing environment, bugs have surfaced over time. If you encounter a critical bug, please email ysen96@qq.com and I will fix it as soon as possible.
+
+> Due to the rapid breaking changes in the latest DeepSeek Harness alpha releases, this extension does not adapt to them for now; the supported dsh version remains 0.1.1-rc.2.
+
+> VS Code 1.136 may have an extension registration bug: the extension icon does not render, but the entry is still clickable.
 
 ![插件截图](assets/Screenshot.png)
 
@@ -22,10 +30,10 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 #### 1. dsh 实例生命周期管理
 - 自动发现 dsh：配置路径 `dsh-vsc.dshPath` → `PATH` → npm 全局目录 → `npx --no-install @deepseek-ai/dsh`。
-- 启动前检查是否已有 dsh web 在后台运行：
+- 启动前检查是否已有 dsh web 在后台运行（优先级从高到低）：
   - 显式 `dsh-vsc.dshUrl`
-  - 状态文件 `~/.dsh/vscode-extension.json`
-  - 默认地址 `http://127.0.0.1:3080`
+  - 默认地址 `http://127.0.0.1:3080`（用户手动启动的实例优先）
+  - 状态文件 `~/.dsh/vscode-extension.json`（上次插件实例仍存活时的兜底）
 - 若未运行，则自动启动 `dsh web --port 0 --no-open`。
 - VS Code 关闭时，自动退出由插件启动的 dsh 实例；复用已有实例时仅断开连接。
 - 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误；停止/错误状态可点击重新检测 dsh web 实例。
@@ -41,7 +49,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - Sessions 抽屉标题旁提供“未分组”勾选：勾选后列出 `cwd` 与当前工作区一致的未分组会话（未被任何工作区记账），可逐条“加载到当前工作区”或一键“全部加载”。
 - 首次创建工作区且无会话时，自动创建并选中空白"新会话"（不再显示"暂无会话"），聊天区显示"新会话已就绪。输入消息开始与 DeepSeek Harness 对话。"及工作模式选择。
 - 新会话 Hero：问候语 + 工作模式卡片（标准 / PTC / 极简 / 创造）。
-- 设置弹窗采用 VS Code 设置风格卡片（分组/卡片化）；窄面板（≤600px）自动收紧顶栏/聊天区/composer 内边距。
+- 设置弹窗采用 VS Code 设置风格卡片（分组/卡片化）；窄面板（≤600px）自动收紧顶栏/聊天区/composer 内边距。dsh 未启动时设置弹窗仍可打开，可修改本地显示/常规设置，工作区管理页签仅在已连接时显示。
 - 归档/关闭会话：操作前二次确认；归档后仅从会话列表移除，不再保存会话副本到工作区。
 - 会话标题 fallback 优化，不再显示裸 `session-`。
 
@@ -192,10 +200,10 @@ vsce package
 
 #### 1.1 dsh Instance Lifecycle Management
 - Auto-discovery of dsh: config path `dsh-vsc.dshPath` → `PATH` → npm global directory → `npx --no-install @deepseek-ai/dsh`.
-- Before starting, checks whether a dsh web instance is already running:
+- Before starting, checks whether a dsh web instance is already running (priority high to low):
   - explicit `dsh-vsc.dshUrl`
-  - state file `~/.dsh/vscode-extension.json`
-  - default address `http://127.0.0.1:3080`
+  - default address `http://127.0.0.1:3080` (a manually started instance wins)
+  - state file `~/.dsh/vscode-extension.json` (fallback for a still-alive instance started by the extension previously)
 - If not running, automatically starts `dsh web --port 0 --no-open`.
 - When VS Code closes, the extension automatically exits the dsh instance it started; when reusing an existing instance, it only disconnects.
 - Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error; click it in the stopped/error state to re-detect the dsh web instance.

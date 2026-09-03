@@ -150,3 +150,53 @@ test('produced row skips failed calls and non-mutation views', () => {
   const { items } = foldEvents(events)
   assert.equal(items.filter((i) => i.type === 'produced').length, 0)
 })
+
+test('concise fold keeps only user/assistant-text/command output', () => {
+  const events = [
+    ev(1, 'turn/start', { turn: 1 }),
+    ev(2, 'user/message', { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
+    ev(3, 'assistant/chunk', { turn: 1, step: 1, chunk: { type: 'reasoning-delta', text: 'think...' } }),
+    ev(4, 'assistant/chunk', { turn: 1, step: 1, chunk: { type: 'text-delta', text: 'hi' } }),
+    ev(5, 'tool/call', { turn: 1, step: 2, callId: 'c1', name: 'read', arguments: '{}' }),
+    ev(6, 'tool/result', { turn: 1, step: 2, message: { callId: 'c1', content: [{ type: 'text', text: 'out' }] } }),
+    ev(7, 'user/message', { content: [{ type: 'text', text: 'ctx' }], source: { kind: 'plugin' } }),
+    ev(8, 'command/run', { commandId: 'cmd-1', name: 'compact', args: '', source: { kind: 'user' } }),
+    ev(9, 'command/done', { commandId: 'cmd-1', kind: 'success', text: 'ok' }),
+    ev(10, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+  ]
+  const { items, running } = foldEvents(events, { mode: 'concise' })
+  assert.equal(running, false)
+  assert.deepEqual(items.map((i) => i.type), ['user', 'assistant', 'command'])
+  const assistant = items.find((i) => i.type === 'assistant')
+  assert.equal(assistant.text, 'hi')
+  assert.equal(assistant.reasoning, undefined)
+  assert.equal(items.some((i) => i.type === 'tool'), false)
+  assert.equal(items.some((i) => i.type === 'context'), false)
+  assert.equal(items.some((i) => i.type === 'produced'), false)
+  assert.equal(items.some((i) => i.type === 'note'), false)
+})
+
+test('concise fold omits blank user messages and empty assistant messages', () => {
+  const events = [
+    ev(1, 'user/message', { content: [{ type: 'text', text: '   ' }], source: { kind: 'user' } }),
+    ev(2, 'user/message', { content: [{ type: 'text', text: 'real' }], source: { kind: 'user' } }),
+    ev(3, 'assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'tool-call' }] } }),
+  ]
+  const { items } = foldEvents(events, { mode: 'concise' })
+  assert.deepEqual(items.map((i) => i.type), ['user'])
+  assert.equal(items[0].text, 'real')
+})
+
+test('concise fold reports running state', () => {
+  const { running } = foldEvents([ev(1, 'turn/start', { turn: 1 })], { mode: 'concise' })
+  assert.equal(running, true)
+})
+
+test('concise fold marks hidden-only content so UI can show its hint', () => {
+  const { items } = foldEvents([
+    ev(1, 'turn/start', { turn: 1 }),
+    ev(2, 'tool/call', { turn: 1, step: 1, callId: 'c1', name: 'read', arguments: '{}' }),
+    ev(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+  ], { mode: 'concise' })
+  assert.deepEqual(items.map((i) => i.type), ['hidden-hint'])
+})

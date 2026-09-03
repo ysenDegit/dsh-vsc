@@ -2,6 +2,25 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [1.0.10]
+
+### Changed
+
+- 简洁会话与详细会话的实现彻底分离：会话折叠（`src/conversation.js`）现在按 `foldEvents(events, { mode: ... })` 产出两种独立列表——简洁模式只保留用户消息、助手文本与命令反馈（不携带工具/思考/上下文/产物/note，也不再在 webview 端二次过滤）；详细模式保持原有完整时间线。切换显示模式时宿主会按新模式重新折叠并推送会话内容。webview 为简洁会话的流式助手消息新增轻量纯文本增量渲染（`renderConciseStreamingItem` / `appendConciseStreamText`，每个 chunk 只追加文本增量，不再整段 Markdown 重建），且用户向上滚动时把重绘频率从 16ms 自动降到约 150ms，流式期间向上滚动对话框不再被高频 DOM 重建拖慢；回合结束后仍以 Markdown 渲染最终结果。改动 src/conversation.js、src/chat-view.js、src/webview.js、tests/conversation.test.js；测试 26 → 31。
+- webview 单文件重构为模块化拼装：`src/webview.js` 只负责组装 HTML（约 57 行），样式（`src/webview/style.css`）、静态 DOM（`src/webview/body.html`）与内联脚本按 boot / i18n / markdown / render / actions / settings / listeners / message 拆到 `src/webview/script/*.js`。仍为零构建、纯 CommonJS，`getWebviewHtml(nonce)` 按固定顺序读文件拼装，功能与拆分前完全一致；单文件过大不再影响运行性能（文件体积只影响一次加载解析），主要收益是模块边界清晰、便于维护。
+- 会话刷新与渲染性能优化：`host/session-status` 等事件触发的 `refreshSessions` 改为 120ms 防抖 + 在途合并，避免高频状态帧造成 `workspace.list` / `session.list` RPC 风暴与乱序回推；webview 的 `itemSignature` 改为长度/状态轻量签名，不再每帧拼接完整消息文本；`renderConversation` 只在节点未挂载时才 `appendChild`（“加载更早”等头部插入场景自动整树重建），减少长会话下的重复 DOM 移动；`selectSession` 中历史/模型/命令目录并行加载，降低切换延迟。改动 src/chat-view.js、src/webview/script/03-render.js；测试 31/31。
+- README 简介补充 dsh 版本适配声明：鉴于最新 DeepSeek Harness alpha 版本的快速破坏性更新，本插件暂时不对其适配，支持 dsh 版本仍为 0.1.1-rc.2（中英文）。
+- 插件前端与 dsh 后端解耦（离线可用）：dsh 未启动时设置面板仍可打开并修改本地设置（会话显示、字体、宽度、语言、Enter 发送、启动行为、上下文栏等）；“关于”页显示“dsh 未连接”提示；工作区管理页签仅在已连接时展示；“打开 settings.yaml”离线时直接尝试打开本地文件，未生成时给出明确提示。改动 src/chat-view.js、src/webview/script/01-i18n.js、src/webview/script/05-settings.js。
+- README 简介补充 VS Code 1.136 图标注册说明：VS Code 1.136 的扩展注册可能存在 bug，插件图标无法正常显示，但入口仍可点击使用（中英文）。
+
+### Fixed
+
+- 修复 Sessions 抽屉中运行中的会话导致切换失败/需多次点选的问题：`conversation` 流式帧每次都会携带 `selectedSessionId` 并触发 `renderSessions()` 整棵重建 drawerList，会话工作时高频 chunk 会在点击过程中替换 DOM 节点，使 click 事件丢失（会话越活跃越难切换）；同时旧会话在途帧还可能反向覆盖用户的新选择。现在 webview 对 `conversation` 帧只处理 `msg.sessionId === state.selectedSessionId` 的帧，不再用帧内 `selectedSessionId` 覆盖当前选择，也不再因流式更新重建 Sessions 抽屉。改动 src/webview.js；测试 26/26。
+- 修复切换会话/清空会话时旧界面状态残留：`sessions` / `hydrate` 消息现在显式接受 `selectedSessionId = null`，切换选中会话时立即清空上一会话的对话、队列、审批/提问、模型/命令等会话级状态，避免新会话消息未到达前闪出旧会话内容，也避免归档/删除工作区后仍显示旧数据。改动 src/webview/script/07-message.js、src/webview/script/03-render.js。
+- 修复 RPC 可能无限挂起的问题：`WireClient.call` / `respond` 增加默认 60s 超时（可传参覆盖），dsh 服务无响应时抛出明确超时错误而不是让界面一直等待。改动 src/wire.js、tests/wire.test.js（+1，测试 31/31）。
+- 修复 VS Code 升级后活动栏/编辑器标题图标不显示的问题：VS Code 1.136 远程窗口下 SVG 图标（即使改为 `currentColor`）仍渲染为空白，活动栏与编辑器标题入口改为直接使用 `assets/icon.png`（128×128 PNG，市场图标同款鲸鱼），PNG 为各版本 VS Code 通用格式；`assets/icon.svg` 保留备用。包内 package.json 的 `viewsContainers.activitybar` 与 `dsh-vsc.openChatFromTitle` 命令图标均指向 `assets/icon.png`。
+- 修复“用户手动启动 3080 dsh 实例但插件仍用自己的实例”的问题：实例复用优先级改为 **显式 `dshUrl` → 默认端口 3080 → 状态文件**（原为显式 → 状态文件 → 3080），用户手动启动的实例优先；状态文件同时改为记录 dsh 子进程 pid（原来记录的是 VS Code 扩展宿主 pid，无法判断服务是否真的存活）。改动 src/dsh-service.js、README.md。
+
 ## [1.0.9]
 
 ### Added

@@ -1,0 +1,105 @@
+  <div id="app">
+    <div class="top-bar">
+      <span class="status-badge"><span id="statusDot" class="status-dot stopped"></span><span id="statusText">stopped</span></span>
+      <button id="sessionTitleBtn" class="session-title-btn" title="选择会话"><span id="sessionTitle">会话</span><span class="caret">▾</span></button>
+      <div class="top-bar-actions">
+        <button id="refreshBtn" title="刷新会话">⟳</button>
+        <button id="settingsBtn" title="设置">⚙</button>
+        <button id="moreBtn" title="更多">⋯</button>
+      </div>
+    </div>
+    <div id="sessionsDrawer" class="sessions-drawer">
+      <div class="drawer-header">
+        <span id="drawerTitle" class="drawer-title">Sessions</span>
+        <label id="ungroupedToggle" class="drawer-ungrouped-toggle">
+          <input type="checkbox" id="ungroupedCheck" />
+          <span id="ungroupedToggleLabel">未分组</span>
+        </label>
+        <span class="spacer" style="flex:1"></span>
+        <button id="drawerNewBtn" class="primary">＋ New Session</button>
+        <button id="drawerCloseBtn" title="关闭">✕</button>
+      </div>
+      <input id="drawerSearch" class="drawer-search" type="text" placeholder="Search sessions…" />
+      <div id="drawerList" class="drawer-list"></div>
+    </div>
+    <div id="moreMenu" class="more-menu">
+      <button id="moreOpenWebBtn">🌐 打开 dsh Web</button>
+    </div>
+    <div id="toast" class="toast"></div>
+    <div id="chat" class="chat">
+      <div class="empty">正在连接 DeepSeek Harness…</div>
+    </div>
+    <div class="composer">
+      <div id="pendingImages" class="pending-images" hidden></div>
+      <div id="composerNotice" class="composer-notice" hidden></div>
+      <div id="filePicker" class="file-picker"></div>
+      <div id="commandPicker" class="file-picker command-picker"></div>
+      <div id="todoDock" class="todo-dock"></div>
+      <div id="queueDock" class="queue-dock"></div>
+      <div id="questionPanel" class="question-panel" style="display:none"></div>
+      <div id="approvalPanel" class="question-panel approval-panel" style="display:none"></div>
+      <div class="composer-capsule">
+        <div id="composerRow" class="composer-row">
+          <button id="imageBtn" class="icon-btn" title="选择图片">📷</button>
+          <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
+          <input type="file" id="imageFileInput" accept="image/*" multiple hidden>
+          <button id="sendBtn" class="primary" title="发送"><span class="send-label">发送</span><span class="send-count" hidden></span></button>
+          <button id="actionsBtn" class="icon-btn slash-btn" title="模型与权限"><span class="slash-icon"></span></button>
+          <button id="stopBtn" class="icon-btn" title="停止生成" style="display:none">■</button>
+        </div>
+      </div>
+      <div id="modelPopover" class="composer-popover">
+        <div class="cp-row">
+          <label id="modelLabel">模型</label>
+          <select id="modelSelect" title="选择模型"></select>
+        </div>
+        <div class="cp-row">
+          <label id="effortLabel">推理</label>
+          <select id="effortSelect" title="选择推理等级"></select>
+        </div>
+        <span id="modelStatus" class="hint" style="margin-top:0"></span>
+        <div class="cp-sep"></div>
+        <div class="cp-group-title" id="permissionGroupTitle">权限/模式</div>
+        <div id="permissionGroupList"></div>
+      </div>
+      <div id="statsBar" class="stats-bar">
+      <span id="workIndicator" class="work-indicator idle">
+        <span class="work-bulb"></span>
+        <span class="work-label">working</span>
+      </span>
+      <span id="statsText"></span>
+      <span id="modelInfo" class="model-info"></span>
+    </div>
+    </div>
+    <div id="settingsModal" class="modal-overlay">
+      <div class="modal settings-modal">
+        <div class="modal-header">
+          <span>设置</span>
+          <span class="spacer"></span>
+          <button id="settingsClose" title="关闭">✕</button>
+        </div>
+        <div class="settings-body">
+          <div id="settingsNav" class="settings-nav"></div>
+          <div id="settingsContent" class="settings-content"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="settingsOpenDocBtn">打开 settings.yaml</button>
+          <button id="settingsDoneBtn" class="primary">完成</button>
+        </div>
+      </div>
+    </div>
+    <div id="archiveModal" class="modal-overlay">
+      <div class="modal">
+        <div class="modal-header">
+          <span>归档/关闭会话</span>
+          <span class="spacer"></span>
+          <button id="archiveClose" title="关闭">✕</button>
+        </div>
+        <div id="archiveMessage" class="archive-message"></div>
+        <div class="modal-footer">
+          <button id="archiveCancelBtn">取消</button>
+          <button id="archiveConfirmBtn" class="primary">确认归档</button>
+        </div>
+      </div>
+    </div>
+  </div>
