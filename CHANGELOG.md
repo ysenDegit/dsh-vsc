@@ -2,6 +2,26 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [1.1.0]
+
+### Changed
+
+- 适配 dsh 0.1.2-rc.1（Typert Remote）：
+  - 一元 RPC 改为 `POST /api/<ns>/<method>`，payload 统一 `{args:{...}}`；`WireClient` 增加 `callArgs`。
+  - 事件流改为单 WS `/api/remote.mux`：`$events`（全局 emit/waterfall）、`session/control`（队列/投影/jobs）、`workspace/follow`（工作区/归档）、`session/follow`（会话日志快照 + 实时事件）；新增 `RemoteMuxClient` 多路复用逻辑流并自动重连。
+  - 会话/工作区端点映射：`session/list|create|page|follow|prompt|cancel|rename|fork|attachment|updateQueue|modelCatalog|selectModel`、`workspace/create|delete|rename|archiveSession|follow`、`agentPresets/list|select`、`commands/list|execute`、`settings/describe|openSettingsDocument`、`$events/result`。
+  - token 认证：插件启动 dsh 时从 `dsh web: http://.../?token=...` 捕获每次进程唯一的 launch token，首次启动用它换取 `dsh-auth-*` cookie，所有 `/api` 请求与 `/api/remote.mux` upgrade 都携带该 cookie；状态文件记录 token，供跨重启复用插件实例。
+  - 默认端口已有 dsh 但需要认证时不再直接新建实例：插件先弹输入框询问用户粘贴带 `?token=...` 的完整启动 URL，粘贴成功则复用，取消才启动插件自己的实例。
+  - settings / 模型目录 / 命令列表适配 rc.1 新返回结构；离线设置功能保持可用；`minDshVersion` 默认提升到 `0.1.2-rc.1`；README 中英文明确声明插件 1.1.0 要求 dsh >= 0.1.2-rc.1（运行环境节同步从 0.1.0-rc.6 更新，低于该版本的旧 dsh 不再兼容）。
+  - 改动 src/wire.js、src/server.js、src/dsh-service.js、src/session-service.js、src/chat-view.js、src/extension.js、tests/session-service.test.js；已对真实 rc.1 实例完成 token 换 cookie、RPC、`$events`/`workspace.follow`/`session.control`/`session.follow` 冒烟验证。
+
+### Fixed
+
+- 修复 `session/page` 使用 `throughSeq = Number.MAX_SAFE_INTEGER` 被 rc.1 拒绝（"through seq … is past cursor"）的问题：初始历史改为由 `session/follow` 首帧 snapshot 种子化并记录 cursor，`session/page` 仅在“加载更早”时使用 `throughSeq = cursor`，不再超出会话当前水位。
+- 修复关闭“自动启动 dsh web”后，在已是 dsh 工作区的目录打开插件仍弹“是否将当前工作目录添加到 dsh 工作区？/ 取消后看不到工作区会话”的问题：根因是 `workspace/follow` 常开流只在流打开时下发一次 baseline，而初始化流程 `sessions.reset()` 清空缓存后既不等待也不触发新的 baseline，`ensureWorkspace` 在缓存为空时把已存在的工作区误判为“未加入”而弹确认框（取消则 `workspaceView` 为空，会话列表随之为空）。修复：`SessionService.reset()` 现在同时重新武装 `whenWorkspaceReady()`（5s 兜底计时器 unref，不阻塞进程退出）；`ChatViewProvider` 新增 `reopenWorkspaceFollow()`（关闭并重开 `workspace/follow`，服务器即重发 baseline——已用真实 rc.1 实例验证“首开 1 条 baseline、重开后 2 条”），`doEnsureWorkspaceAndSession` 在 `reset()` 后调用它，`ensureWorkspace` 在 `findWorkspace` 前先 `await whenWorkspaceReady()`。另：dsh 未连接（如关闭自动启动且无手动实例）时聊天区不再显示误导性的“将当前文件夹添加到 dsh 工作区”按钮，改为“dsh 尚未连接：点击顶部状态点重新检测/启动 dsh”（中英文新增 `emptyNoDsh`）。改动 src/session-service.js、src/chat-view.js、src/webview/script/01-i18n.js、src/webview/script/03-render.js、src/webview/script/07-message.js、tests/session-service.test.js（+1，测试 40/40）。
+- 修复 dsh Web UI 打开入口在 rc.1 下落到 `dsh web authentication required` 401 页的问题：顶栏 `⋯` 菜单“打开 dsh Web”、设置-关于“dsh 服务地址”超链接与 `dsh: Open Web UI in Browser` 命令全部改用带当前进程 launch token 的完整 URL（`http://…/?token=…`，浏览器一次 GET 即换 cookie 进入 UI；实例无 token 时退回纯 baseUrl）。打开前先 `ensureAuthToken()` 验证：launch token 每进程唯一，外部手动实例被重启后 token 会更换——此时点击打开会重新弹框询问新 token URL，不会再次落进 401 页（插件自启实例的 token 始终为当前进程的，验证一次 HTTP GET 即通过）。改动 src/dsh-service.js（新增 `webUrl` getter 与 `ensureAuthToken()`）、src/extension.js、src/chat-view.js、src/webview/script/05-settings.js、tests/dsh-service.test.js（+8，测试 39/39）。
+- 修复 VS Code 1.136 远程窗口下活动栏与编辑器标题按钮插件图标仍渲染为空白灰块的问题（文件图标 SVG/PNG 均无法加载；1.0.10 已从 SVG 切到 PNG 仍复现）：视图容器与 `dsh-vsc.openChatFromTitle` 命令图标改用 VS Code 内置 codicon `$(comment-discussion)`（字体图标，不依赖扩展资源文件加载；本版本内置 references-view 容器即用 `icon: "$(references)"` 证实 activitybar 支持 codicon，微软 Python 扩展命令图标 `"$(play)"` 证实 commands.icon 支持 codicon）。包级 marketplace 图标保持 `assets/icon.png`（市场要求 PNG）。改动 package.json、README.md。
+
 ## [1.0.10]
 
 ### Changed

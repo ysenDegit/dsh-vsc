@@ -102,7 +102,13 @@
           // 同时清掉残留的空提示/旧消息节点，只保留按钮。
           if (!state.hasMoreEarlier) {
             if (!state.workspace) {
-              // 未添加工作区：提示 + “将当前文件夹添加到 dsh 工作区”按钮。
+              if (state.status !== 'ready') {
+                // dsh 未连接（例如关闭自动启动且没有手动运行实例）：
+                // 提示点击状态点重试，而不是误导性地提供“添加到工作区”。
+                chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyNoDsh')) + '</div>';
+                return;
+              }
+              // 未添加工作区（已连接）：提示 + “将当前文件夹添加到 dsh 工作区”按钮。
               chatEl.innerHTML = '<div class="empty">' + escapeHtml(t('emptyNoWorkspace')) + '</div>'
                 + '<div class="empty-actions"><button id="addWorkspaceBtn" class="primary">' + escapeHtml(t('addWorkspaceBtn')) + '</button></div>';
               var addWorkspaceBtn = document.getElementById('addWorkspaceBtn');

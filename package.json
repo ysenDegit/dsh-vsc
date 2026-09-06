@@ -2,7 +2,7 @@
   "name": "dsh-vsc-weblike",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "1.0.10",
+  "version": "1.1.0",
   "publisher": "ysen",
   "license": "MIT",
   "engines": {
@@ -38,7 +38,7 @@
         {
           "id": "dsh-vsc",
           "title": "DeepSeek Harness",
-          "icon": "assets/icon.png"
+          "icon": "$(comment-discussion)"
         }
       ]
     },
@@ -73,7 +73,7 @@
         "command": "dsh-vsc.openChatFromTitle",
         "title": "dsh: Open Chat Panel",
         "shortTitle": "dsh",
-        "icon": "assets/icon.png"
+        "icon": "$(comment-discussion)"
       }
     ],
     "configuration": {
@@ -89,7 +89,7 @@
         },
         "dsh-vsc.minDshVersion": {
           "type": "string",
-          "default": "0.1.0-rc.6",
+          "default": "0.1.2-rc.1",
           "description": "Minimum accepted dsh version (semver, prerelease-aware)."
         },
         "dsh-vsc.autoStart": {

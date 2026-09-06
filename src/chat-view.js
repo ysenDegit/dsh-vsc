@@ -56,6 +56,16 @@ class ChatViewProvider {
     // 会话列表刷新的并发合并/防抖：host 状态帧高频到达时避免重复 RPC。
     this.refreshSessionsWork = null
     this.refreshSessionsTimer = null
+    // rc.1 Remote 流：$events 的 clientId + 三个长流句柄 + 每会话 follow 句柄。
+    this.remoteClientId = null
+    this.eventStreamHandle = null
+    this.controlStreamHandle = null
+    this.workspaceStreamHandle = null
+    this.followStreamHandles = new Map()
+    // sessionId -> { promise, resolve }：session/follow 首个 snapshot 落地信号。
+    this.followSnapshotsBySession = new Map()
+    // sessionId -> 当前会话 cursor（session/page 的 throughSeq 不能超过它）。
+    this.cursorBySession = new Map()
   }
 
   static get viewType() { return viewType }
@@ -322,6 +332,9 @@ class ChatViewProvider {
     }
     if (!this.dsh.client) return null
 
+    // 等待 workspace/follow baseline 至少到达一次（最多 5s）：目录已在
+    // dsh 工作区时不应在 baseline 到达前误判"未加入"而弹确认框。
+    await this.sessions.whenWorkspaceReady()
     const existing = await this.sessions.findWorkspace(folder.uri.fsPath)
     if (existing) {
       this.workspaceView = existing
@@ -383,7 +396,11 @@ class ChatViewProvider {
 
   async doEnsureWorkspaceAndSession() {
     try {
+      this.ensureStreams()
       this.sessions.reset()
+      // 重置清空了工作区缓存，且常开流不会自动重发 baseline：
+      // 重开 workspace/follow 强制服务器重发，ensureWorkspace 会等它到达。
+      this.reopenWorkspaceFollow()
       await this.ensureWorkspace()
       await this.refreshPresets()
       await this.refreshSessions()
@@ -413,6 +430,8 @@ class ChatViewProvider {
     const existing = existingSessions[0]
     if (existing) {
       this.selectedSessionId = existing.sessionId
+      this.ensureStreams()
+      this.openSessionFollow(existing.sessionId)
       await this.refreshSessions()
       await this.loadHistory(existing.sessionId)
       await this.refreshModels(existing.sessionId)
@@ -424,6 +443,8 @@ class ChatViewProvider {
     }
     const { sessionId } = await this.sessions.resolveNewSession()
     this.selectedSessionId = sessionId
+    this.ensureStreams()
+    this.openSessionFollow(sessionId)
     await this.refreshSessions()
     await this.loadHistory(sessionId)
     await this.refreshModels(sessionId)
@@ -440,6 +461,8 @@ class ChatViewProvider {
     const { sessionId } = await this.sessions.resolveNewSession()
     this.clearConversationPost()
     this.selectedSessionId = sessionId
+    this.ensureStreams()
+    this.openSessionFollow(sessionId)
     await this.refreshSessions()
     await this.loadHistory(sessionId)
     await this.refreshModels(sessionId)
@@ -459,6 +482,8 @@ class ChatViewProvider {
     if (!sessionId) return
     this.clearConversationPost()
     this.selectedSessionId = sessionId
+    this.ensureStreams()
+    this.openSessionFollow(sessionId)
     await this.refreshSessions()
     // 历史/模型/命令目录互不依赖，并行加载以降低切换感知延迟。
     await Promise.all([
@@ -480,6 +505,8 @@ class ChatViewProvider {
       const created = await this.sessions.resolveNewSession()
       sessionId = created.sessionId
       this.selectedSessionId = sessionId
+      this.ensureStreams()
+      this.openSessionFollow(sessionId)
       await this.refreshSessions()
       await this.loadHistory(sessionId)
       await this.refreshModels(sessionId)
@@ -553,7 +580,14 @@ class ChatViewProvider {
   async refreshModels(sessionId) {
     if (!sessionId || !this.dsh.client) return
     try {
-      const models = await this.sessions.models(sessionId)
+      const catalog = await this.sessions.models(sessionId)
+      // rc.1 session/modelCatalog：{default, routableProviders, groups, failures}
+      const models = {
+        current: catalog?.default || null,
+        routable: catalog?.routableProviders || [],
+        groups: catalog?.groups || [],
+        failures: catalog?.failures || [],
+      }
       this.post({ type: 'models', sessionId, models })
     } catch (error) {
       this.onLog(`加载模型目录失败: ${String(error)}`)
@@ -692,14 +726,14 @@ class ChatViewProvider {
       return
     }
     const client = this.sessions.requireClient()
-    const settingsResult = await client.call('settings.describe', {})
+    const settingsResult = await client.callArgs('settings/describe', {})
     // 工作区列表供"管理工作区"页使用；获取失败不阻断设置面板打开。
     // 会话数按"工作中+已归档"统计：工作中 = 账本中未归档、非空白占位、非子代理的会话
     // （与下拉列表可见会话一致）；已归档 = 账本中位于全局归档集合里的会话。
     let workspaces = []
     const archivedSet = new Set()
     try {
-      const list = await client.call('workspace.list', {})
+      const list = await this.sessions.listWorkspaces()
       this.sessions.setArchived(list.archivedSessionIds || [])
       for (const id of list.archivedSessionIds || []) archivedSet.add(id)
       let sessionMeta = new Map()
@@ -722,7 +756,7 @@ class ChatViewProvider {
         return { ...ws, activeCount, archivedCount }
       })
     } catch (error) {
-      this.onLog(`workspace.list 获取失败: ${error instanceof Error ? error.message : String(error)}`)
+      this.onLog(`workspace 列表获取失败: ${error instanceof Error ? error.message : String(error)}`)
     }
     this.post({
       type: 'settingsData',
@@ -741,6 +775,8 @@ class ChatViewProvider {
         autoStart: this.autoStart,
         autoOpenChat: this.autoOpenChat,
         baseUrl: this.dsh.baseUrl || null,
+        // 设置页超链接 href 直接用带 token 的地址，点击/复制都不会落进 401 页。
+        webUrl: this.dsh.webUrl || null,
         workspaces,
         currentWorkspaceId: this.workspaceView?.workspaceId ?? null,
         currentFolderPath: folder ? folder.uri.fsPath : null,
@@ -782,6 +818,8 @@ class ChatViewProvider {
       this.workspaceView = null
       this.sessions.reset()
       this.selectedSessionId = null
+      for (const handle of this.followStreamHandles.values()) handle?.close?.()
+      this.followStreamHandles.clear()
       this.workspacePromptedPath = null
       this.workspacePromptAccepted = false
       this.post({ type: 'workspace', workspace: null })
@@ -791,11 +829,14 @@ class ChatViewProvider {
     await this.refreshSettings()
   }
 
-  // 关于页的 dsh 服务地址链接：在浏览器中打开 dsh Web UI。
+  // 关于页的 dsh 服务地址链接 / 顶栏 ⋯ 菜单：在浏览器中打开 dsh Web UI。
   async openDshWeb() {
-    const url = this.dsh.baseUrl
-    if (!url) {
-      void vscode.window.showErrorMessage('dsh web 尚未就绪')
+    // 打开前验证 token 仍有效（实例被外部重启时弹框询问新 token）；
+    // 带 launch token 的完整 URL：浏览器一次 GET 即换 cookie 并进入 UI，避免 401 页。
+    const authed = await this.dsh.ensureAuthToken()
+    const url = this.dsh.webUrl
+    if (!authed || !url) {
+      void vscode.window.showErrorMessage('无法打开 dsh Web UI：认证信息不可用。')
       return
     }
     await vscode.env.openExternal(vscode.Uri.parse(url))
@@ -808,7 +849,7 @@ class ChatViewProvider {
       // 先让 dsh 侧物化 settings.yaml（缺失时创建）；即使远端没有桌面可打开，
       // 插件也会在 VS Code 中打开该文件，保证用户有可见反馈。
       try {
-        await client.call('settings.openDocument', {})
+        await client.callArgs('settings/openSettingsDocument', {})
       } catch (error) {
         this.onLog(`dsh settings.openDocument 调用失败: ${error instanceof Error ? error.message : String(error)}`)
       }
@@ -1002,6 +1043,7 @@ class ChatViewProvider {
     this.projectionsBySession.delete(sessionId)
     this.hasMoreBySession.delete(sessionId)
     this.sessionRunning.delete(sessionId)
+    this.closeSessionFollow(sessionId)
     if (this.selectedSessionId === sessionId) this.selectedSessionId = null
     await this.refreshSessions()
     if (!this.selectedSessionId) await this.autoAttachSession()
@@ -1052,6 +1094,8 @@ class ChatViewProvider {
 
     this.clearConversationPost()
     this.selectedSessionId = childId
+    this.ensureStreams()
+    this.openSessionFollow(childId)
     await this.refreshSessions()
     await this.loadHistory(childId)
     await this.refreshModels(childId)
@@ -1300,59 +1344,51 @@ class ChatViewProvider {
     this.post({ type: 'question', sessionId, pending: this.questionSnapshot(sessionId) })
   }
 
-  ingestQuestionRequested(sessionId, rpcId, questions) {
-    if (!sessionId || !rpcId) return
+  ingestQuestionRequested(sessionId, eventId, request) {
+    if (!sessionId || !eventId) return
     const list = this.pendingQuestionsBySession.get(sessionId) || []
-    const exists = list.some((item) => item.rpcId === rpcId)
+    const exists = list.some((item) => item.eventId === eventId)
     if (!exists) {
-      list.push({ rpcId, questions: questions || [] })
+      list.push({ eventId, questions: (request && request.questions) || [] })
       this.pendingQuestionsBySession.set(sessionId, list)
     }
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
   }
 
-  ingestQuestionResolved(sessionId, questionRpcId) {
+  ingestQuestionResolved(sessionId, eventId) {
     if (!sessionId) return
     const list = this.pendingQuestionsBySession.get(sessionId)
     if (!list) return
-    const next = list.filter((item) => item.rpcId !== questionRpcId)
+    const next = list.filter((item) => item.eventId !== eventId)
     this.pendingQuestionsBySession.set(sessionId, next)
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
   }
 
-  async answerQuestion(sessionId, rpcId, answers) {
-    if (!sessionId || !rpcId || !Array.isArray(answers)) return
+  async answerQuestion(sessionId, eventId, answers) {
+    if (!sessionId || !eventId || !Array.isArray(answers)) return
+    if (!this.remoteClientId) throw new Error('事件流尚未就绪，无法应答问题')
     const client = this.sessions.requireClient()
-    const receipt = await client.respond({
-      type: 'client-response',
-      rpcId,
-      result: {
-        ok: true,
-        value: {
-          sessionId,
-          answer: { answers },
-        },
-      },
+    await client.callArgs('$events/result', {
+      clientId: this.remoteClientId,
+      eventId,
+      outcome: { kind: 'result', value: { sessionId, answer: { answers } } },
     })
-    if (!receipt.accepted) {
-      this.onLog(`问题应答未受理: ${receipt.reason || 'unknown'}`)
-    }
+    this.ingestQuestionResolved(sessionId, eventId)
   }
 
-  async cancelQuestion(sessionId, rpcId) {
-    if (!sessionId || !rpcId) return
+  async cancelQuestion(sessionId, eventId) {
+    if (!sessionId || !eventId) return
+    if (!this.remoteClientId) throw new Error('事件流尚未就绪，无法取消问题')
     const client = this.sessions.requireClient()
-    const receipt = await client.respond({
-      type: 'client-response',
-      rpcId,
-      result: {
-        ok: false,
-        error: { code: 'cancelled', message: 'user cancelled the question', details: {} },
+    await client.callArgs('$events/result', {
+      clientId: this.remoteClientId,
+      eventId,
+      outcome: {
+        kind: 'rejected',
+        error: { name: 'Error', message: 'user cancelled the question', code: 'cancelled', details: {} },
       },
     })
-    if (!receipt.accepted) {
-      this.onLog(`取消问题未受理: ${receipt.reason || 'unknown'}`)
-    }
+    this.ingestQuestionResolved(sessionId, eventId)
   }
 
   approvalSnapshot(sessionId) {
@@ -1365,47 +1401,43 @@ class ChatViewProvider {
     this.post({ type: 'approval', sessionId, pending: this.approvalSnapshot(sessionId) })
   }
 
-  ingestApprovalRequested(sessionId, rpcId, payload) {
-    if (!sessionId || !rpcId) return
+  ingestApprovalRequested(sessionId, eventId, request) {
+    if (!sessionId || !eventId) return
     const list = this.pendingApprovalsBySession.get(sessionId) || []
-    const exists = list.some((item) => item.rpcId === rpcId)
+    const exists = list.some((item) => item.eventId === eventId)
     if (!exists) {
       list.push({
-        rpcId,
-        approvalId: payload.approvalId,
-        toolName: payload.toolName,
-        callId: payload.callId,
-        reason: payload.reason,
+        eventId,
+        approvalId: request?.approvalId || request?.callId,
+        toolName: request?.toolName,
+        callId: request?.callId,
+        reason: request?.reason,
       })
       this.pendingApprovalsBySession.set(sessionId, list)
     }
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
   }
 
-  ingestApprovalResolved(sessionId, approvalId) {
+  ingestApprovalResolved(sessionId, eventId) {
     if (!sessionId) return
     const list = this.pendingApprovalsBySession.get(sessionId)
     if (!list) return
-    const next = list.filter((item) => item.approvalId !== approvalId)
+    const next = list.filter((item) => item.eventId !== eventId)
     this.pendingApprovalsBySession.set(sessionId, next)
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
   }
 
-  async answerApproval(sessionId, rpcId, approvalId, outcome) {
-    if (!sessionId || !rpcId || !approvalId) return
+  async answerApproval(sessionId, eventId, approvalId, outcome) {
+    if (!sessionId || !eventId || !approvalId) return
     if (outcome !== 'allowed-once' && outcome !== 'rejected') return
+    if (!this.remoteClientId) throw new Error('事件流尚未就绪，无法应答审批')
     const client = this.sessions.requireClient()
-    const receipt = await client.respond({
-      type: 'client-response',
-      rpcId,
-      result: {
-        ok: true,
-        value: { sessionId, approvalId, outcome },
-      },
+    await client.callArgs('$events/result', {
+      clientId: this.remoteClientId,
+      eventId,
+      outcome: { kind: 'result', value: { sessionId, approvalId, outcome } },
     })
-    if (!receipt.accepted) {
-      this.onLog(`审批应答未受理: ${receipt.reason || 'unknown'}`)
-    }
+    this.ingestApprovalResolved(sessionId, eventId)
   }
 
   async editQueuedItem(sessionId, itemId) {
@@ -1484,16 +1516,28 @@ class ChatViewProvider {
   }
 
   async loadHistory(sessionId) {
-    const history = await this.sessions.history(sessionId)
-    const entry = this.getEventsEntry(sessionId, true)
-    for (const item of history.events) {
-      const event = item.event
-      if (entry.seen.has(event.seq)) continue
-      entry.seen.add(event.seq)
-      entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
+    if (!sessionId || !this.dsh.client) return
+    // rc.1：初始历史由 session/follow 首帧 snapshot 种子化；这里等它落地（8s 兜底）。
+    const slot = this.followSnapshotsBySession.get(sessionId)
+    if (slot) {
+      await Promise.race([slot.promise, new Promise((resolve) => setTimeout(resolve, 8000))])
     }
-    entry.events.sort((a, b) => a.seq - b.seq)
-    this.hasMoreBySession.set(sessionId, history.hasMore)
+    const entry = this.getEventsEntry(sessionId, true)
+    if (entry.events.length === 0) {
+      // snapshot 未到位（如流失败）时，用已知 cursor 补一页；无 cursor 则跳过。
+      const throughSeq = this.cursorBySession.get(sessionId)
+      if (throughSeq !== undefined) {
+        const history = await this.sessions.history(sessionId, undefined, throughSeq)
+        for (const item of history.events) {
+          const event = item.event
+          if (entry.seen.has(event.seq)) continue
+          entry.seen.add(event.seq)
+          entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
+        }
+        entry.events.sort((a, b) => a.seq - b.seq)
+        this.hasMoreBySession.set(sessionId, history.hasMore)
+      }
+    }
     this.postConversation(sessionId)
   }
 
@@ -1502,7 +1546,10 @@ class ChatViewProvider {
     if (!(this.hasMoreBySession.get(sessionId) ?? false)) return
     const entry = this.getEventsEntry(sessionId, true)
     const oldestSeq = entry.events.length > 0 ? entry.events[0].seq : undefined
-    const history = await this.sessions.history(sessionId, oldestSeq)
+    if (oldestSeq === undefined) return
+    const throughSeq = this.cursorBySession.get(sessionId)
+    if (throughSeq === undefined) return
+    const history = await this.sessions.history(sessionId, oldestSeq, throughSeq)
     for (const item of history.events) {
       const event = item.event
       if (entry.seen.has(event.seq)) continue
@@ -1594,59 +1641,211 @@ class ChatViewProvider {
     this.loadHistory(sessionId).catch((error) => this.onLog(`会话重同步失败: ${String(error)}`))
   }
 
-  // ---- dsh frame handling ----
+  // ---- rc.1 Remote streams ----
 
-  applyMuxFrame(frame) {
-    const payload = frame.payload
-    if (frame.method === 'session/event') {
-      this.ingestEvent(payload.sessionId, payload.event, payload.view)
-    } else if (frame.method === 'session/queue') {
-      this.ingestQueue(payload.sessionId, payload.items)
-    } else if (frame.method === 'question/requested') {
-      this.ingestQuestionRequested(payload.sessionId, frame.rpcId, payload.questions)
-    } else if (frame.method === 'question/resolved') {
-      this.ingestQuestionResolved(payload.sessionId, payload.questionRpcId)
-    } else if (frame.method === 'approval/requested') {
-      this.ingestApprovalRequested(payload.sessionId, frame.rpcId, payload)
-    } else if (frame.method === 'approval/resolved') {
-      this.ingestApprovalResolved(payload.sessionId, payload.approvalId)
-    } else if (frame.method === 'session/projection') {
-      this.updateProjection(payload.sessionId, payload.key, payload.value, payload.seq)
-      if (payload.sessionId === this.selectedSessionId) this.postStats(payload.sessionId)
-    } else if (frame.method === 'stream/error') {
-      this.onLog(`[events.mux] stream/error: ${payload.error?.message ?? ''}`)
-    }
+  ensureStreams() {
+    if (this.eventStreamHandle || !this.dsh.client) return
+    // $events：全局 emit + waterfall（提问/审批）
+    this.eventStreamHandle = this.dsh.openStream('$events', { args: {} }, {
+      onItem: (value) => this.applyRemoteEventFrame(value),
+      onError: (error) => this.onLog(`[events] ${error?.message ?? JSON.stringify(error)}`),
+    })
+    // session/control：队列/投影/jobs
+    this.controlStreamHandle = this.dsh.openStream('session/control', { args: {} }, {
+      onItem: (value) => this.applyControlFrame(value),
+      onError: (error) => this.onLog(`[control] ${error?.message ?? JSON.stringify(error)}`),
+    })
+    // workspace/follow：工作区列表/归档集合
+    this.openWorkspaceFollow()
   }
 
-  applyHostFrame(frame) {
-    const payload = frame.payload
-    switch (frame.method) {
-      case 'host/session-status':
-        this.sessionRunning.set(payload.sessionId, payload.running)
+  openWorkspaceFollow() {
+    if (!this.dsh.client) return
+    this.workspaceStreamHandle = this.dsh.openStream('workspace/follow', { args: {} }, {
+      onItem: (value) => this.applyWorkspaceFrame(value),
+      onError: (error) => this.onLog(`[workspace] ${error?.message ?? JSON.stringify(error)}`),
+    })
+  }
+
+  /**
+   * workspace/follow 常开流只在打开时下发一次 baseline；
+   * sessions.reset() 清空缓存后必须重开该流，服务器才会重发 baseline。
+   */
+  reopenWorkspaceFollow() {
+    this.workspaceStreamHandle?.close?.()
+    this.workspaceStreamHandle = null
+    this.openWorkspaceFollow()
+  }
+
+  stopStreams() {
+    this.eventStreamHandle?.close?.()
+    this.controlStreamHandle?.close?.()
+    this.workspaceStreamHandle?.close?.()
+    this.eventStreamHandle = null
+    this.controlStreamHandle = null
+    this.workspaceStreamHandle = null
+    for (const handle of this.followStreamHandles.values()) handle?.close?.()
+    this.followStreamHandles.clear()
+  }
+
+  openSessionFollow(sessionId) {
+    if (!sessionId || !this.dsh.client) return
+    if (this.followStreamHandles.has(sessionId)) return
+    let resolveSnapshot
+    const snapshotPromise = new Promise((resolve) => { resolveSnapshot = resolve })
+    this.followSnapshotsBySession.set(sessionId, { promise: snapshotPromise, resolve: resolveSnapshot })
+    const handle = this.dsh.openStream('session/follow', {
+      args: { request: { address: { kind: 'session', sessionId }, maxMessages: 200 } },
+    }, {
+      onItem: (value) => this.applyFollowFrame(sessionId, value),
+      onError: (error) => this.onLog(`[session/${sessionId}] ${error?.message ?? JSON.stringify(error)}`),
+    })
+    this.followStreamHandles.set(sessionId, handle)
+  }
+
+  closeSessionFollow(sessionId) {
+    const handle = this.followStreamHandles.get(sessionId)
+    if (handle) {
+      handle.close?.()
+      this.followStreamHandles.delete(sessionId)
+    }
+    this.followSnapshotsBySession.delete(sessionId)
+    this.cursorBySession.delete(sessionId)
+  }
+
+  applyRemoteEventFrame(frame) {
+    if (!frame || typeof frame !== 'object') return
+    if (frame.type === 'ready') {
+      this.remoteClientId = frame.clientId
+      return
+    }
+    if (frame.type === 'cancel') {
+      const eventId = frame.eventId
+      for (const [sessionId, list] of this.pendingQuestionsBySession) {
+        if (list.some((item) => item.eventId === eventId)) this.ingestQuestionResolved(sessionId, eventId)
+      }
+      for (const [sessionId, list] of this.pendingApprovalsBySession) {
+        if (list.some((item) => item.eventId === eventId)) this.ingestApprovalResolved(sessionId, eventId)
+      }
+      return
+    }
+    if (frame.type === 'waterfall') {
+      const sessionId = frame.agentId
+      if (frame.event === 'user-questions/request') {
+        this.ingestQuestionRequested(sessionId, frame.eventId, frame.request || {})
+      } else if (frame.event === 'approval/request') {
+        this.ingestApprovalRequested(sessionId, frame.eventId, frame.request || {})
+      }
+      return
+    }
+    if (frame.type !== 'emit') return
+    const args = Array.isArray(frame.args) ? frame.args : []
+    switch (frame.event) {
+      case 'api-session/status':
+        this.sessionRunning.set(args[0], Boolean(args[1]))
         this.scheduleRefreshSessions()
         break
-      case 'host/session-added':
-      case 'host/workspace-changed':
-      case 'host/archived-sessions-changed':
-        if (payload.archivedSessionIds) this.sessions.setArchived(payload.archivedSessionIds)
+      case 'api-session/added':
+      case 'api-session/removed':
+      case 'api-session/activity':
         this.scheduleRefreshSessions()
         break
-      case 'host/agent-error':
-        if (payload.sessionId === this.selectedSessionId) this.appendNote(payload.sessionId, `Agent 错误：${payload.message}`)
+      case 'api-session/error':
+        if (args[0] === this.selectedSessionId) this.appendNote(args[0], `Agent 错误：${args[1] ?? ''}`)
         break
-      case 'stream/error':
-        this.onLog(`[events.host] stream/error: ${payload.error?.message ?? ''}`)
+      case 'commands/change':
+        if (this.selectedSessionId) void this.refreshCommands(this.selectedSessionId)
+        break
+      case 'llm/adapters-updated':
+        if (this.selectedSessionId) void this.refreshModels(this.selectedSessionId)
+        break
+      case 'settings/document-updated':
+        void this.refreshSettings()
+        break
+      case 'agent-preset/selected':
+        this.scheduleRefreshSessions()
         break
       default:
         break
     }
   }
 
+  applyControlFrame(frame) {
+    if (!frame || typeof frame !== 'object') return
+    if (frame.type === 'baseline') {
+      const value = frame.value || {}
+      for (const [sessionId, items] of Object.entries(value.queues || {})) this.ingestQueue(sessionId, items)
+      for (const [sessionId, block] of Object.entries(value.projections || {})) {
+        this.seedProjectionsFromBlock(sessionId, block)
+      }
+      return
+    }
+    if (frame.type === 'queue') {
+      this.ingestQueue(frame.sessionId, frame.items)
+      return
+    }
+    if (frame.type === 'projection') {
+      this.updateProjection(frame.sessionId, frame.key, frame.value, frame.seq)
+      if (frame.sessionId === this.selectedSessionId) this.postStats(frame.sessionId)
+      return
+    }
+    // jobs：暂不单独处理（running 状态由 api-session/status 维护）
+  }
+
+  applyWorkspaceFrame(frame) {
+    this.sessions.applyWorkspaceFrame(frame)
+    // 增量帧到达时刷新会话列表；baseline 也刷一轮，保证首屏完整。
+    this.scheduleRefreshSessions()
+  }
+
+  applyFollowFrame(sessionId, frame) {
+    if (!frame || typeof frame !== 'object') return
+    if (frame.type === 'snapshot') {
+      const entry = this.getEventsEntry(sessionId, true)
+      entry.seen = new Set()
+      entry.events = []
+      for (const record of frame.records || []) {
+        for (const item of expandHistoryRecord(record)) {
+          const event = item.event
+          if (entry.seen.has(event.seq)) continue
+          entry.seen.add(event.seq)
+          entry.events.push({ seq: event.seq, time: event.time, type: event.type, data: event.data })
+        }
+      }
+      entry.events.sort((a, b) => a.seq - b.seq)
+      this.hasMoreBySession.set(sessionId, Boolean(frame.hasMore))
+      this.cursorBySession.set(sessionId, frame.cursor)
+      if (frame.projections) this.seedProjectionsFromBlock(sessionId, frame.projections)
+      const snapshotSlot = this.followSnapshotsBySession.get(sessionId)
+      if (snapshotSlot) {
+        this.followSnapshotsBySession.delete(sessionId)
+        snapshotSlot.resolve()
+      }
+      if (sessionId === this.selectedSessionId) this.postConversation(sessionId)
+      return
+    }
+    if (frame.type === 'event') {
+      const event = frame.event
+      if (event) this.ingestEvent(sessionId, event)
+    }
+  }
+
+  seedProjectionsFromBlock(sessionId, block) {
+    if (!block) return
+    for (const [key, value] of Object.entries(block.values || {})) {
+      this.seedProjection(sessionId, key, value, block.asOfSeq)
+    }
+  }
+
   onMuxClose() {
-    if (this.dsh.statusValue === 'ready') this.resyncSelected()
+    if (this.dsh.statusValue === 'ready') {
+      this.ensureStreams()
+      this.resyncSelected()
+    }
   }
 }
 
 const { foldEvents, extractText } = require('./conversation.js')
+const { expandHistoryRecord } = require('./session-service.js')
 
 module.exports = { ChatViewProvider, foldEvents }

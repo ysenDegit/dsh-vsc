@@ -2,9 +2,18 @@
 
 const { spawn } = require('node:child_process')
 
-const URL_LINE_RE = /dsh web: (http:\/\/127\.0\.0\.1:\d+)/u
+const URL_LINE_RE = /dsh web: (\S+)/u
 const BOOT_TIMEOUT_MS = 60_000
 const GRACE_MS = 5_000
+
+function parseReadyUrl(readyLine) {
+  const url = new URL(readyLine)
+  return {
+    baseUrl: url.origin,
+    token: url.searchParams.get('token') || null,
+    port: Number(url.port),
+  }
+}
 
 function launcherNeedsShell(command, platform = process.platform) {
   return platform === 'win32' && !/\.exe$/iu.test(command)
@@ -69,9 +78,8 @@ function startDshWeb(options) {
         if (match?.[1]) {
           settled = true
           clearTimeout(bootTimer)
-          const baseUrl = match[1]
-          const port = Number(new URL(baseUrl).port)
-          resolve(makeServer(child, baseUrl, port, stderrBuf))
+          const parsed = parseReadyUrl(match[1])
+          resolve(makeServer(child, parsed.baseUrl, parsed.token, parsed.port, stderrBuf))
         }
       }
     })
@@ -100,7 +108,7 @@ function startDshWeb(options) {
   })
 }
 
-function makeServer(child, baseUrl, port, stderrBuf) {
+function makeServer(child, baseUrl, token, port, stderrBuf) {
   let stopping = false
   let stoppedResolve
   const stopped = new Promise((resolve) => { stoppedResolve = resolve })
@@ -109,6 +117,7 @@ function makeServer(child, baseUrl, port, stderrBuf) {
 
   return {
     baseUrl,
+    token,
     port,
     child,
     stderrBuf,
@@ -132,4 +141,4 @@ function makeServer(child, baseUrl, port, stderrBuf) {
   }
 }
 
-module.exports = { startDshWeb, launcherNeedsShell, webArgs }
+module.exports = { startDshWeb, launcherNeedsShell, webArgs, parseReadyUrl }

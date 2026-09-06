@@ -2,21 +2,21 @@
 
 [中文](#中文) | [English](#english)
 
-> VS Code 1.136 的拓展注册可能存在bug，插件图标无法正常显示，但是可以正常点击使用。
+> VS Code 1.136 远程窗口下扩展文件图标（SVG/PNG）无法正常渲染：活动栏与编辑器标题按钮已改用 VS Code 内置 codicon（`$(comment-discussion)`），任何环境均可显示；入口均可正常点击使用。
 
-将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与双 WebSocket 事件流直接与 dsh 后端通信。
+将 DeepSeek Harness（dsh）的能力接入 VS Code，提供 Claude Code 风格的侧边栏与工作区面板界面。插件不内嵌 dsh Web 前端，而是通过 HTTP RPC 与单 WebSocket Remote mux（`/api/remote.mux`）直接与 dsh 后端通信。
 
 > 由于本人测试环境有限，陆陆续续发现了很多 BUG；如遇恶性 BUG，请邮件 ysen96@qq.com，我将尽快修复。
 
-> 鉴于最新 DeepSeek Harness alpha 版本的快速破坏性更新，本插件暂时不对其进行适配，插件支持 dsh 版本仍为 0.1.1-rc.2。
+> 插件 **1.1.0** 需要 dsh 升级到 **0.1.2-rc.1**（Typert Remote 协议，含首次启动 token 认证）；低于 0.1.2-rc.1 的旧版 dsh 不再兼容。dsh alpha 通道的快速破坏性版本暂不对其适配。
 
-Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and workspace panel. The extension does not embed the dsh web frontend; instead it talks directly to the dsh backend over HTTP RPC and dual WebSocket event streams.
+Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and workspace panel. The extension does not embed the dsh web frontend; instead it talks directly to the dsh backend over HTTP RPC and a single WebSocket Remote mux (`/api/remote.mux`).
 
 > Due to a limited testing environment, bugs have surfaced over time. If you encounter a critical bug, please email ysen96@qq.com and I will fix it as soon as possible.
 
-> Due to the rapid breaking changes in the latest DeepSeek Harness alpha releases, this extension does not adapt to them for now; the supported dsh version remains 0.1.1-rc.2.
+> Extension **1.1.0 requires dsh >= 0.1.2-rc.1** (Typert Remote protocol including launch-token authentication); older dsh releases below 0.1.2-rc.1 are no longer supported. Rapid breaking changes on the dsh alpha channel are not adapted for now.
 
-> VS Code 1.136 may have an extension registration bug: the extension icon does not render, but the entry is still clickable.
+> In VS Code 1.136 remote windows, extension file icons (SVG/PNG) fail to render: the activity bar and editor title button now use a built-in codicon (`$(comment-discussion)`), which renders in any environment; all entries remain clickable.
 
 ![插件截图](assets/Screenshot.png)
 
@@ -34,6 +34,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
   - 显式 `dsh-vsc.dshUrl`
   - 默认地址 `http://127.0.0.1:3080`（用户手动启动的实例优先）
   - 状态文件 `~/.dsh/vscode-extension.json`（上次插件实例仍存活时的兜底）
+- 若默认端口已有 dsh 服务但需要 token 认证（rc.1 起每次启动 token 不同），插件会弹输入框请你粘贴 dsh 启动输出的完整 URL（含 `?token=...`）；粘贴后直接复用该实例；取消则启动插件自己的实例。
 - 若未运行，则自动启动 `dsh web --port 0 --no-open`。
 - VS Code 关闭时，自动退出由插件启动的 dsh 实例；复用已有实例时仅断开连接。
 - 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误；停止/错误状态可点击重新检测 dsh web 实例。
@@ -112,14 +113,15 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 界面语言：中文 / English。
 - 发送方式：Enter 发送 / Shift+Enter 发送。
 - 启动行为：启动 VS Code 时自动启动 dsh web（开/关）；启动时自动打开面板（开/关）。
+  - 关闭自动启动后插件只复用已手动运行的 dsh web，不再自行生成实例；若当前目录已在 dsh 工作区中，打开插件会直接显示其会话，不会重复弹出“添加到工作区”确认框（dsh 未连接时提示点击顶部状态点重试）。
 - 打开 settings.yaml（在 VS Code 内打开 `$DSH_HOME/settings.yaml`）。
 - 显示当前插件版本号。
-- dsh 服务地址：显示当前连接地址（超链接），点击在浏览器打开 dsh Web UI。
+- dsh 服务地址：显示当前连接地址（超链接），点击在浏览器打开 dsh Web UI；链接自动携带当前进程的认证 token（rc.1 起裸地址会返回 401 认证页）。
 - 管理工作区：查看当前/全部 dsh 工作区（会话数显示为"工作中+已归档"，如 3（工作中）+4（已归档），工作中数字加粗）；"显示已归档会话"开关；重命名/删除工作区（删除需二次确认）。
 - LLM 相关设置（API Key、Base URL 等）请移步 dsh Web UI 配置。
 
 #### 7. 入口与命令
-- 侧边栏鲸鱼图标入口。
+- 侧边栏活动栏鲸鱼图标入口（VS Code 1.136 远程窗口下改用内置聊天 codicon 显示）。
 - 工作区右上角 `dsh` 按钮入口：在当前编辑器列直接打开 dsh 面板（覆盖当前工作区）。
 - VS Code 启动自动打开：需同时满足以下三个条件，才自动打开工作区 dsh 面板：
   - dsh web 已在运行（未运行时不自动打开）。
@@ -143,7 +145,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 | 配置项 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
 | `dsh-vsc.dshPath` | string/null | null | 显式指定 dsh 可执行文件路径 |
-| `dsh-vsc.minDshVersion` | string | `0.1.0-rc.6` | 最低 dsh 版本要求 |
+| `dsh-vsc.minDshVersion` | string | `0.1.2-rc.1` | 最低 dsh 版本要求（当前适配 Typert Remote 协议） |
 | `dsh-vsc.autoStart` | boolean | true | 启动 VS Code 时自动检查/生成 dsh 实例；关闭时仅复用已运行的实例，不自动生成 |
 | `dsh-vsc.dshUrl` | string/null | null | 显式指定已运行的 dsh web 地址 |
 | `dsh-vsc.sessionDisplay` | string | concise | 会话显示模式：concise / detailed |
@@ -161,7 +163,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 - VS Code >= 1.90
 - Node >= 22（扩展宿主需提供全局 `WebSocket`；旧版宿主请确保可加载 `ws` 包）
-- 已安装 `@deepseek-ai/dsh` 且版本 >= 0.1.0-rc.6
+- 已安装 `@deepseek-ai/dsh` 且版本 **>= 0.1.2-rc.1**（插件 1.1.0 的最低要求）
 
 ### 四、开发与打包
 
@@ -204,6 +206,7 @@ vsce package
   - explicit `dsh-vsc.dshUrl`
   - default address `http://127.0.0.1:3080` (a manually started instance wins)
   - state file `~/.dsh/vscode-extension.json` (fallback for a still-alive instance started by the extension previously)
+- If a dsh service exists on the default port but requires token authentication (a new per-process token since rc.1), the extension asks you to paste the full startup URL including `?token=...`; it reuses that instance if you paste it, or starts its own instance when cancelled.
 - If not running, automatically starts `dsh web --port 0 --no-open`.
 - When VS Code closes, the extension automatically exits the dsh instance it started; when reusing an existing instance, it only disconnects.
 - Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error; click it in the stopped/error state to re-detect the dsh web instance.
@@ -289,7 +292,7 @@ vsce package
 - LLM-related settings (API Key, Base URL, etc.) are configured in the dsh Web UI.
 
 #### 1.7 Entry Points and Commands
-- Sidebar whale icon entry.
+- Sidebar activity bar whale icon entry (a built-in chat codicon is used in VS Code 1.136 remote windows).
 - `dsh` button at the top right of the workspace: opens the dsh panel in the current editor column (overlaying the current workspace).
 - Auto-open on VS Code startup: the workspace dsh panel opens automatically only when all of the following conditions hold:
   - A running dsh web instance is detected (no auto-open when it is not running).
@@ -313,7 +316,7 @@ vsce package
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `dsh-vsc.dshPath` | string/null | null | Explicitly specify the dsh executable path |
-| `dsh-vsc.minDshVersion` | string | `0.1.0-rc.6` | Minimum required dsh version |
+| `dsh-vsc.minDshVersion` | string | `0.1.2-rc.1` | Minimum required dsh version (currently targets the Typert Remote protocol) |
 | `dsh-vsc.autoStart` | boolean | true | Automatically check for/create a dsh instance when VS Code starts; when disabled, only reuses a running instance without spawning |
 | `dsh-vsc.dshUrl` | string/null | null | Explicitly specify the URL of an already running dsh web instance |
 | `dsh-vsc.sessionDisplay` | string | concise | Session display mode: concise / detailed |
@@ -331,7 +334,7 @@ vsce package
 
 - VS Code >= 1.90
 - Node >= 22 (the extension host must provide a global `WebSocket`; on older hosts make sure the `ws` package can be loaded)
-- `@deepseek-ai/dsh` installed, version >= 0.1.0-rc.6
+- `@deepseek-ai/dsh` installed, version **>= 0.1.2-rc.1** (minimum for extension 1.1.0)
 
 ### 4. Development and Packaging
 

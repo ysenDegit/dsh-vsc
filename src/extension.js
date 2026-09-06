@@ -39,6 +39,16 @@ function activate(context) {
       provider.post({ type: 'serviceStatus', status, detail })
     },
     onLog: (line) => log(line),
+    onAuthRequired: async (baseUrl) => {
+      log(`检测到 ${baseUrl} 上已有 dsh 服务但需要认证，等待用户提供带 token 的 URL`)
+      const answer = await vscode.window.showInputBox({
+        prompt: `检测到 dsh 服务 ${baseUrl} 需要认证。请粘贴启动 dsh 时输出的完整 URL（含 ?token=...）。`,
+        placeHolder: 'http://127.0.0.1:3080/?token=...',
+        ignoreFocusOut: true,
+      })
+      const supplied = (answer || '').trim()
+      return supplied || null
+    },
   })
 
   const sessions = new SessionService(() => dsh.client)
@@ -82,9 +92,12 @@ function activate(context) {
       provider.attachPanel(chatPanel)
     }),
     vscode.commands.registerCommand('dsh-vsc.openInBrowser', async () => {
-      const url = dsh.baseUrl
-      if (!url) {
-        void vscode.window.showErrorMessage('dsh web 尚未就绪')
+      // 打开前验证 token 仍有效（实例被外部重启时弹框询问新 token）；
+      // 带 launch token 的完整 URL：浏览器一次 GET 即换 cookie 并进入 UI，避免 401 页。
+      const authed = await dsh.ensureAuthToken()
+      const url = dsh.webUrl
+      if (!authed || !url) {
+        void vscode.window.showErrorMessage('无法打开 dsh Web UI：认证信息不可用。')
         return
       }
       await vscode.env.openExternal(vscode.Uri.parse(url))
@@ -97,9 +110,7 @@ function activate(context) {
     }),
   )
 
-  // dsh 事件 → webview
-  dsh.on('mux', (frame) => provider.applyMuxFrame(frame))
-  dsh.on('host', (frame) => provider.applyHostFrame(frame))
+  // rc.1：remote.mux 连接状态 → webview 重同步
   dsh.on('muxClose', () => provider.onMuxClose())
 
   // 自动打开候选：dsh web 已在运行（条件1）且上次未关闭面板（条件3）。
@@ -134,6 +145,8 @@ function activate(context) {
 
   dsh.on('status', (status) => {
     if (status === 'ready') {
+      // rc.1：先建立 $events / session.control / workspace.follow 长流。
+      provider.ensureStreams()
       // 先做自动打开前的“当前目录已在 dsh 工作区中”校验，再走正常的工作区/会话初始化。
       // （工作区确认框仅在用户打开插件界面后弹出，见 ChatViewProvider.ensureWorkspace）
       void maybeAutoOpen().then(() => provider.ensureWorkspaceAndSession())

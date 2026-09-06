@@ -5,6 +5,8 @@ const { EventEmitter } = require('node:events')
 
 // 普通 RPC 的默认超时：dsh 服务卡住时不无限挂起界面。
 const DEFAULT_RPC_TIMEOUT_MS = 60_000
+// 浏览器 launch-token 换 cookie 的默认超时。
+const DEFAULT_AUTH_TIMEOUT_MS = 10_000
 
 class DshRpcError extends Error {
   constructor(error) {
@@ -26,9 +28,49 @@ function loadWebSocketImpl() {
   }
 }
 
+/**
+ * 从 dsh 打印的带 token 的 URL 中提取干净 baseUrl 与 launch token。
+ */
+function extractTokenFromUrl(input) {
+  const url = new URL(input)
+  const token = url.searchParams.get('token') || null
+  return { baseUrl: url.origin, token }
+}
+
+/**
+ * 用 dsh web 打印的 launch token 换取浏览器认证 cookie。
+ * dsh 0.1.2-rc.1 起每个进程都生成新的 token；`GET /?token=...` 返回 303 +
+ * `set-cookie: dsh-auth-<hash>=v1...`，之后所有 `/api` 请求和 WS upgrade 都必须带该 cookie。
+ */
+async function exchangeLaunchToken(baseUrl, token, timeoutMs = DEFAULT_AUTH_TIMEOUT_MS) {
+  const url = new URL(baseUrl)
+  url.pathname = '/'
+  url.search = ''
+  url.searchParams.set('token', token)
+  const { signal, cancel } = withTimeout(timeoutMs)
+  try {
+    const response = await fetch(url.href, { redirect: 'manual', signal })
+    const setCookie = response.headers.get('set-cookie')
+    if (!setCookie) {
+      throw new Error('dsh web 未返回认证 cookie（token 可能已过期）')
+    }
+    return setCookie.split(';')[0].trim()
+  } finally {
+    cancel()
+  }
+}
+
 class WireClient {
-  constructor(baseUrl) {
+  constructor(baseUrl, cookie) {
     this.baseUrl = baseUrl.replace(/\/+$/u, '')
+    this.cookie = cookie || ''
+  }
+
+  headers() {
+    return {
+      'content-type': 'application/json',
+      ...(this.cookie ? { cookie: this.cookie } : {}),
+    }
   }
 
   async respond(message, signal, timeoutMs = DEFAULT_RPC_TIMEOUT_MS) {
@@ -41,7 +83,7 @@ class WireClient {
     try {
       response = await fetch(`${this.baseUrl}/api/respond`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: this.headers(),
         body: JSON.stringify(message),
         signal,
       })
@@ -75,7 +117,7 @@ class WireClient {
     try {
       response = await fetch(`${this.baseUrl}/api/${method}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: this.headers(),
         body: JSON.stringify(body),
         signal,
       })
@@ -103,18 +145,34 @@ class WireClient {
     if (message.result.ok) return message.result.value
     throw new DshRpcError(message.result.error)
   }
+
+  /**
+   * Typert Remote 一元调用：payload 统一为 `{ args: {...} }`。
+   */
+  callArgs(endpoint, args, signal, timeoutMs = DEFAULT_RPC_TIMEOUT_MS) {
+    return this.call(endpoint, { args: args || {} }, signal, timeoutMs)
+  }
 }
 
-class EventStream extends EventEmitter {
+/**
+ * Gateway 单 WebSocket mux：`/api/remote.mux` 上多路复用逻辑流。
+ * 客户端发 `{type:'open', streamId, endpoint, payload}`，
+ * 服务端回 `{type:'item'|'end'|'error', streamId, ...}`。
+ */
+class RemoteMuxClient extends EventEmitter {
   constructor(options) {
     super()
     this.url = options.url
+    this.cookie = options.cookie || ''
     this.reconnectMs = options.reconnectMs ?? 1000
     this.wsImpl = options.wsImpl ?? loadWebSocketImpl()
     this.socket = null
     this.closed = false
-    this.reconnectTimer = null
     this.stopping = false
+    this.reconnectTimer = null
+    // streamId -> { endpoint, payload, handlers }
+    this.streams = new Map()
+    this.writes = Promise.resolve()
   }
 
   start() {
@@ -131,10 +189,31 @@ class EventStream extends EventEmitter {
     this.socket = null
   }
 
+  open(endpoint, payload, handlers = {}) {
+    const streamId = randomUUID()
+    this.streams.set(streamId, { endpoint, payload, handlers })
+    if (this.socket && this.socket.readyState === 1) {
+      this.sendFrame({ type: 'open', streamId, endpoint, payload })
+    }
+    return {
+      streamId,
+      close: () => this.closeStream(streamId),
+    }
+  }
+
+  closeStream(streamId) {
+    this.streams.delete(streamId)
+    if (this.socket && this.socket.readyState === 1) {
+      this.sendFrame({ type: 'cancel', streamId })
+    }
+  }
+
   connect() {
     let socket
     try {
-      socket = new this.wsImpl(this.url)
+      socket = new this.wsImpl(this.url, {
+        headers: this.cookie ? { cookie: this.cookie } : undefined,
+      })
     } catch (error) {
       this.emit('error', new Error(`创建 WebSocket 失败: ${error.message}`))
       this.scheduleReconnect()
@@ -143,6 +222,9 @@ class EventStream extends EventEmitter {
     this.socket = socket
 
     socket.onopen = () => {
+      for (const [streamId, stream] of this.streams) {
+        this.sendFrame({ type: 'open', streamId, endpoint: stream.endpoint, payload: stream.payload })
+      }
       this.emit('open')
     }
     socket.onmessage = (event) => {
@@ -150,14 +232,10 @@ class EventStream extends EventEmitter {
       try {
         parsed = JSON.parse(String(event.data))
       } catch {
-        this.emit('error', new Error('事件帧不是 JSON'))
+        this.emit('error', new Error('Remote mux 帧不是 JSON'))
         return
       }
-      if (parsed.type !== 'server-request') {
-        this.emit('error', new Error(`事件帧 type 异常: ${String(parsed.type)}`))
-        return
-      }
-      this.emit('frame', parsed)
+      this.handleFrame(parsed)
     }
     socket.onclose = () => {
       this.socket = null
@@ -166,8 +244,37 @@ class EventStream extends EventEmitter {
       this.scheduleReconnect()
     }
     socket.onerror = () => {
-      if (!this.stopping) this.emit('error', new Error(`事件流连接错误: ${this.url}`))
+      if (!this.stopping) this.emit('error', new Error(`Remote mux 连接错误: ${this.url}`))
     }
+  }
+
+  handleFrame(frame) {
+    if (!frame || typeof frame !== 'object') return
+    const streamId = frame.streamId
+    const stream = this.streams.get(streamId)
+    if (!stream) return
+    if (frame.type === 'item') {
+      stream.handlers.onItem?.(frame.value)
+    } else if (frame.type === 'end') {
+      this.streams.delete(streamId)
+      stream.handlers.onEnd?.()
+    } else if (frame.type === 'error') {
+      this.streams.delete(streamId)
+      stream.handlers.onError?.(frame.error)
+    }
+  }
+
+  sendFrame(frame) {
+    const text = JSON.stringify(frame)
+    this.writes = this.writes.then(() => {
+      if (!this.socket || this.socket.readyState !== 1) {
+        throw new Error('Remote mux socket is not open')
+      }
+      // Node 全局 WebSocket(undici) 的 send 不接受回调；ws 包的回调方式也兼容：
+      // 这里只保证顺序，不等待底层完成回调。
+      this.socket.send(text)
+    }).catch(() => undefined)
+    return this.writes
   }
 
   scheduleReconnect() {
@@ -187,4 +294,14 @@ function withTimeout(ms) {
   return { signal: controller.signal, cancel: () => clearTimeout(timer) }
 }
 
-module.exports = { WireClient, EventStream, DshRpcError, withTimeout, loadWebSocketImpl, DEFAULT_RPC_TIMEOUT_MS }
+module.exports = {
+  WireClient,
+  RemoteMuxClient,
+  DshRpcError,
+  withTimeout,
+  loadWebSocketImpl,
+  exchangeLaunchToken,
+  extractTokenFromUrl,
+  DEFAULT_RPC_TIMEOUT_MS,
+  DEFAULT_AUTH_TIMEOUT_MS,
+}

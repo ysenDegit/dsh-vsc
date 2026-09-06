@@ -51,7 +51,8 @@
       dshServiceField.className = 'settings-field';
       if (data.baseUrl) {
         var dshLink = document.createElement('a');
-        dshLink.href = data.baseUrl;
+        // href 用带 token 的完整地址（背景色区别于纯文本）；点击仍走 openDshWeb 事件。
+        dshLink.href = data.webUrl || data.baseUrl;
         dshLink.textContent = data.baseUrl;
         dshLink.id = 'dshWebLink';
         dshLink.title = t('dshWebOpenTitle');

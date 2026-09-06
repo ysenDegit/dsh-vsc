@@ -63,10 +63,15 @@
         case 'serviceStatus':
           state.status = msg.status;
           renderStatus();
+          // 状态变更同步重绘聊天区空状态：非 ready（未连接）时提示点击状态点重试；
+          // ready 时不重绘，避免工作区判定完成前闪现“添加到工作区”。
+          if (msg.status !== 'ready') renderConversation();
           if (msg.status === 'ready') post({ type: 'ready' });
           break;
         case 'workspace':
           state.workspace = msg.workspace;
+          // 仅在工作区已确认时重绘（空状态按钮由随后的 sessions 消息驱动）。
+          if (msg.workspace) renderConversation();
           break;
         case 'sessions': {
           var previousSessionId = state.selectedSessionId;
