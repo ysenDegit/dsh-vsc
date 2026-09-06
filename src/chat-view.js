@@ -66,6 +66,9 @@ class ChatViewProvider {
     this.followSnapshotsBySession = new Map()
     // sessionId -> 当前会话 cursor（session/page 的 throughSeq 不能超过它）。
     this.cursorBySession = new Map()
+    // sessionId -> 工作模式 preset 选择（rc.1 的 session/list 不返回 agentPreset，
+    // 由 session/create 结果、agentPresets/select 与 $events agent-preset/selected 维护）。
+    this.agentPresetBySession = new Map()
   }
 
   static get viewType() { return viewType }
@@ -441,41 +444,52 @@ class ChatViewProvider {
       this.postApproval(existing.sessionId)
       return
     }
-    const { sessionId } = await this.sessions.resolveNewSession()
-    this.selectedSessionId = sessionId
+    const created = await this.sessions.resolveNewSession()
+    this.selectedSessionId = created.sessionId
+    if (created.agentPreset) this.agentPresetBySession.set(created.sessionId, created.agentPreset)
     this.ensureStreams()
-    this.openSessionFollow(sessionId)
+    this.openSessionFollow(created.sessionId)
     await this.refreshSessions()
-    await this.loadHistory(sessionId)
-    await this.refreshModels(sessionId)
-    await this.refreshCommands(sessionId)
-    this.postQueue(sessionId)
-    this.postQuestion(sessionId)
-    this.postApproval(sessionId)
+    await this.loadHistory(created.sessionId)
+    await this.refreshModels(created.sessionId)
+    await this.refreshCommands(created.sessionId)
+    this.postQueue(created.sessionId)
+    this.postQuestion(created.sessionId)
+    this.postApproval(created.sessionId)
   }
 
   async newSession() {
     if (!this.dsh.client) throw new Error('dsh web 尚未就绪')
     const workspace = await this.ensureWorkspace()
     if (!workspace) throw new Error('没有打开的工作区，无法创建会话')
-    const { sessionId } = await this.sessions.resolveNewSession()
+    const created = await this.sessions.resolveNewSession()
     this.clearConversationPost()
-    this.selectedSessionId = sessionId
+    this.selectedSessionId = created.sessionId
+    if (created.agentPreset) this.agentPresetBySession.set(created.sessionId, created.agentPreset)
     this.ensureStreams()
-    this.openSessionFollow(sessionId)
+    this.openSessionFollow(created.sessionId)
     await this.refreshSessions()
-    await this.loadHistory(sessionId)
-    await this.refreshModels(sessionId)
-    await this.refreshCommands(sessionId)
-    this.postQueue(sessionId)
-    this.postQuestion(sessionId)
-    this.postApproval(sessionId)
+    await this.loadHistory(created.sessionId)
+    await this.refreshModels(created.sessionId)
+    await this.refreshCommands(created.sessionId)
+    this.postQueue(created.sessionId)
+    this.postQuestion(created.sessionId)
+    this.postApproval(created.sessionId)
   }
 
   async selectAgentPreset(sessionId, agentPreset) {
     if (!sessionId || !agentPreset) return
-    await this.sessions.selectAgentPreset(sessionId, agentPreset)
-    await this.refreshSessions()
+    try {
+      await this.sessions.selectAgentPreset(sessionId, agentPreset)
+      // rc.1 的 session/list 不携带 agentPreset：这里记录选择，刷新会话时合并回去，
+      // 让欢迎页的模式卡片能立即显示选中态（否则点击后界面无任何反馈）。
+      this.agentPresetBySession.set(sessionId, agentPreset)
+      await this.refreshSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`切换工作模式失败: ${message}`)
+      this.post({ type: 'notice', text: `切换工作模式失败：${message}` })
+    }
   }
 
   async selectSession(sessionId) {
@@ -1225,6 +1239,9 @@ class ChatViewProvider {
       item.archived = this.sessions.isArchived(item.sessionId)
       const title = item.projections?.values?.title
       if (!item.title && typeof title === 'string' && title) item.title = title
+      // rc.1 的 session/list 不携带 agentPreset；用插件侧记录合并，欢迎页才能显示选中态。
+      const preset = this.agentPresetBySession.get(item.sessionId)
+      if (preset) item.agentPreset = preset
     }
     this.post({ type: 'sessions', sessions: list, selectedSessionId: this.selectedSessionId })
     this.postStats(this.selectedSessionId)
@@ -1763,6 +1780,8 @@ class ChatViewProvider {
         void this.refreshSettings()
         break
       case 'agent-preset/selected':
+        // emit 参数为 [sessionId, presetId]；记录后刷新会话，欢迎页同步选中态。
+        this.agentPresetBySession.set(args[0], args[1])
         this.scheduleRefreshSessions()
         break
       default:

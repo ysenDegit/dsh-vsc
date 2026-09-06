@@ -2,6 +2,14 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [1.1.1]
+
+（未发布：1.1.0 已于 2026-09-06 由用户发布，1.1.1 为后续更新预留。）
+
+### Fixed
+
+- 修复新会话"选择工作模式"点击后无反馈（选中态不更新）的问题：rc.1 的 `session/list` 不返回 `agentPreset`，而工作模式卡片的选中态此前只依赖该字段——`agentPresets/select` 实际成功但界面始终不显示选中。修复：宿主新增 `agentPresetBySession` 记录（来自 `session/create` 结果、`agentPresets/select` 成功回调与 `$events` 的 `agent-preset/selected` `[sessionId, presetId]` 帧），`doRefreshSessions` 把记录合并回会话条目；webview 卡片点击改为乐观选中并立即重绘（宿主确认后以 sessions 帧为准）；选择失败弹提示而非静默。改动 src/chat-view.js、src/webview/script/03-render.js、README.md。
+
 ## [1.1.0]
 
 ### Changed

@@ -824,6 +824,10 @@
           div.appendChild(desc);
           div.addEventListener('click', function () {
             if (!state.selectedSessionId || !preset.id) return;
+            // 乐观选中：立即重绘选中态，避免宿主往返期间“点了没反应”。
+            var selected = currentSession();
+            if (selected) selected.agentPreset = preset.id;
+            renderBlankSessionWelcome();
             post({ type: 'selectAgentPreset', sessionId: state.selectedSessionId, agentPreset: preset.id });
           });
           list.appendChild(div);
