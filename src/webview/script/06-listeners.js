@@ -81,6 +81,11 @@
       if (moreMenu.classList.contains('open')) closeMoreMenu();
       else openMoreMenu();
     });
+    // dsh 需要认证时的手动入口（⋯ 菜单）：粘贴带 token 的地址接入。
+    moreTokenBtn.addEventListener('click', function () {
+      closeMoreMenu();
+      post({ type: 'enterToken' });
+    });
     moreOpenWebBtn.addEventListener('click', function () {
       post({ type: 'openDshWeb' });
       closeMoreMenu();

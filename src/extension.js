@@ -19,7 +19,7 @@ function activate(context) {
   const log = (line) => output.appendLine(line)
 
   const config = vscode.workspace.getConfiguration('dsh-vsc')
-  const minimumVersion = config.get('minDshVersion', '0.1.5')
+  const minimumVersion = config.get('minDshVersion', '0.1.5-rc.1')
   const explicitPath = config.get('dshPath', null)
   const explicitUrl = config.get('dshUrl', null)
   const autoStart = config.get('autoStart', true)
@@ -43,10 +43,20 @@ function activate(context) {
       provider.post({ type: 'serviceStatus', status, detail })
     },
     onLog: (line) => log(line),
+    // 自动启动不再用版本检测拦截（见 discovery.js）；启动后核对发现低于要求时提醒升级。
+    onVersionOutdated: async ({ current, minimum }) => {
+      const upgrade = 'npm install -g @deepseek-ai/dsh@latest'
+      const action = translate(language, 'dialog.upgradeDshAction')
+      const picked = await vscode.window.showWarningMessage(
+        translate(language, 'dialog.dshOutdated', { current, minimum }),
+        action,
+      )
+      if (picked === action) await vscode.env.clipboard.writeText(upgrade)
+    },
     onAuthRequired: async (baseUrl) => {
       log(`检测到 ${baseUrl} 上已有 dsh 服务但需要认证，等待用户提供带 token 的 URL`)
       const answer = await vscode.window.showInputBox({
-        prompt: `检测到 dsh 服务 ${baseUrl} 需要认证。请粘贴启动 dsh 时输出的完整 URL（含 ?token=...）。`,
+        prompt: translate(language, 'dialog.tokenPrompt', { url: baseUrl }),
         placeHolder: 'http://127.0.0.1:3080/?token=...',
         ignoreFocusOut: true,
       })

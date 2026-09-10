@@ -1,4 +1,36 @@
+    /**
+     * 设置弹窗顶部的离线横幅：dsh 未连接时说明"哪些能用、哪些不能用"，并给一个重试入口。
+     * 前端本地设置（显示/通用/暂存框等）不依赖后端，离线时照常可用。
+     */
+    function renderSettingsOffline(data) {
+      var banner = $('settingsOffline');
+      if (!banner) return;
+      if (data.connected !== false) {
+        banner.hidden = true;
+        banner.innerHTML = '';
+        return;
+      }
+      banner.hidden = false;
+      banner.innerHTML = '';
+      var text = document.createElement('span');
+      text.className = 'settings-offline-text';
+      text.textContent = t('settingsOfflineBanner');
+      banner.appendChild(text);
+      var retry = document.createElement('button');
+      retry.textContent = t('settingsOfflineRetry');
+      retry.title = t('settingsOfflineRetryTitle');
+      retry.addEventListener('click', function () { post({ type: 'retryConnect' }); });
+      banner.appendChild(retry);
+      // dsh 需要认证时的手动入口：粘贴带 token 的地址接入。
+      var tokenBtn = document.createElement('button');
+      tokenBtn.textContent = t('enterTokenBanner');
+      tokenBtn.title = t('enterTokenBannerTitle');
+      tokenBtn.addEventListener('click', function () { post({ type: 'enterToken' }); });
+      banner.appendChild(tokenBtn);
+    }
+
     function renderSettingsData(data) {
+      renderSettingsOffline(data);
       settingsContent.innerHTML = '';
       var versionSection = document.createElement('div');
       versionSection.className = 'settings-section';
@@ -311,7 +343,8 @@
       });
       languageField.appendChild(languageButton);
       languageSection.appendChild(languageField);
-      generalPane.appendChild(languageSection);
+      // 需求：界面语言放在"显示"页**最上方**（插到首个分区之前）。
+      displayPane.insertBefore(languageSection, displayPane.firstChild);
 
       var sendModeSection = document.createElement('div');
       sendModeSection.className = 'settings-section';
@@ -411,6 +444,80 @@
       });
 
       generalPane.appendChild(startupSection);
+
+      // dsh 服务器设置：显示当前完整地址（含 token，只读不可选中，提供复制按钮），
+      // 并支持粘贴新的完整 URL 后"重新连接"（宿主校验 → 接入 → 重新初始化）。
+      var dshServerSection = document.createElement('div');
+      dshServerSection.className = 'settings-section';
+      var dshServerTitle = document.createElement('h3');
+      dshServerTitle.textContent = t('dshServerSection');
+      dshServerSection.appendChild(dshServerTitle);
+
+      var currentField = document.createElement('div');
+      currentField.className = 'settings-field';
+      var currentLabel = document.createElement('div');
+      currentLabel.className = 'field-label';
+      var currentName = document.createElement('span');
+      currentName.textContent = t('dshServerCurrent');
+      currentLabel.appendChild(currentName);
+      currentField.appendChild(currentLabel);
+      var currentRow = document.createElement('div');
+      currentRow.className = 'dsh-url-row';
+      var currentValue = document.createElement('span');
+      currentValue.className = 'dsh-url-value';
+      currentValue.id = 'dshCurrentUrl';
+      var currentWebUrl = data.webUrl || '';
+      currentValue.textContent = currentWebUrl || t('dshServerNone');
+      currentValue.title = currentWebUrl || t('dshServerNone');
+      currentRow.appendChild(currentValue);
+      var copyBtn = document.createElement('button');
+      copyBtn.textContent = t('dshServerCopy');
+      copyBtn.disabled = !currentWebUrl;
+      copyBtn.addEventListener('click', function () {
+        if (!currentWebUrl) return;
+        var done = function () { showToast(t('dshServerCopyDone'), 'ok', false); };
+        var failed = function () { showToast(t('dshServerCopyFailed'), 'error', false); };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(currentWebUrl).then(done).catch(failed);
+            return;
+          }
+        } catch (e) { /* 落到失败提示 */ }
+        failed();
+      });
+      currentRow.appendChild(copyBtn);
+      currentField.appendChild(currentRow);
+      dshServerSection.appendChild(currentField);
+
+      var reconnectField = document.createElement('div');
+      reconnectField.className = 'settings-field';
+      var reconnectLabel = document.createElement('div');
+      reconnectLabel.className = 'field-label';
+      var reconnectName = document.createElement('span');
+      reconnectName.textContent = t('dshServerInputLabel');
+      reconnectLabel.appendChild(reconnectName);
+      reconnectField.appendChild(reconnectLabel);
+      var reconnectRow = document.createElement('div');
+      reconnectRow.className = 'dsh-url-row';
+      var reconnectInput = document.createElement('input');
+      reconnectInput.type = 'text';
+      reconnectInput.id = 'dshServerInput';
+      reconnectInput.placeholder = t('dshServerPlaceholder');
+      reconnectRow.appendChild(reconnectInput);
+      var reconnectBtn = document.createElement('button');
+      reconnectBtn.className = 'primary';
+      reconnectBtn.textContent = t('dshServerReconnect');
+      reconnectBtn.addEventListener('click', function () {
+        post({ type: 'dshReconnect', url: String(reconnectInput.value || '').trim() });
+      });
+      reconnectRow.appendChild(reconnectBtn);
+      reconnectField.appendChild(reconnectRow);
+      var reconnectHint = document.createElement('div');
+      reconnectHint.className = 'hint';
+      reconnectHint.textContent = t('dshServerHint');
+      reconnectField.appendChild(reconnectHint);
+      dshServerSection.appendChild(reconnectField);
+      generalPane.appendChild(dshServerSection);
 
       // 管理工作区：当前工作区信息 + 全部 dsh 工作区（重命名/删除/刷新/重新映射）。
       // 会话数显示为 "工作中+已归档"，例如 3（工作中）+4（已归档），工作中数字加粗。

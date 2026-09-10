@@ -2,9 +2,56 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [1.1.4]
+
+（未发布：1.1.3 已于 2026-09-11 由用户发布。后续改动记录在本节。）
+
+## [1.1.3]
+
+（2026-09-11 由用户发布。）
+
+### Changed
+
+- **启动默认打开最近修改过的会话 + 抽屉严格按最近修改时间倒序**（用户要求："插件启动时应默认打开最近修改过的 session。同时，插件 session 选择框应该以最近修改时间倒序排列"）：
+  - `ChatViewProvider` 新增 `pickMostRecentSession()`：用**与抽屉完全一致**的排序口径（`applySessionActivity`：dsh 的 `updatedAt` + 插件观察到的活动时间，且**正在运行的会话按 `now` 计**）挑第一条非归档/非子代理/非空白会话，`autoAttachSession()` 改用它（旧代码取 `listSessions()[0]`，虽然也是 dsh 的 `updatedAt` 序，但不含插件活动信息、也不优先正在运行的会话），并把选择结果写进输出面板日志（`启动时打开最近修改的会话: <标题>（updatedAt=…）`）。
+  - webview 的 `buildSessionLineage()` 在分组前先按 `updatedAt` **倒序稳定排序**（宿主已排好，这里兜底）：即使宿主发来的顺序不对，抽屉也一定"越近修改越靠上"，且与行内"刚刚/N 分钟前"一致。
+  - 测试：新增运行时用例「session drawer: rows are ordered by last modification time (newest first)」（故意乱序的 `sessions` 帧 → 渲染为 B/C/A；某会话 `updatedAt` 变大后立刻置顶），并把三处依赖"输入顺序"的旧用例改为按 `data-session-id` 断言、更新谱系用例的期望顺序（fork 是顶层会话，按时间排在父会话之前）；宿主 vscode-stub 冒烟验证四种情形（运行中优先 / 无运行中取最新 / 插件活动时间更大的胜出 / 空列表返回 null），测试 92 → 93。
+
+- **自动启动不再用版本检测拦截，最低版本改为 `0.1.5-rc.1`**（用户要求："插件自动启动 dsh 后端时不再自动检测 dsh 版本；dsh 版本要求是 0.1.5-rc.1 之上，不是 0.1.5 之上；如果 dsh 后端版本不满足要求，则弹出提醒要求升级 dsh"）：
+  - `discoverDsh()` 现在只定位可执行文件（配置路径 → PATH → npm 全局目录 → `npx --no-install`），**不再跑 `dsh --version`、也不再因版本低而抛错**（旧实现会在启动前抛"dsh 版本过低: 0.1.5-rc.1 < 要求的 0.1.5"直接拒绝启动——正是本次问题的根因，已实测：本机 `dsh --version` = `0.1.5-rc.1`，旧要求 `>= 0.1.5` 判定为 false、新要求 `>= 0.1.5-rc.1` 为 true）。
+  - 新增 `DshService.verifyVersion()`：启动/接入成功后**在后台**探测 CLI 版本（`probeVersion`），满足要求只记日志；低于 `minimumVersion` 时通过新增的 `onVersionOutdated` 回调提醒一次（`extension.js` 弹 `showWarningMessage`，文案含当前版本与要求，并带"复制升级命令"按钮 → `npm install -g @deepseek-ai/dsh@latest`）；探测不到版本只记日志、不打扰用户，重复调用不会重复提醒。
+  - `dsh-vsc.minDshVersion` 默认值与 `extension.js` 兜底改为 **`0.1.5-rc.1`**（package.json 描述同步说明"不再拦截启动、只作后台提醒"）。
+  新增 `tests/discovery.test.js`（3 例：定位阶段不执行 dsh/不探测版本、传旧的 `minimumVersion` 也不拦截、`probeVersion` 仍可用于启动后核对）与 `tests/dsh-service.test.js` 的 3 例 `verifyVersion`（低于要求提醒一次且只提醒一次、满足要求静默、探测失败不抛错也不提醒），测试 86 → 92。
+
+- **设置面板调整（用户要求）**：
+  1. **界面语言从"通用"移到"显示"，并放在"显示"页最上方**（用户要求；`displayPane.insertBefore(languageSection, displayPane.firstChild)`）。
+  2. **"通用"页新增"dsh 服务器"分区**：显示当前服务的**完整地址（含 token，只读、不可选中，旁边是"复制"按钮）**；下面是"连接到其他 dsh 服务"输入框 + **"重新连接"**按钮——粘贴 `http://127.0.0.1:3080/?token=...` 后点击即校验接入（新消息 `dshReconnect` → `ChatViewProvider.reconnectDsh()` → `adoptAuthUrl()`，成功后重建事件流并刷新工作区/会话/设置快照），**留空则重连当前服务**（用当前带 token 的地址重新换 cookie 并重建连接）。地址只记在插件状态文件（0600），**不写入 VS Code 设置**（避免 token 进 settings.json/settings sync）。
+  3. `DshService.adoptAuthUrl()` 放宽：地址里没有 token 时按"免认证实例"探测（老版本 dsh 也能接），失败信息区分"无法通过认证"与"没有运行可用的 dsh 服务"；`adoptTokenUrl()` 把"接入"与"接入后的重新初始化"分开——连接建立即算成功，后续刷新出错只记日志（不再出现"提示接入失败但其实已连上"）。
+  新增运行时用例「settings: language lives in Display, and General has a dsh server section」（语言不在通用页、当前 URL 只读展示且等于宿主下发的完整地址、复制按钮写入剪贴板、输入新地址/留空点击分别发出正确的 `dshReconnect`、未连接时显示占位并禁用复制），测试 85 → 86；宿主 vscode-stub 冒烟（填地址 → adopt 收到该地址并提示成功；留空 → 用当前 webUrl 重连；0 模态框）与真实实例核验（带 token 接入可用，无 token 被明确拒绝）。
+
+### Fixed
+
+- **dsh 需要认证（launch token）时没有可用入口**（用户报告："当 dsh 未启动时，同时启动行为未勾选'启动插件时自动启动 dsh'，那么插件左上角会进入停止/错误状态；同时，由于现在 dsh 要求认证，而对按钮的点击没有添加认证相关内容，因此无法正常使用"）：
+  - **状态文件里的 token 失效时不再静默失败**：旧逻辑在"默认端口 401 → 询问过 token → 状态文件里的 token 已失效"这条路径上直接 `return null`，而 `autoStart=false` 只复用不生成 → 状态停在"已停止"，用户点状态点也只会再次走到同一处 → 表现为"点了没反应、也从不问 token"。现在该分支会先 `probeStatus(state.baseUrl)`，仍为 `'auth'` 就调用新增的 `promptForToken()` 询问新地址（默认端口那条分支同样收敛到该方法）。
+  - **新增手动接入入口**：`DshService.adoptAuthUrl(url)`（校验 → 交换 cookie → probe → 记住 token → `connect()` → 状态置 `ready`）与 `ChatViewProvider.connectWithToken()`（输入框 → 接入 → 重新初始化事件流/工作区/会话/目录 → 面板提示）；入口有两个：`⋯` 菜单"🔑 输入 dsh Token 地址…"与**设置弹窗离线横幅**里的"输入 Token 地址…"按钮（新消息 `enterToken`）。输入框提示与按钮文案中英双语（`dialog.tokenPrompt`/`dialog.enterTokenAction`/`notice.tokenConnected`/`notice.tokenFailed`）。
+  - **重连失败给出行动按钮**：`autoStart=false` 时点状态点重连失败，除面板提示外弹一个带"输入 dsh Token 地址…"按钮的警示框，点一下即进入粘贴地址流程。
+  - 真实实例验证：`adoptAuthUrl(<带 token 的地址>)` → 状态 ready、cookie 已换、经 wire 调 `session/list` 返回 98 条会话；无效 token / 缺 token 均被明确拒绝（`dsh web 未返回认证 cookie（token 可能已过期）` / `地址里没有 token（形如 http://127.0.0.1:3080/?token=...）`）。新增运行时用例（菜单与离线横幅两个入口 + 英文文案）与宿主 vscode-stub 冒烟（接入成功/认证失败/重连失败→警示框按钮三条路径，0 模态错误框），测试 84 → 85。
+
+### Changed
+
+- **前端与后端解耦（dsh 未启动时前端照常可用）**（用户报告"dsh 后端未启动时前端一切操作均无效，尤其是设置内相关操作"）：
+  - **设置类操作不再被写配置失败挡住**：新增 `ChatViewProvider.updateConfig(key, value)`（写 `dsh-vsc.*` 失败只记日志），`setSessionDisplay/setFontSize/setLanguage/setEnterToSend/setMaxWidth/setShowContextUsage/setContextBarColor/setContextBarOpacity/setAutoStart/setShowArchivedSessions/setPromptStash` 全部改为**先改内存状态 + 先回发 webview、最后落配置**——只读 `settings.json`/远程环境下 `config.update` 抛错时界面依然即时生效（旧顺序会抛错→被统一 catch 弹模态框→界面毫无变化，这正是"设置点了没反应"的根因）。
+  - **后端未就绪不再弹模态错误框**：新增 `backendNotReady()`（`error.code='dsh-not-ready'`，`SessionService.requireClient()` 同步打标），统一 catch 遇到该 code 时只 `post({type:'notice', level:'error'})` 面板内提示；`newSession`/`send`/`openWorkspaceFolder`/`openPresetDirectory`/`retryConnect` 失败都走提示而不弹框。
+  - **面板内提示能够看到了**：webview 的 `notice` 分支此前是"静默忽略"，现改为 toast 显示（`showToast(text, level==='error' ? 'error' : '')`）——"刷新未就绪""已保留当前列表"等提示以前根本看不到。
+  - **离线时的设置弹窗**：新增顶部离线横幅 `#settingsOffline`（说明哪些能用/不能用 + "重新检测 dsh" 按钮，`retryConnect`），"新建会话"按钮在 `status !== 'ready'` 时禁用并给出原因 tooltip。
+  - 纯本地能力（显示偏好、语言、提示词暂存框及图片、归档视图开关）离线完全可用；会话/模型/命令/发送等在后端恢复后自动可用，无需重载窗口。
+  - 新增运行时用例「offline: settings banner, in-panel notices and the disabled New Session button」与两轮 vscode-stub 冒烟（只读 settings.json 下 11 个设置操作全部仍回发且 0 个模态框；`newSession`/`send`/菜单项/重连失败均只发 notice），测试 83 → 84。
+
+（未发布：1.1.2 已于 2026-09-11 由用户发布。后续改动记录在本节。）
+
 ## [1.1.2]
 
-（未发布：1.1.1 已于 2026-09-06 由用户发布。）
+（2026-09-11 由用户发布。）
 
 ### Changed
 

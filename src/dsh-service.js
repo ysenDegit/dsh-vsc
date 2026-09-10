@@ -5,7 +5,8 @@ const { randomUUID } = require('node:crypto')
 const { homedir } = require('node:os')
 const { join, dirname } = require('node:path')
 const { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync } = require('node:fs')
-const { discoverDsh } = require('./discovery.js')
+const { discoverDsh, probeVersion } = require('./discovery.js')
+const { isAtLeast } = require('./version.js')
 const { startDshWeb } = require('./server.js')
 const {
   WireClient,
@@ -22,6 +23,9 @@ class DshService extends EventEmitter {
     super()
     this.options = options
     this.launcher = null
+    // 探测到的 dsh CLI 版本（不再用于拦截启动，只用于"版本过低"提醒）。
+    this.version = null
+    this.versionWarned = false
     this.server = null
     this.wire = null
     this.mux = null
@@ -129,10 +133,9 @@ class DshService extends EventEmitter {
       }
 
       // 未运行：生成一个新的 dsh 实例（dsh web --port 0 --no-open，随机 loopback 端口，不打开浏览器）。
-      this.launcher = await discoverDsh({
-        minimumVersion: this.options.minimumVersion,
-        explicitPath: this.options.explicitPath,
-      })
+      // 不再用版本探测拦截启动（用户要求）：定位到可执行文件就直接启动，
+      // 版本核对改为启动后在后台进行（verifyVersion），不满足要求时只提醒不阻塞。
+      this.launcher = await discoverDsh({ explicitPath: this.options.explicitPath })
       this.options.onLog?.(`dsh package: ${this.launcher.version} @ ${this.launcher.command} (${this.launcher.source})`)
 
       this.setStatus('starting')
@@ -167,11 +170,50 @@ class DshService extends EventEmitter {
 
       this.connect()
       this.setStatus('ready')
+      // 后台核对版本：不阻塞连接，也不阻止使用；低于要求时提醒升级。
+      void this.verifyVersion()
     } catch (error) {
       this.started = false
       this.setStatus('error', error instanceof Error ? error.message : String(error))
       throw error
     }
+  }
+
+  /**
+   * 核对 dsh 版本（启动后调用，可重复调用但只提醒一次）。
+   *
+   * 自动启动时不再做启动前的版本拦截；这里用 `dsh --version` 探测当前实例对应的 CLI 版本，
+   * 低于 `minimumVersion` 时通过 `onVersionOutdated` 回调让上层弹提醒（要求升级 dsh）。
+   * @returns 探到的版本；探测不到时返回 null（只记日志，不打扰用户）。
+   */
+  async verifyVersion() {
+    const minimum = this.options.minimumVersion
+    if (!minimum) return null
+    let current = this.version
+    if (!current) {
+      const command = this.launcher?.command ?? 'dsh'
+      const args = this.launcher?.args ?? []
+      try {
+        current = await probeVersion(command, args)
+      } catch {
+        current = null
+      }
+      this.version = current
+    }
+    if (!current) {
+      this.options.onLog?.('无法探测 dsh 版本（跳过版本提醒）')
+      return null
+    }
+    if (isAtLeast(current, minimum)) {
+      this.options.onLog?.(`dsh 版本 ${current} 满足要求（>= ${minimum}）`)
+      return current
+    }
+    this.options.onLog?.(`dsh 版本过低: ${current} < ${minimum}`)
+    if (!this.versionWarned) {
+      this.versionWarned = true
+      this.options.onVersionOutdated?.({ current, minimum })
+    }
+    return current
   }
 
   connect() {
@@ -234,22 +276,8 @@ class DshService extends EventEmitter {
           // 记忆的 token 已失效：继续询问用户。
         }
       }
-      if (this.options.onAuthRequired) {
-        const supplied = await this.options.onAuthRequired(DEFAULT_DSH_URL)
-        if (supplied) {
-          try {
-            const { baseUrl, token } = extractTokenFromUrl(supplied)
-            const cookie = await exchangeLaunchToken(baseUrl, token)
-            if (await this.probeAuthed(baseUrl, cookie)) {
-              // 记住用户提供的外部实例 token：同进程存活期间不再重复询问。
-              this.writeStateFile(baseUrl, process.pid, token)
-              return { baseUrl, token, cookie }
-            }
-          } catch {
-            // 用户提供的 URL/token 无效：继续走状态文件/新建逻辑。
-          }
-        }
-      }
+      const supplied = await this.promptForToken(DEFAULT_DSH_URL)
+      if (supplied) return supplied
     }
 
     // 状态文件只在默认端口不可用时作为“上次插件实例仍存活”的兜底。
@@ -263,7 +291,11 @@ class DshService extends EventEmitter {
               return { baseUrl: state.baseUrl, token: state.token, cookie }
             }
           } catch {
-            // token 失效/实例已停：继续。
+            // 记忆的 token 已失效（用户手动重启过 dsh 等）：若该地址仍要求认证，询问新 token。
+            if (await this.probeStatus(state.baseUrl, '') === 'auth') {
+              const supplied = await this.promptForToken(state.baseUrl)
+              if (supplied) return supplied
+            }
           }
         }
       }
@@ -271,6 +303,64 @@ class DshService extends EventEmitter {
       // 状态文件损坏/不可读：忽略。
     }
     return null
+  }
+
+  /**
+   * 询问用户粘贴 dsh 启动时输出的完整地址（含 `?token=...`）并验证。
+   * dsh rc.1 起裸地址返回 401，没有 token 就进不了 UI/RPC。
+   * @param baseUrl - 期望的实例地址；与用户粘贴的地址不一致时拒绝（避免接到别的实例）。
+   * @returns `{baseUrl, token, cookie}`；用户取消或地址无效时返回 null。
+   */
+  async promptForToken(baseUrl) {
+    if (!this.options.onAuthRequired) return null
+    const supplied = await this.options.onAuthRequired(baseUrl)
+    if (!supplied) return null
+    try {
+      const parsed = extractTokenFromUrl(supplied)
+      if (parsed.baseUrl !== baseUrl) {
+        this.options.onLog?.(`忽略与当前实例不符的地址: ${parsed.baseUrl}`)
+        return null
+      }
+      const cookie = await exchangeLaunchToken(parsed.baseUrl, parsed.token)
+      if (!await this.probeAuthed(parsed.baseUrl, cookie)) return null
+      // 记住用户提供的外部实例 token：同进程存活期间不再重复询问。
+      this.writeStateFile(parsed.baseUrl, process.pid, parsed.token)
+      return { baseUrl: parsed.baseUrl, token: parsed.token, cookie }
+    } catch (error) {
+      this.options.onLog?.(`用户提供的 dsh 地址/Token 无效: ${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+  }
+
+  /**
+   * 手动接入一个已在运行的 dsh 实例（用户在 `⋯` 菜单/设置离线横幅里粘贴带 token 的地址）。
+   * 校验通过后记住 token、建立 mux 连接并把状态置为 ready。
+   * @param suppliedUrl - 形如 `http://127.0.0.1:3080/?token=...` 的完整地址。
+   * @returns 接入的 baseUrl。
+   * @throws 地址缺 token / token 无效 / 该地址未在运行 dsh 时抛错。
+   */
+  async adoptAuthUrl(suppliedUrl) {
+    const raw = String(suppliedUrl || '').trim()
+    if (!raw) throw new Error('地址为空')
+    const { baseUrl, token } = extractTokenFromUrl(raw)
+    // 有 token：交换 cookie；没有 token（免认证/老版本 dsh）：直接用空 cookie 探测，
+    // 但要求该实例确实在运行且能通过一次 RPC，否则视为"地址不可用"。
+    const cookie = token ? await exchangeLaunchToken(baseUrl, token) : ''
+    if (!await this.probeAuthed(baseUrl, cookie)) {
+      throw new Error(token ? `该地址无法通过认证: ${baseUrl}` : `该地址没有运行可用的 dsh 服务: ${baseUrl}`)
+    }
+    this.baseUrlValue = baseUrl
+    this.token = token
+    this.cookie = cookie
+    this.started = true
+    this.stopping = false
+    this.ownsInstance = false
+    this.launcher = { command: baseUrl, args: [], source: 'existing', version: null }
+    this.writeStateFile(baseUrl, process.pid, token)
+    this.connect()
+    this.setStatus('ready')
+    this.options.onLog?.(`已手动接入 dsh web: ${baseUrl}`)
+    return baseUrl
   }
 
   /** 读取状态文件里指定 URL 的 token（不存在返回 null）。 */

@@ -132,6 +132,31 @@ class ChatViewProvider {
   /** 宿主侧文案：按 `dsh-vsc.language` 选中英文。 */
   t(key, vars) { return translate(this.language, key, vars) }
 
+  /**
+   * "dsh 后端未就绪"错误：带 `code` 标记，统一 catch 会把它转成**面板内提示**，
+   * 而不是 VS Code 模态错误框——dsh 未启动时前端其余功能照常可用，不该被打断。
+   */
+  backendNotReady() {
+    const error = new Error(this.t('notice.webNotReady'))
+    error.code = 'dsh-not-ready'
+    return error
+  }
+
+  /**
+   * 写 VS Code 配置（`dsh-vsc.*`）。
+   *
+   * 只读 settings.json / 远程工作区等环境下 `config.update` 会抛错；写配置失败**只记日志**，
+   * 绝不让它挡住界面生效——否则用户看到的就是"设置点了没反应"（dsh 未启动时尤其明显）。
+   */
+  async updateConfig(key, value) {
+    try {
+      const config = vscode.workspace.getConfiguration('dsh-vsc')
+      await config.update(key, value, vscode.ConfigurationTarget.Global)
+    } catch (error) {
+      this.onLog(`保存配置 ${key} 失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   post(message) {
     if (this.webviews.size === 0) {
       this.enqueue(message)
@@ -275,6 +300,12 @@ class ChatViewProvider {
         case 'openWorkspaceFolder':
           await this.openWorkspaceFolder(msg.sessionId || this.selectedSessionId)
           break
+        case 'enterToken':
+          await this.connectWithToken()
+          break
+        case 'dshReconnect':
+          await this.reconnectDsh(msg.url)
+          break
         case 'openPresetDirectory':
           await this.openPresetDirectory()
           break
@@ -397,6 +428,11 @@ class ChatViewProvider {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.onLog(message)
+      // dsh 未就绪：只在面板里提示（设置/暂存框等本地功能照常可用），不弹模态错误框。
+      if (error && error.code === 'dsh-not-ready') {
+        this.post({ type: 'notice', text: this.t('notice.webNotReady'), level: 'error' })
+        return
+      }
       void vscode.window.showErrorMessage(message)
     }
   }
@@ -538,6 +574,26 @@ class ChatViewProvider {
   }
 
   // 空状态按钮"将当前文件夹添加到 dsh 工作区"：清除粘滞标记后重新询问并初始化。
+  /**
+   * 选出"最近修改过"的会话：排序口径与抽屉完全一致
+   * （dsh 的 `updatedAt` + 插件观察到的活动时间，正在运行的会话视为"刚刚被修改"），
+   * 只考虑当前工作区、非归档、非子代理、非空白会话。
+   * @returns 会话条目；没有可打开的会话时返回 null。
+   */
+  async pickMostRecentSession() {
+    const list = await this.sessions.listSessions(null, false, false)
+    if (!list.length) return null
+    const activity = new Map(this.activityTimeBySession)
+    for (const item of list) {
+      if (!item.running) continue
+      // 正在运行 = 此刻正在被修改，排序时按 now 计。
+      activity.set(item.sessionId, Math.max(activity.get(item.sessionId) ?? 0, Date.now()))
+    }
+    const [picked] = applySessionActivity(list, activity)
+    this.onLog(`启动时打开最近修改的会话: ${picked.title || picked.sessionId}（updatedAt=${new Date(picked.updatedAt).toISOString()}）`)
+    return picked
+  }
+
   async addWorkspace() {
     this.workspacePromptedPath = null
     this.workspacePromptAccepted = false
@@ -550,9 +606,8 @@ class ChatViewProvider {
     const workspace = await this.ensureWorkspace()
     if (!workspace) return
     this.clearConversationPost()
-    // 启动时优先打开最近的非空白会话；只有完全没有现存会话时才创建空白新会话。
-    const existingSessions = await this.sessions.listSessions(null, false, false)
-    const existing = existingSessions[0]
+    // 启动时打开"最近修改过"的会话（与抽屉同一套排序），只有完全没有现存会话时才创建空白新会话。
+    const existing = await this.pickMostRecentSession()
     if (existing) {
       this.selectedSessionId = existing.sessionId
       this.ensureStreams()
@@ -581,7 +636,7 @@ class ChatViewProvider {
   }
 
   async newSession() {
-    if (!this.dsh.client) throw new Error(this.t('notice.webNotReady'))
+    if (!this.dsh.client) throw this.backendNotReady()
     const workspace = await this.ensureWorkspace()
     if (!workspace) throw new Error(this.t('notice.noWorkspaceSession'))
     const created = await this.sessions.resolveNewSession()
@@ -639,7 +694,7 @@ class ChatViewProvider {
    * @param files - 0.1.5 文件附件：`{name,data}`（base64）或 `{receiptId}`（已上传）。
    */
   async send(text, images = [], clientTimeZone, files = []) {
-    if (!this.dsh.client) throw new Error(this.t('notice.webNotReady'))
+    if (!this.dsh.client) throw this.backendNotReady()
     let sessionId = this.selectedSessionId
     if (!sessionId) {
       const workspace = await this.ensureWorkspace()
@@ -825,7 +880,12 @@ class ChatViewProvider {
 
   /** 在系统文件管理器中定位会话工作目录（0.1.5 session/openWorkspacePath）。 */
   async openWorkspaceFolder(sessionId) {
-    if (!sessionId || !this.dsh.client) return
+    if (!this.dsh.client) {
+      // 离线时点菜单也要有反馈（这些能力依赖 dsh 的工作目录信息）。
+      this.post({ type: 'notice', text: this.t('notice.webNotReady'), level: 'error' })
+      return
+    }
+    if (!sessionId) return
     try {
       const can = await this.sessions.canOpenWorkspacePath()
       if (!can) {
@@ -847,7 +907,10 @@ class ChatViewProvider {
 
   /** 打开用户自定义 Agent preset 目录（用于自建工作模式；端点参数是 preset id）。 */
   async openPresetDirectory() {
-    if (!this.dsh.client) return
+    if (!this.dsh.client) {
+      this.post({ type: 'notice', text: this.t('notice.webNotReady'), level: 'error' })
+      return
+    }
     try {
       const presets = this.presets || []
       // 内置 preset（trust:'system'）是只读的：优先打开用户可写的那个。
@@ -1249,64 +1312,55 @@ class ChatViewProvider {
   async setSessionDisplay(value) {
     const next = value === 'detailed' ? 'detailed' : 'concise'
     this.sessionDisplay = next
-    // 写入失败不静默：让错误冒泡到 handleMessage 的统一 catch，弹窗告知用户，
-    // 避免“当前会话生效、重启后恢复默认”且用户无感知。
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('sessionDisplay', next, vscode.ConfigurationTarget.Global)
     // 先按新模式重新折叠并推送会话内容，再通知 webview 切换模式，
     // 避免 webview 先切模式后仍用旧模式的会话数据渲染出错误内容。
     this.postConversation(this.selectedSessionId)
     this.post({ type: 'sessionDisplay', value: next })
+    await this.updateConfig('sessionDisplay', next)
   }
 
   async setFontSize(value) {
     const size = Number(value)
     if (!Number.isFinite(size) || size < 10 || size > 24) return
     this.fontSize = size
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('fontSize', size, vscode.ConfigurationTarget.Global)
     this.post({ type: 'fontSize', value: size })
+    await this.updateConfig('fontSize', size)
   }
 
   async setLanguage(value) {
     const next = value === 'en' ? 'en' : 'zh'
     this.language = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('language', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'language', value: next })
+    await this.updateConfig('language', next)
   }
 
   async setEnterToSend(value) {
     const next = value === false ? false : true
     this.enterToSend = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('enterToSend', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'enterToSend', value: next })
+    await this.updateConfig('enterToSend', next)
   }
 
   async setMaxWidth(value) {
     const width = Number(value)
     if (!Number.isFinite(width) || width < 0 || width > 4000) return
     this.maxWidth = width
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('maxWidth', width, vscode.ConfigurationTarget.Global)
     this.post({ type: 'maxWidth', value: width })
+    await this.updateConfig('maxWidth', width)
   }
 
   async setShowContextUsage(value) {
     const next = value !== false
     this.showContextUsage = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('showContextUsage', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'showContextUsage', value: next })
+    await this.updateConfig('showContextUsage', next)
   }
 
   async setContextBarColor(value) {
     const next = String(value || '').trim() || 'var(--accent)'
     this.contextBarColor = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('contextBarColor', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'contextBarColor', value: next })
+    await this.updateConfig('contextBarColor', next)
   }
 
   async setContextBarOpacity(value) {
@@ -1314,26 +1368,23 @@ class ChatViewProvider {
     if (!Number.isFinite(opacity)) return
     const next = Math.min(100, Math.max(0, opacity))
     this.contextBarOpacity = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('contextBarOpacity', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'contextBarOpacity', value: next })
+    await this.updateConfig('contextBarOpacity', next)
   }
 
   async setAutoStart(value) {
     const next = value !== false
     this.autoStart = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('autoStart', next, vscode.ConfigurationTarget.Global)
     this.post({ type: 'autoStart', value: next })
+    await this.updateConfig('autoStart', next)
   }
 
   async setPromptStash(value) {
     const next = value !== false
     this.promptStashEnabled = next
-    const config = vscode.workspace.getConfiguration('dsh-vsc')
-    await config.update('promptStash', next, vscode.ConfigurationTarget.Global)
     // 关闭时只隐藏界面，不清空内容：重新打开后暂存的提示词仍在。
     this.post({ type: 'promptStashEnabled', value: next })
+    await this.updateConfig('promptStash', next)
   }
 
   /**
@@ -1363,20 +1414,92 @@ class ChatViewProvider {
     // 若把它放在前面，按钮就会表现为"点了完全没反应"（旧顺序的坑）。
     this.post({ type: 'showArchivedSessions', value: next })
     await this.refreshSessions()
-    try {
-      const config = vscode.workspace.getConfiguration('dsh-vsc')
-      await config.update('showArchivedSessions', next, vscode.ConfigurationTarget.Global)
-    } catch (error) {
-      this.onLog(`保存 showArchivedSessions 失败: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    await this.updateConfig('showArchivedSessions', next)
   }
 
   // 状态徽标（已停止/错误）点击后：重新探测 dsh web 实例。
   // autoStart 开启则允许自动生成；关闭则只复用已手动运行的实例。
+  /**
+   * "输入 dsh Token 地址"（`⋯` 菜单 / 设置离线横幅）：让用户粘贴 dsh 启动时输出的完整 URL，
+   * 校验通过后接入并**重新初始化**（事件流 / 工作区 / 会话 / 目录 / 设置快照）。
+   * dsh 需要认证（launch token）时代码里没有别的入口能拿到 token，这是手动兜底通道。
+   */
+  async connectWithToken() {
+    const answer = await vscode.window.showInputBox({
+      prompt: this.t('dialog.tokenPrompt', { url: this.dsh.baseUrl || '127.0.0.1' }),
+      placeHolder: 'http://127.0.0.1:3080/?token=...',
+      ignoreFocusOut: true,
+    })
+    const supplied = (answer || '').trim()
+    if (!supplied) return
+    await this.adoptTokenUrl(supplied)
+  }
+
+  /**
+   * 接入用户粘贴的 token 地址：成功后重跑初始化（含设置快照刷新），失败只在面板里提示。
+   * "接入"与"重新初始化"分开处理：连接一旦建立就算成功，后续刷新出错只记日志，
+   * 不能让用户看到"接入失败"却其实已经连上。
+   */
+  async adoptTokenUrl(supplied) {
+    let baseUrl
+    try {
+      baseUrl = await this.dsh.adoptAuthUrl(supplied)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`接入 dsh 失败: ${message}`)
+      this.post({ type: 'notice', text: this.t('notice.tokenFailed', { message }), level: 'error' })
+      return false
+    }
+    this.ensureStreams()
+    try {
+      await this.refreshAll()
+      await this.ensureWorkspaceAndSession()
+      await this.refreshSettings()
+    } catch (error) {
+      this.onLog(`接入后重新初始化失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    this.post({ type: 'notice', text: this.t('notice.tokenConnected', { url: baseUrl }) })
+    return true
+  }
+
+  /**
+   * 设置 → 通用 → "dsh 服务器"的重新连接：
+   * - 填了新地址：按该地址校验并接入（与 `⋯` 菜单的手动入口同一套流程）；
+   * - 留空：重连**当前**服务（用带 token 的地址重新换 cookie 并重建连接）。
+   * @param url - 用户粘贴的完整地址（可空）。
+   */
+  async reconnectDsh(url) {
+    const typed = String(url || '').trim()
+    const target = typed || this.dsh.webUrl || ''
+    if (!target) {
+      this.post({ type: 'notice', text: this.t('notice.tokenFailed', { message: this.t('notice.webNotReady') }), level: 'error' })
+      return
+    }
+    const ok = await this.adoptTokenUrl(target)
+    if (ok) this.onLog(typed ? `已按设置页地址重连: ${target}` : '已重连当前 dsh 服务')
+  }
+
   async retryConnect() {
     const status = this.dsh.statusValue
     if (status === 'ready' || status === 'starting' || status === 'discovering') return
-    await this.dsh.start({ allowSpawn: this.autoStart !== false })
+    try {
+      await this.dsh.start({ allowSpawn: this.autoStart !== false })
+    } catch (error) {
+      // 用户主动点"重新检测"：把失败原因放在面板里（离线时前端其余功能照常可用），不弹模态框。
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`重新检测 dsh 失败: ${message}`)
+      this.post({ type: 'notice', text: `${this.t('notice.webNotReady')}（${message}）`, level: 'error' })
+      // 关闭自动启动（只复用不生成）时，失败往往是因为手动实例需要认证：
+      // 给一个带按钮的提示，直接进入"粘贴 Token 地址"流程。
+      if (this.autoStart === false) {
+        const action = this.t('dialog.enterTokenAction')
+        const picked = await vscode.window.showWarningMessage(
+          `${this.t('notice.webNotReady')}（${message}）`,
+          action,
+        )
+        if (picked === action) await this.connectWithToken()
+      }
+    }
   }
 
   // 配置被外部修改（VS Code 设置 UI、settings.json 等）时同步 provider 状态与 webview。

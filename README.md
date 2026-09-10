@@ -8,7 +8,7 @@
 
 > 由于本人测试环境有限，陆陆续续发现了很多 BUG；如遇恶性 BUG，请邮件 ysen96@qq.com，我将尽快修复。
 
-> 插件 **1.1.2** 需要 dsh 升级到 **0.1.5**（Typert Remote 协议 + 进程内 assistant-stream + 首次启动 token 认证）；低于 0.1.5 的旧版 dsh 不再兼容（命令执行参数、助手实时输出协议均已变化）。dsh alpha 通道的快速破坏性版本暂不对其适配。
+> 插件 **1.1.4** 需要 dsh **>= 0.1.5-rc.1**（Typert Remote 协议 + 进程内 assistant-stream + 首次启动 token 认证）；低于 0.1.5-rc.1 的旧版 dsh 不再兼容（命令执行参数、助手实时输出协议均已变化）。dsh alpha 通道的快速破坏性版本暂不对其适配。
 >
 > 各插件版本与 dsh 版本的对应关系见下文「三、运行环境」中的对应表。
 
@@ -16,7 +16,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 > Due to a limited testing environment, bugs have surfaced over time. If you encounter a critical bug, please email ysen96@qq.com and I will fix it as soon as possible.
 
-> Extension **1.1.2 requires dsh >= 0.1.5** (Typert Remote protocol with the in-process assistant stream and launch-token authentication); older dsh releases below 0.1.5 are no longer supported (command-execution arguments and live assistant output both changed). Rapid breaking changes on the dsh alpha channel are not adapted for now.
+> Extension **1.1.4 requires dsh >= 0.1.5-rc.1** (Typert Remote protocol with the in-process assistant stream and launch-token authentication); older dsh releases below 0.1.5 are no longer supported (command-execution arguments and live assistant output both changed). Rapid breaking changes on the dsh alpha channel are not adapted for now.
 >
 > See the compatibility table under "3. Requirements" below for the extension ↔ dsh version mapping.
 
@@ -54,11 +54,14 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 会话列表、选择、新建、重命名、fork（复制会话）。
 - 会话显示名与 dsh Web 端一致：`title` 投影 → 工作目录名 → 会话 id（空白会话显示"新会话"）；不再出现网页显示目录名、插件显示"会话 1a2b3c4d"的差异。
 - 会话列表按**最近修改时间**降序排列：dsh `session/list` 的 `updatedAt` 只等于 `max(创建时间, 最近一次发送提示词时间)`（`sessionListMetadata` 只有 `lastPromptAt`），插件额外记录了观察到的活动时间（`api-session/activity` 的提示词时间、`api-session/status` 开始/结束运行的时间、当前会话每来一条新事件的时间），取两者较大值后排序并显示相对时间——所以正在被模型修改的会话会保持/回到列表最前，相对时间也不会停在"上次发提示词"那一刻。
+- **启动时默认打开"最近修改过"的会话**：排序口径与抽屉一致（dsh 的 `updatedAt` + 插件观察到的活动时间，**正在运行的会话视为此刻正在被修改**），只在完全没有现存会话时才新建空白会话；选择结果会写进输出面板日志（`启动时打开最近修改的会话: …`）。
+- Session 抽屉**按最近修改时间倒序**（越近修改越靠上）：dsh 的 `updatedAt` 只等于 `max(创建时间, 最近一次发提示词)`，插件再叠加自己观察到的活动时间（提示词事件、运行开始/结束、当前会话的每条新事件），所以"刚刚还在跑"的会话一定在最前面；webview 渲染前还会再按 `updatedAt` 倒序兜一次底，保证顺序和行内的时间标签一致。
 - 会话行右侧显示**会话模式**标签（如"标准模式""PTC 模式""锚定标准模式"）：名字优先取 dsh 的 `agentPresets/list`（自定义 preset 也有名字），其次内置 id 的中文/英文短名；没有模式的会话不显示；**面板宽度 < 480px 时自动隐藏**（宽度足够才显示），标签最多占行宽 45% 且超长省略，不会挤压会话标题。
 - 会话列表**不区分分支会话与普通会话**：dsh 的 `session/fork` 会给子会话写 `parentSession`（所以它出现在 dsh 的会话谱系里），但插件把它按普通会话显示——不缩进、不加任何"分支"标记、fork/重命名/归档操作与其它会话完全一致。只有 **子代理会话**（`origin: 'subagent'`，含子代理再派生的子代理）会缩进挂在父会话下方、标注"子代理会话"且仅可选中查看。
 - **子代理会话可"提升为普通会话"（仅插件视图）**：鼠标悬停子代理行点 **⇧**，它在抽屉里就作为顶层会话显示（点 **⇩** 恢复嵌套），集合持久化在 VS Code 全局状态。dsh 的谱系只写在创建时的 header（`parentSession`）里且**没有修改接口**（RPC 面只有 create/rename/fork/prompt 等，没有 detach/promote），所以这只改变插件抽屉的显示层级，dsh Web UI 里的层级不受影响。
 - 归档会话：dsh 无 unarchive API，插件提供"取消归档（仅插件视图，↩）"与抽屉里的"显示已归档 / 隐藏已归档（按钮文案 = 点击后会做什么：归档会话未显示时写"显示已归档"，已显示时写"隐藏已归档"，与设置里的 `dsh-vsc.showArchivedSessions` 同一状态、可反复切换）"（本地集合持久化在 VS Code globalState，不影响 dsh 状态）。按钮上会带数量（如"显示已归档（13）"）；若该工作区的归档会话**全部**已被"本地恢复显示"，就没有可切换的会话，按钮 tooltip 会说明原因并指向设置里的"清除仅插件内显示"。这类会话在列表里标为"**已归档会话（仅插件内显示）**"（悬停有说明）——它们**在 dsh 里确实是归档状态**，dsh 没有取消归档接口、网页端也把归档会话直接过滤掉（`ui-workspace` 的会话树用 `archivedSessionIds` 过滤），所以**只有在插件里能看到**；设置 → 管理工作区里有"清除"仅插件内显示"（N）"可一次性撤销（旧版"隐藏已归档"按钮曾把全部归档会话写进本地集合，一键即可清理）。
 - 长会话分页：初始只挂载最近 500 条（宿主裁剪"已加载窗口"，超出部分不留在内存里）；列表顶部的"加载更早"是**唯一**的向前翻页入口，点击时向 dsh 请求更早一页（`session/page`）并插入到顶部，同时保持当前阅读位置不跳走。
+- **设置面板结构**：左侧导航为 关于 / **显示**（**界面语言**、会话显示模式、字号、最大宽度、上下文占用）/ **通用**（发送方式、提示词暂存框、启动行为、**dsh 服务器**）/ 管理工作区（连接后）/ **赞助**。"dsh 服务器"分区显示当前服务的完整地址（含 token，只读不可选中 + **复制**按钮），并提供"连接到其他 dsh 服务"输入框与**重新连接**按钮（粘贴 dsh 启动时输出的完整 URL 即可切换/重连，留空则重连当前服务）。
 - **设置 → 赞助**：页首标语"**为爱发电，永久免费，如果此插件合您心意，请随意打点。**"，下面是微信/支付宝收款码（`sponsor/wx.jpg`、`sponsor/zfb.jpg` 以 data URI 内嵌进 webview，离线可用、不依赖 `asWebviewUri`；点图片放大到 2 倍方便手机扫码），文案说明"完全自愿，不影响任何功能"。
 - 顶栏：会话标题 + 状态点 + 刷新/设置/⋯；刷新按钮是一次"轻量全量刷新"（会话列表 + 模型目录 + 命令目录 + 工作模式 + 设置快照，**不重载会话历史**），刷新期间按钮转圈并禁用；dsh 未就绪时保留当前列表并提示"dsh 尚未就绪"、同时自动重新探测连接；点击会话标题打开 Sessions 抽屉（搜索 + New Session + 会话列表，每行显示工作中/已归档/相对时间与 fork/重命名/归档操作）；新建会话入口在抽屉内。
 - 抽屉搜索：标题即时本地过滤；输入 ≥2 字符再防抖调用 dsh `session/search` 做会话内容检索，命中额外列出“内容匹配”分区（会话 + 摘要，点击直接切换）。dsh 默认关闭全文索引（`openAt: never`）时自动降级为纯标题过滤。
@@ -156,6 +159,15 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - fork 出的新会话会以"源会话标题（fork YYYY-MM-DD HH:mm）"自动命名，便于区分。
 - 当源会话没有已完成回合时（如刚创建的空会话），会提示"无可 fork 的已完成回合"。
 
+#### 9. 离线可用性（dsh 后端未启动时）
+
+- **设置面板照常可用**：显示（会话显示模式 / 字号 / 最大宽度 / 上下文占用）、通用（语言、发送方式、提示词暂存框开关、启动行为）等**本地设置**离线时也能修改并即时生效；只有"管理工作区"这类依赖后端的页签会隐藏。
+- 设置弹窗顶部显示离线横幅："⚠ dsh 后端未连接：会话、模型、发送等需要后端的功能暂不可用；本页的显示/通用设置、提示词暂存框等本地功能照常可用。"，并带"**重新检测 dsh**"按钮。
+- **写配置失败不再挡住界面**：只读 `settings.json`、远程工作区等场景下 `config.update` 抛错时，本次修改仍然即时生效（只在输出面板记一条日志），不会出现"点了没反应"。
+- **dsh 需要认证时的手动入口**：dsh rc.1 起裸地址返回 401，插件会优先复用记忆的 token；token 已失效（手动重启过 dsh 等）时会弹输入框让你粘贴启动时输出的完整地址（含 `?token=...`）。也可以随时从 `⋯` 菜单的"🔑 输入 dsh Token 地址…"或设置弹窗离线横幅里的"输入 Token 地址…"手动接入——校验通过后立即建立连接并重新加载工作区/会话。"是否自动启动 dsh 后端"关闭时若点状态点重连失败，还会给一个带该入口的提示框。
+- **不再弹模态错误框**：dsh 未就绪时的操作（新建会话、发送、`⋯` 菜单里的"在文件管理器中显示 / 打开 preset 目录"、点状态点重连失败等）一律改为**面板内 toast 提示**；"新建会话"按钮离线时直接禁用并在悬停提示原因。
+- 提示词暂存框（含暂存的图片）、草稿、归档视图开关、显示偏好等**纯本地状态**随时可用；会话列表/会话内容/模型/命令/发送这些需要后端的能力在连接后自动恢复（无需重启窗口）。
+
 ### 二、配置项
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -179,17 +191,19 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 - VS Code >= 1.90
 - Node >= 22（扩展宿主需提供全局 `WebSocket`；旧版宿主请确保可加载 `ws` 包）
-- 已安装 `@deepseek-ai/dsh` 且版本 **>= 0.1.5**（插件 1.1.2 的最低要求）
+- 已安装 `@deepseek-ai/dsh` 且版本 **>= 0.1.5-rc.1**（插件 1.1.4 的最低要求）
 
 #### 插件版本 ↔ dsh 版本对应关系（1.1.0 起）
 
 | 插件版本 | 最低 dsh 版本 | 主要适配内容 |
 |---|---|---|
-| **1.1.2**（当前） | **0.1.5** | 实时助手输出改用进程内 assistant-stream（durable 日志不再写 `assistant/chunk`）；`commands/execute` 附件参数改为 `submittedAttachments`；工作模式/模型选择分别以 `agentPreset`、`modelSelection` 投影为准；新增抽屉内容搜索、后台任务提示 |
+| **1.1.4**（当前） | **0.1.5-rc.1** | 协议要求与 1.1.3 相同（dsh 0.1.5 系列）；本版集中在启动/连接体验（自动启动不再做版本检测、改为启动后提醒升级；离线可用性与 token 手动入口；启动默认打开最近修改的会话）与设置面板调整，详见 CHANGELOG |
+| 1.1.3 | **0.1.5-rc.1** | 会话抽屉（最近修改时间排序、归档分组/一键清理、模式标签）、悬浮提示词暂存框（图片暂存、Ctrl+Shift+Enter）、设置 → 赞助页、前后端解耦与 dsh 认证手动入口 |
+| 1.1.2 | **0.1.5** | 实时助手输出改用进程内 assistant-stream（durable 日志不再写 `assistant/chunk`）；`commands/execute` 附件参数改为 `submittedAttachments`；工作模式/模型选择分别以 `agentPreset`、`modelSelection` 投影为准；新增抽屉内容搜索、后台任务提示 |
 | 1.1.1 | 0.1.2-rc.1 | 修复新会话"选择工作模式"点击无反馈；设置页与顶栏"打开 dsh Web"链接携带认证 token（协议同 1.1.0） |
 | 1.1.0 | 0.1.2-rc.1 | 首个 Typert Remote 适配版：一元 RPC `POST /api/<ns>/<method>` + `{args}`、单 WS `/api/remote.mux`、`$events`/`session/control`/`workspace/follow`/`session/follow` 四类逻辑流、首次启动 launch-token 认证 |
 
-> dsh 升级到新区间时必须同步升级插件：0.1.5 与 0.1.2-rc.1 的命令执行参数与助手实时输出协议互不兼容，插件对低于上表最低版本的 dsh 会拒绝启动。
+> dsh 升级到新区间时必须同步升级插件：0.1.5 与 0.1.2-rc.1 的命令执行参数与助手实时输出协议互不兼容。插件**不再用版本检测拦截启动**（自动启动时只定位可执行文件）：启动后会在后台核对版本，低于上表最低版本时弹出提醒要求升级 dsh（可用其"复制升级命令"按钮一键复制 `npm install -g @deepseek-ai/dsh@latest`），但不会阻止继续使用。
 
 ### 四、开发与打包
 
@@ -247,12 +261,15 @@ vsce package
   - Re-maps automatically when VS Code workspace folders change.
 - Session list, selection, creation, renaming, and fork (clone a session).
 - Session labels match the dsh web UI: `title` projection → working-directory name → session id (blank sessions show "New Session"), so the panel no longer shows "Session 1a2b3c4d" where the web shows the folder name.
+- **On startup the most recently modified session is opened by default**: the ordering matches the drawer (dsh `updatedAt` plus the activity the extension observed, with **running sessions treated as modified right now**); a blank session is only created when no session exists at all, and the choice is written to the output log (`启动时打开最近修改的会话: …`).
+- The drawer is sorted by **last modification time, newest first** — dsh `updatedAt` only equals `max(createdAt, last prompt)`, so the extension layers its own observed activity on top (prompt events, run start/finish, every new event of the open session); the webview also re-sorts by `updatedAt` as a safety net so the order always matches the relative-time labels.
 - The session list is sorted by **last modification time**: dsh `session/list` only exposes `updatedAt = max(createdAt, last prompt time)` (`sessionListMetadata` carries just `lastPromptAt`), so the extension additionally records the activity it observes (`api-session/activity` prompt times, `api-session/status` start/finish times, and every new event of the open session), takes the larger value, and both sorts and renders relative times from it — sessions the model is currently modifying stay at (or return to) the top instead of being stuck at their last-prompt time.
 - Each drawer row shows a **session mode** chip on the right (e.g. "Standard", "PTC Mode", "Anchored Standard"): the name comes from dsh `agentPresets/list` first (custom presets only have a name there), then from the built-in localized short names; sessions without a mode show no chip. It is **hidden automatically below 480px of panel width** (shown only when there is room), capped at 45% of the row width with an ellipsis so it never squeezes the session title.
 - The session list **does not distinguish forked sessions from normal ones**: dsh `session/fork` writes `parentSession` on the child (which is why it appears in dsh's lineage), but the plugin renders it exactly like any other session — no indent, no "fork" label, identical fork/rename/archive actions. Only **subagent sessions** (`origin: 'subagent'`, including subagents spawned by subagents) are nested under their parent, labelled "Subagent session" and select-only.
 - **A subagent session can be promoted to a normal (top-level) session — plugin view only**: hover a subagent row and click **⇧** to render it as a top-level row in the drawer (click **⇩** to restore nesting); the set is persisted in VS Code global state. dsh stores lineage in the creation-time header (`parentSession`) and exposes **no API to change it** (the RPC surface only has create/rename/fork/prompt/…, no detach/promote), so this only changes the plugin drawer — nesting in the dsh Web UI is unaffected.
 - Archived sessions: dsh has no unarchive API, so the plugin offers "Unarchive (plugin only, ↩)" plus a drawer-level toggle that labels the action it performs — "Show archived" while archived sessions are hidden, "Hide archived" while they are shown (same state as the `dsh-vsc.showArchivedSessions` setting, toggleable back and forth) — and a locally unarchived row is marked "Restored (plugin view only)" with a `↪ Hide again (plugin view only)` action. Such rows are labelled "**Archived session (extension view only)**" (hover for the explanation) — they really are archived in dsh, and since dsh has no unarchive API and its web UI filters archived sessions out of the session tree (`ui-workspace` filters by `archivedSessionIds`), they are visible **only inside the extension**; Settings → Manage workspaces offers "Clear \"extension view only\" (N)" to undo them in one click (the old "Hide archived" button used to write every archived session into that local set). The button carries the count (e.g. "Show archived (13)"); if every archived session of this workspace is already "shown anyway" locally there is nothing left to toggle, and the button tooltip explains that and points at the "Clear extension view only" action in Settings. When archived sessions are shown they are listed under an "**Archived (N)**" section header after the active ones (they are older, so they naturally sat at the bottom of a time-ordered list — now it is obvious which rows are archived), and turning the view on scrolls the drawer to that section.
 - Long-conversation paging: the initial mount keeps only the latest 500 items (the host trims its loaded window; the rest is not retained in memory). The single "Load earlier" button on top requests one older page from dsh (`session/page`), prepends it, and keeps the reading position anchored.
+- **Settings layout**: the nav is About / **Display** (**UI language**, session display mode, font size, max width, context usage) / **General** (send mode, prompt stash, startup behavior, **dsh server**) / Manage workspaces (when connected) / **Sponsor**. The "dsh server" section shows the current server URL (token included, read-only and non-selectable, with a **Copy** button) plus a "Connect to another dsh server" field and a **Reconnect** button — paste the full URL printed by dsh to switch/reconnect, or leave it empty to reconnect to the current server.
 - **Settings → Sponsor**: leads with "**Built for the love of it — free forever. If this extension suits you, feel free to tip whatever you like.**" and ships the WeChat Pay / Alipay QR codes (`sponsor/wx.jpg`, `sponsor/zfb.jpg`, inlined into the webview as data URIs so they work offline without `asWebviewUri`; click an image to enlarge it 2× for scanning), with a note that supporting is entirely optional.
 - Top bar: session title + status dot + Refresh/Settings/⋯; the refresh button performs a lightweight full refresh (session list + model catalog + command catalog + working modes + settings snapshot, **without reloading conversation history**), spins and disables itself while running, and keeps the current list with a "dsh is not ready yet" notice plus an automatic reconnect probe when dsh is unavailable; clicking the session title opens a Sessions drawer (search + New Session + a session list with running/archived/relative-time and fork/rename/archive actions per row). The new-session entry lives inside the drawer.
 - Drawer search: titles filter locally as you type; from 2 characters on, a debounced dsh `session/search` call adds a "Content matches" section (session + snippet, click to switch). When dsh keeps the full-text index disabled (`openAt: never`, the default) it silently falls back to title-only filtering.
@@ -349,6 +366,15 @@ vsce package
 - A forked session is auto-named "source title (fork YYYY-MM-DD HH:mm)" for identification.
 - When the source session has no completed turn (e.g. a freshly created blank session), a "no completed turn to fork" notice is shown.
 
+#### 1.9 Offline usability (while the dsh backend is not running)
+
+- **The settings dialog keeps working**: display (session display mode / font size / max width / context usage) and general (language, send mode, prompt-stash switch, startup behavior) settings are **local** and can be changed offline with immediate effect; only backend-dependent tabs such as "Manage workspaces" are hidden.
+- The dialog shows an offline banner ("⚠ The dsh backend is not connected: sessions, models and sending need it; the display/general settings and the prompt stash boxes on this page keep working offline.") with a **Re-detect dsh** button.
+- **A failed config write no longer blocks the UI**: when `config.update` throws (read-only `settings.json`, remote workspaces), the change still applies immediately and only a log line is written — no more "I clicked and nothing happened".
+- **Manual entry when dsh requires authentication**: since dsh rc.1 a bare URL returns 401. The extension reuses a remembered token first; when that token is stale (e.g. you restarted dsh yourself) it asks you to paste the URL printed at dsh startup (including `?token=...`). You can also connect manually any time via the `⋯` menu's "🔑 Enter dsh token URL…" or the "Enter token URL…" button in the settings offline banner — after validation the connection is established and workspaces/sessions are reloaded. With "auto-start the dsh backend" turned off, a failed status-dot retry also offers that entry in its prompt.
+- **No more modal error boxes**: backend-dependent actions while dsh is down (new session, send, the `⋯` menu's "Reveal in file manager / Open preset directory", a failed status-dot retry) now surface as **in-panel toasts**; the "New Session" button is disabled offline with the reason in its tooltip.
+- Purely local state — prompt stash boxes (including stashed images), drafts, the archived-view toggle, display preferences — always works; session list/conversation/models/commands/sending resume automatically once the backend is back (no window reload needed).
+
 ### 2. Configuration
 
 | Setting | Type | Default | Description |
@@ -372,17 +398,19 @@ vsce package
 
 - VS Code >= 1.90
 - Node >= 22 (the extension host must provide a global `WebSocket`; on older hosts make sure the `ws` package can be loaded)
-- `@deepseek-ai/dsh` installed, version **>= 0.1.5** (minimum for extension 1.1.2)
+- `@deepseek-ai/dsh` installed, version **>= 0.1.5-rc.1** (minimum for extension 1.1.4)
 
 #### Extension ↔ dsh version compatibility (since 1.1.0)
 
 | Extension | Minimum dsh | Adaptation highlights |
 |---|---|---|
-| **1.1.2** (current) | **0.1.5** | Live assistant output moved to the in-process assistant stream (durable logs no longer carry `assistant/chunk`); `commands/execute` attachments renamed to `submittedAttachments`; working mode and model selection now read the `agentPreset` and `modelSelection` projections; drawer content search and background-job indicator |
+| **1.1.4** (current) | **0.1.5-rc.1** | Same protocol requirement as 1.1.3 (the dsh 0.1.5 line); this release focuses on startup/connection UX (no version gate on auto-start — upgrade is only reminded after start; offline usability and the manual token entry; the most recently modified session opens on startup) and settings layout — see CHANGELOG |
+| 1.1.3 | **0.1.5-rc.1** | Session drawer (last-modified sorting, archived grouping + one-click clear, mode chips), floating prompt stash (image stashing, Ctrl+Shift+Enter), Settings → Sponsor page, offline decoupling and the manual dsh token entry |
+| 1.1.2 | **0.1.5** | Live assistant output moved to the in-process assistant stream (durable logs no longer carry `assistant/chunk`); `commands/execute` attachments renamed to `submittedAttachments`; working mode and model selection now read the `agentPreset` and `modelSelection` projections; drawer content search and background-job indicator |
 | 1.1.1 | 0.1.2-rc.1 | Fixes the silent "select working mode" click in a new session; settings/top-bar "Open dsh Web" links carry the auth token (same protocol as 1.1.0) |
 | 1.1.0 | 0.1.2-rc.1 | First Typert Remote release: unary RPC `POST /api/<ns>/<method>` with `{args}`, the single `/api/remote.mux` WebSocket, the `$events`/`session/control`/`workspace/follow`/`session/follow` logical streams, and first-launch launch-token authentication |
 
-> Upgrade the extension together with dsh: 0.1.5 and 0.1.2-rc.1 differ in command-execution arguments and live assistant output, so the extension refuses to start against a dsh below the minimum listed above.
+> Upgrade the extension together with dsh: 0.1.5 and 0.1.2-rc.1 differ in command-execution arguments and live assistant output. The extension **no longer blocks startup on a version check** (auto-start only locates the executable): once started it verifies the version in the background and, when it is below the minimum above, shows a reminder to upgrade dsh (with a "Copy upgrade command" button that copies `npm install -g @deepseek-ai/dsh@latest`) without preventing further use.
 
 ### 4. Development and Packaging
 

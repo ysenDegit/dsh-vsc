@@ -3,7 +3,6 @@
 const { accessSync, constants } = require('node:fs')
 const { execFile } = require('node:child_process')
 const { delimiter, join } = require('node:path')
-const { isAtLeast } = require('./version.js')
 
 function candidateNames() {
   if (process.platform === 'win32') return ['dsh.cmd', 'dsh.exe', 'dsh.ps1', 'dsh']
@@ -87,32 +86,19 @@ function fromNpx() {
   return { command: 'npx', args: ['--no-install', '@deepseek-ai/dsh'], source: 'npx' }
 }
 
-async function discoverDsh(options) {
+/**
+ * 定位 dsh 可执行文件（配置路径 → PATH → npm 全局目录 → `npx --no-install`）。
+ *
+ * **不再做版本探测**（用户要求：插件自动启动 dsh 后端时不再自动检测 dsh 版本）：
+ * 这里只判断"文件存在且可执行"，不再跑 `dsh --version`、也不再因为版本低而拒绝启动。
+ * 版本核对改到启动之后由 `DshService.verifyVersion()` 在后台进行，不满足要求时提醒升级。
+ */
+async function discoverDsh(options = {}) {
   const explicit = options.explicitPath?.trim()
-  const launcher = (explicit ? fromConfig(explicit) : null)
+  return (explicit ? fromConfig(explicit) : null)
     ?? fromPath()
     ?? (await fromNpmPrefix())
     ?? fromNpx()
-
-  const version = await probeVersion(launcher.command, launcher.args)
-  if (version === null) {
-    if (launcher.source === 'config') {
-      throw new Error(`配置的 dsh 路径不可执行或无法运行: ${explicit}`)
-    }
-    if (launcher.source === 'npx') {
-      throw new Error(
-        '未找到 dsh：PATH、npm 全局目录均无 dsh，且 `npx --no-install @deepseek-ai/dsh` 不可用。'
-        + ' 请先安装：`npm install -g @deepseek-ai/dsh`，或在设置 dsh-vsc.dshPath 中指定路径。',
-      )
-    }
-    throw new Error(`找到 dsh (${launcher.command}) 但无法执行 --version 探测。`)
-  }
-
-  if (!isAtLeast(version, options.minimumVersion)) {
-    throw new Error(`dsh 版本过低: ${version} < 要求的 ${options.minimumVersion}。请升级: npm install -g @deepseek-ai/dsh@latest`)
-  }
-
-  return { ...launcher, version }
 }
 
 module.exports = { discoverDsh, probeVersion, candidateNames, isExecutable }

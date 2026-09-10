@@ -552,12 +552,17 @@
      * root 保持输入顺序；父会话不在列表里的"孤儿"降级为 root（不丢弃），环状引用用 visited 兜底。
      */
     function buildSessionLineage(sessions) {
+      // 列表一律按"最近修改时间"倒序（宿主已排好；这里再兜一次底，
+      // 保证展示顺序与行内"刚刚/N 分钟前"的时间标签一致）。
+      var ordered = sessions.slice().sort(function (a, b) {
+        return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+      });
       var byId = {};
-      for (var i = 0; i < sessions.length; i++) byId[sessions[i].sessionId] = sessions[i];
+      for (var i = 0; i < ordered.length; i++) byId[ordered[i].sessionId] = ordered[i];
       var children = {};
       var roots = [];
-      for (var j = 0; j < sessions.length; j++) {
-        var item = sessions[j];
+      for (var j = 0; j < ordered.length; j++) {
+        var item = ordered[j];
         // 只有子代理会话参与嵌套；被"提升为普通会话"（插件视图内）的子代理也不参与。
         var parentId = (isSubagentSessionRow(item) && !item.promotedLocally) ? item.parentSessionId : null;
         if (parentId && byId[parentId]) {
@@ -958,6 +963,9 @@
       badge.classList.toggle('retryable', retryable);
       badge.title = retryable ? t('statusRetry') : '';
       sendBtn.disabled = status !== 'ready';
+      // 新建会话需要后端：未就绪时禁用并提示，避免点了弹错误框。
+      drawerNewBtn.disabled = status !== 'ready';
+      drawerNewBtn.title = status !== 'ready' ? t('newSessionOffline') : t('newSessionTitle');
       updatePromptStashButtons();
       modelBtn.disabled = status !== 'ready';
       modelSelectEl.disabled = status !== 'ready';

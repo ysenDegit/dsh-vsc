@@ -101,6 +101,7 @@
     var moreBtn = $('moreBtn');
     var moreMenu = $('moreMenu');
     var moreOpenWebBtn = $('moreOpenWebBtn');
+    var moreTokenBtn = $('moreTokenBtn');
     var moreRevealFolderBtn = $('moreRevealFolderBtn');
     var morePresetDirBtn = $('morePresetDirBtn');
     var drawerArchivedToggle = $('drawerArchivedToggle');

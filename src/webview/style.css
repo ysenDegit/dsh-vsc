@@ -113,6 +113,31 @@
     .drawer-item .drawer-main { flex: 1; min-width: 0; }
     .drawer-item .drawer-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .drawer-item .drawer-meta { color: var(--muted); font-size: 11px; }
+    /* dsh 服务器设置：当前完整地址（只读、不可选中）+ 复制按钮；新地址输入行。 */
+    .dsh-url-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .dsh-url-value {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--vscode-editor-font-family, monospace); font-size: 11px;
+      color: var(--muted); background: var(--input-bg); border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm); padding: 4px 6px;
+      /* 需求：只读提示字符串，不可选中（复制请用旁边的按钮）。 */
+      user-select: none; cursor: default;
+    }
+    .dsh-url-row input[type=text] {
+      flex: 1; min-width: 0; background: var(--input-bg); color: var(--input-fg);
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: 4px 6px; font: inherit; font-size: 12px;
+    }
+    .dsh-url-row button { flex: 0 0 auto; }
+    /* 设置弹窗顶部的离线横幅（dsh 未连接时）。 */
+    .settings-offline {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 6px 10px; font-size: 11px; line-height: 1.5;
+      background: var(--tool-bg); color: var(--fg);
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .settings-offline .settings-offline-text { flex: 1; min-width: 160px; }
+    .settings-offline button { flex: 0 0 auto; }
     /* 设置 → 赞助：收款码图片（点击放大到 2 倍）。 */
     .sponsor-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
     .sponsor-slogan { font-weight: 600; line-height: 1.6; margin-bottom: 4px; }

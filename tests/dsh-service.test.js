@@ -2,6 +2,9 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
+const { mkdtempSync, writeFileSync, chmodSync } = require('node:fs')
+const { tmpdir } = require('node:os')
+const { join } = require('node:path')
 const { DshService } = require('../src/dsh-service.js')
 
 function makeService() {
@@ -132,4 +135,56 @@ test('ensureAuthToken probes a tokenless instance before opening', async () => {
   } finally {
     global.fetch = originalFetch
   }
+})
+
+test('verifyVersion warns once when the detected dsh version is below the requirement', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-version-'))
+  const script = join(dir, 'dsh')
+  writeFileSync(script, '#!/bin/sh\necho "0.1.4"\n')
+  chmodSync(script, 0o755)
+
+  const warnings = []
+  const logs = []
+  const dsh = new DshService({
+    minimumVersion: '0.1.5-rc.1',
+    onLog: (line) => logs.push(line),
+    onVersionOutdated: (info) => warnings.push(info),
+  })
+  dsh.launcher = { command: script, args: [], source: 'config' }
+
+  assert.equal(await dsh.verifyVersion(), '0.1.4')
+  assert.deepEqual(warnings, [{ current: '0.1.4', minimum: '0.1.5-rc.1' }])
+  assert.equal(dsh.version, '0.1.4')
+  // 重复调用（例如重连）不重复打扰。
+  await dsh.verifyVersion()
+  assert.equal(warnings.length, 1)
+  assert.ok(logs.some((line) => line.includes('版本过低')))
+})
+
+test('verifyVersion stays silent when the version satisfies the requirement', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-version-ok-'))
+  const script = join(dir, 'dsh')
+  writeFileSync(script, '#!/bin/sh\necho "0.1.5-rc.1"\n')
+  chmodSync(script, 0o755)
+
+  const warnings = []
+  const logs = []
+  const dsh = new DshService({
+    minimumVersion: '0.1.5-rc.1',
+    onLog: (line) => logs.push(line),
+    onVersionOutdated: (info) => warnings.push(info),
+  })
+  dsh.launcher = { command: script, args: [], source: 'config' }
+
+  assert.equal(await dsh.verifyVersion(), '0.1.5-rc.1')
+  assert.deepEqual(warnings, [])
+  assert.ok(logs.some((line) => line.includes('满足要求')))
+})
+
+test('verifyVersion never throws when the version cannot be probed', async () => {
+  const logs = []
+  const dsh = new DshService({ minimumVersion: '0.1.5-rc.1', onLog: (line) => logs.push(line) })
+  dsh.launcher = { command: '/definitely/not/a/dsh', args: [], source: 'config' }
+  assert.equal(await dsh.verifyVersion(), null)
+  assert.ok(logs.some((line) => line.includes('无法探测')))
 })

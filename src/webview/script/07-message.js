@@ -250,7 +250,9 @@
           }
           break;
         case 'notice':
-          // 状态栏提示可忽略，保持界面安静
+          // 宿主的面板内提示（离线/后端未就绪/刷新未就绪等）：用 toast 显示，
+          // 不再静默丢弃——否则"点了没反应"的错觉就来自这里。
+          if (msg.text) showToast(msg.text, msg.level === 'error' ? 'error' : '', false);
           break;
         case 'forkDone':
           showToast('fork 完成：' + (msg.title || '新会话'), 'ok', false);

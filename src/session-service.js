@@ -48,7 +48,12 @@ class SessionService {
 
   requireClient() {
     const client = this.wire()
-    if (!client) throw new Error('dsh web 尚未就绪')
+    if (!client) {
+      // 标记 code：chat-view 的统一 catch 会把它转成面板内提示（离线不弹错误框）。
+      const error = new Error('dsh web 尚未就绪')
+      error.code = 'dsh-not-ready'
+      throw error
+    }
     return client
   }
 

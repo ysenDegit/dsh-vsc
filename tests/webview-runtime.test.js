@@ -354,10 +354,11 @@ test('session drawer: forked sessions render exactly like normal sessions; only 
 
   const rows = context.document.getElementById('drawerList').childNodes
     .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const rowById = new Map(rows.map((row) => [row.getAttribute('data-session-id'), row]))
   assert.deepEqual(
     rows.map((row) => row.getAttribute('data-session-id')),
-    ['S-root', 'S-sub', 'S-sub2', 'S-fork', 'S-fork2'],
-    'only subagents follow their parent; forked sessions stay top-level (and must never disappear)',
+    ['S-fork2', 'S-fork', 'S-root', 'S-sub', 'S-sub2'],
+    '顶层按最近修改时间倒序；子代理会话紧随其父会话',
   )
   const metaOf = (row) => row.childNodes[1].childNodes[1].textContent
   const actionKinds = (row) => {
@@ -366,7 +367,7 @@ test('session drawer: forked sessions render exactly like normal sessions; only 
   }
 
   // 分支会话 = 普通会话：不缩进、不带任何"分支"标记、操作与顶层会话完全一致。
-  for (const forkRow of [rows[3], rows[4]]) {
+  for (const forkRow of [rowById.get('S-fork'), rowById.get('S-fork2')]) {
     assert.equal(forkRow.style.paddingLeft, undefined, 'a forked session must not be indented')
     assert.ok(!String(forkRow.className).includes('drawer-child'))
     assert.ok(!String(forkRow.className).includes('drawer-subagent'))
@@ -375,11 +376,11 @@ test('session drawer: forked sessions render exactly like normal sessions; only 
   }
 
   // 只有子代理会话嵌套（含子代理的子代理），标"子代理会话"且只给视图级提升操作。
-  assert.match(metaOf(rows[1]), /^子代理会话/)
-  assert.equal(rows[1].style.paddingLeft, '22px')
-  assert.deepEqual(actionKinds(rows[1]), ['promoteSession'])
-  assert.match(metaOf(rows[2]), /^子代理会话/)
-  assert.equal(rows[2].style.paddingLeft, '36px', 'depth 2 indents deeper than depth 1')
+  assert.match(metaOf(rowById.get('S-sub')), /^子代理会话/)
+  assert.equal(rowById.get('S-sub').style.paddingLeft, '22px')
+  assert.deepEqual(actionKinds(rowById.get('S-sub')), ['promoteSession'])
+  assert.match(metaOf(rowById.get('S-sub2')), /^子代理会话/)
+  assert.equal(rowById.get('S-sub2').style.paddingLeft, '36px', 'depth 2 indents deeper than depth 1')
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })
@@ -393,6 +394,7 @@ test('session drawer: a subagent session can be promoted to a top-level row (plu
   const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
   const rowsOf = () => context.document.getElementById('drawerList').childNodes
     .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const rowById = (id) => rowsOf().find((row) => row.getAttribute('data-session-id') === id)
   const metaOf = (row) => row.childNodes[1].childNodes[1].textContent
   const actionButton = (row, kind) => {
     const actions = (row.childNodes || []).find((node) => node && String(node.className) === 'drawer-actions')
@@ -406,16 +408,16 @@ test('session drawer: a subagent session can be promoted to a top-level row (plu
   // dsh 的谱系不可改（header.parentSession 只在创建时写入），提升只是插件视图内的显示开关；
   // 分支会话已按普通会话顶层显示，所以只有子代理会话还需要这个开关。
   dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-root', conversation: [] })
-  assert.match(metaOf(rowsOf()[1]), /^子代理会话/)
+  assert.match(metaOf(rowById('S-sub')), /^子代理会话/)
 
   // 事件委托：点行本身 = 选中会话，点行内按钮 = 执行该动作。
-  rowsOf()[1].click()
+  rowById('S-sub').click()
   assert.deepEqual(
     posted.filter((message) => message.type === 'selectSession').pop(),
     { type: 'selectSession', sessionId: 'S-sub' },
   )
 
-  actionButton(rowsOf()[1], 'promoteSession').click()
+  actionButton(rowById('S-sub'), 'promoteSession').click()
   assert.deepEqual(
     posted.filter((message) => message.type === 'promoteSession').pop(),
     { type: 'promoteSession', sessionId: 'S-sub', promoted: true },
@@ -426,7 +428,7 @@ test('session drawer: a subagent session can be promoted to a top-level row (plu
     type: 'sessions', selectedSessionId: 'S-root',
     sessions: [sessions[0], { ...sessions[1], promotedLocally: true }],
   })
-  const promotedRow = rowsOf()[1]
+  const promotedRow = rowById('S-sub')
   assert.equal(promotedRow.style.paddingLeft, undefined, 'a promoted session must render as a top-level row')
   assert.ok(!String(promotedRow.className).includes('drawer-child'))
   assert.ok(metaOf(promotedRow).includes('已提升为普通会话'))
@@ -440,8 +442,8 @@ test('session drawer: a subagent session can be promoted to a top-level row (plu
 
   // 恢复层级后重新嵌套回父会话下面。
   dispatch({ type: 'sessions', selectedSessionId: 'S-root', sessions })
-  assert.match(metaOf(rowsOf()[1]), /^子代理会话/)
-  assert.equal(rowsOf()[1].style.paddingLeft, '22px')
+  assert.match(metaOf(rowById('S-sub')), /^子代理会话/)
+  assert.equal(rowById('S-sub').style.paddingLeft, '22px')
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })
@@ -586,6 +588,7 @@ test('session drawer: rows carry the session mode label (host name first, built-
   const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
   const rowsOf = () => context.document.getElementById('drawerList').childNodes
     .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const rowById = (id) => rowsOf().find((row) => row.getAttribute('data-session-id') === id)
   const modeOf = (row) => {
     const chip = (row.childNodes || []).find((node) => node && String(node.className) === 'drawer-mode')
     return chip || null
@@ -603,16 +606,16 @@ test('session drawer: rows carry the session mode label (host name first, built-
     presets: [{ id: 'anchored-standard', name: '锚定标准模式' }, { id: 'standard', name: '标准模式' }],
   })
 
-  assert.equal(modeOf(rowsOf()[0]).textContent, '锚定标准模式', 'custom presets use the host catalog name')
-  assert.equal(modeOf(rowsOf()[0]).title, '会话模式：锚定标准模式')
-  assert.equal(modeOf(rowsOf()[1]).textContent, 'PTC 模式', 'built-in ids fall back to the localized short name')
-  assert.equal(modeOf(rowsOf()[2]), null, 'sessions without an agent preset show no mode label')
-  assert.equal(modeOf(rowsOf()[3]).textContent, '极简模式', 'the projection value alone is enough')
+  assert.equal(modeOf(rowById('S-custom')).textContent, '锚定标准模式', 'custom presets use the host catalog name')
+  assert.equal(modeOf(rowById('S-custom')).title, '会话模式：锚定标准模式')
+  assert.equal(modeOf(rowById('S-ptc')).textContent, 'PTC 模式', 'built-in ids fall back to the localized short name')
+  assert.equal(modeOf(rowById('S-none')), null, 'sessions without an agent preset show no mode label')
+  assert.equal(modeOf(rowById('S-proj')).textContent, '极简模式', 'the projection value alone is enough')
 
   // 界面语言切换后标签跟着变（内置短名本地化；宿主目录名原样保留）。
   dispatch({ type: 'language', value: 'en' })
-  assert.equal(modeOf(rowsOf()[1]).textContent, 'PTC Mode')
-  assert.equal(modeOf(rowsOf()[0]).textContent, '锚定标准模式')
+  assert.equal(modeOf(rowById('S-ptc')).textContent, 'PTC Mode')
+  assert.equal(modeOf(rowById('S-custom')).textContent, '锚定标准模式')
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })
@@ -838,4 +841,199 @@ test('settings: the sponsor tab embeds both payment QR codes', async () => {
   assert.ok(String(box.className).includes('zoomed'), 'clicking a QR code enlarges it')
   box.click()
   assert.equal(String(box.className).includes('zoomed'), false, 'clicking again restores the size')
+})
+
+test('offline: settings banner, in-panel notices and the disabled New Session button', async () => {
+  const script = getBundleScript('offline-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+
+  // dsh 未启动：状态点 stopped、"新建会话"禁用、设置弹窗顶部出现离线横幅（含重试按钮）。
+  dispatch({ type: 'hydrate', status: 'stopped', workspace: null, sessions: [], selectedSessionId: null, conversation: [] })
+  const newSessionBtn = context.document.getElementById('drawerNewBtn')
+  assert.equal(newSessionBtn.disabled, true, 'creating a session needs the backend')
+  assert.equal(newSessionBtn.title, 'dsh 后端未连接，无法新建会话')
+
+  dispatch({ type: 'settingsData', data: { writable: false, hasDocument: false, connected: false, workspaces: [], version: '1.1.3' } })
+  const banner = context.document.getElementById('settingsOffline')
+  assert.equal(banner.hidden, false)
+  const bannerText = walk(banner).map((node) => node.textContent).join(' ')
+  assert.ok(bannerText.includes('dsh 后端未连接'), bannerText)
+  const retry = walk(banner).find((node) => node.tagName === 'BUTTON')
+  assert.equal(retry.textContent, '重新检测 dsh')
+  retry.click()
+  assert.deepEqual(
+    posted.filter((message) => message.type === 'retryConnect').pop(),
+    { type: 'retryConnect' },
+  )
+
+  // 后端未就绪的错误 → 面板内 toast（而不是被静默丢弃/弹模态框）。
+  assert.equal(String(context.document.getElementById('toast').className).includes('open'), false)
+  dispatch({ type: 'notice', text: 'dsh web 尚未就绪', level: 'error' })
+  const toast = context.document.getElementById('toast')
+  assert.ok(String(toast.className).includes('open'), 'notices must become visible toasts')
+  assert.ok(String(toast.className).includes('error'))
+  assert.equal(walk(toast).map((node) => node.textContent).join(''), 'dsh web 尚未就绪')
+
+  // 后端连上后：按钮恢复、横幅消失。
+  dispatch({ type: 'serviceStatus', status: 'ready' })
+  dispatch({ type: 'settingsData', data: { writable: true, hasDocument: true, connected: true, workspaces: [], version: '1.1.3' } })
+  assert.equal(newSessionBtn.disabled, false)
+  assert.equal(banner.hidden, true)
+  assert.equal(banner.childNodes.length, 0)
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('auth: manual token entry is reachable from the menu and the offline banner', async () => {
+  const script = getBundleScript('auth-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+
+  dispatch({ type: 'hydrate', status: 'stopped', workspace: null, sessions: [], selectedSessionId: null, conversation: [] })
+  dispatch({ type: 'settingsData', data: { writable: false, hasDocument: false, connected: false, workspaces: [], version: '1.1.3' } })
+
+  // ⋯ 菜单里的手动入口（dsh 需要认证时唯一能拿到 token 的地方）。
+  const menuBtn = context.document.getElementById('moreTokenBtn')
+  assert.equal(menuBtn.textContent, '🔑 输入 dsh Token 地址…')
+  menuBtn.click()
+  assert.deepEqual(posted.filter((message) => message.type === 'enterToken').pop(), { type: 'enterToken' })
+
+  // 设置弹窗离线横幅里也有一个，按钮顺序：重新检测 dsh → 输入 Token 地址…
+  const banner = context.document.getElementById('settingsOffline')
+  const bannerButtons = walk(banner).filter((node) => node.tagName === 'BUTTON')
+  assert.deepEqual(bannerButtons.map((btn) => btn.textContent), ['重新检测 dsh', '输入 Token 地址…'])
+  bannerButtons[1].click()
+  assert.equal(posted.filter((message) => message.type === 'enterToken').length, 2)
+
+  // 英文界面下菜单项跟着切换。
+  dispatch({ type: 'language', value: 'en' })
+  assert.equal(menuBtn.textContent, '🔑 Enter dsh token URL…')
+})
+
+test('settings: language lives in Display, and General has a dsh server section', async () => {
+  const script = getBundleScript('dsh-server-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+  const paneOf = (tab) => walk(context.document.getElementById('settingsContent'))
+    .find((node) => node.dataset && node.dataset.tab === tab)
+  const texts = (node) => walk(node).map((child) => child.textContent).join(' | ')
+
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: null, conversation: [] })
+  dispatch({
+    type: 'settingsData',
+    data: {
+      writable: true, hasDocument: true, connected: true, workspaces: [], version: '1.1.3',
+      baseUrl: 'http://127.0.0.1:3080', webUrl: 'http://127.0.0.1:3080/?token=Su1HXba0PuyHXXES8fbtuClH1UUv8ou8ipaDSbS17Qs',
+    },
+  })
+
+  // 1) 界面语言在"显示"页（不再在"通用"页），且位于该页最上方。
+  assert.ok(texts(paneOf('display')).includes('界面语言'), 'language must live in the Display pane')
+  assert.equal(texts(paneOf('general')).includes('界面语言'), false, 'language must be gone from General')
+  const displaySections = walk(paneOf('display')).filter((node) => String(node.className) === 'settings-section')
+  assert.ok(
+    texts(displaySections[0]).includes('界面语言'),
+    '语言设置必须是"显示"页的第一个分区',
+  )
+
+  // 2) 通用页有 dsh 服务器设置：当前地址只读展示 + 复制按钮。
+  const general = paneOf('general')
+  const generalText = texts(general)
+  assert.ok(generalText.includes('dsh 服务器'), generalText.slice(0, 120))
+  const currentUrl = walk(general).find((node) => node.id === 'dshCurrentUrl')
+  assert.equal(currentUrl.textContent, 'http://127.0.0.1:3080/?token=Su1HXba0PuyHXXES8fbtuClH1UUv8ou8ipaDSbS17Qs')
+  assert.equal(currentUrl.tagName, 'SPAN', 'the current URL is a read-only hint string, not an input')
+  const copyBtn = walk(general).find((node) => node.tagName === 'BUTTON' && node.textContent === '复制')
+  assert.ok(copyBtn, 'a copy button must be offered')
+  let copied = null
+  context.navigator.clipboard.writeText = async (value) => { copied = value }
+  copyBtn.click()
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(copied, 'http://127.0.0.1:3080/?token=Su1HXba0PuyHXXES8fbtuClH1UUv8ou8ipaDSbS17Qs', 'the copy button writes the full URL')
+
+  // 3) 粘贴新地址 + 重新连接 → 发给宿主；留空 = 重连当前服务。
+  const input = walk(general).find((node) => node.id === 'dshServerInput')
+  assert.equal(input.placeholder, 'http://127.0.0.1:3080/?token=...')
+  const reconnectBtn = walk(general).find((node) => node.tagName === 'BUTTON' && node.textContent === '重新连接')
+  input.value = '  http://127.0.0.1:4000/?token=abc  '
+  reconnectBtn.click()
+  assert.deepEqual(
+    posted.filter((message) => message.type === 'dshReconnect').pop(),
+    { type: 'dshReconnect', url: 'http://127.0.0.1:4000/?token=abc' },
+  )
+  input.value = ''
+  reconnectBtn.click()
+  assert.deepEqual(
+    posted.filter((message) => message.type === 'dshReconnect').pop(),
+    { type: 'dshReconnect', url: '' },
+  )
+
+  // 4) 未连接时：显示占位文案、复制按钮禁用。
+  dispatch({
+    type: 'settingsData',
+    data: { writable: false, hasDocument: false, connected: false, workspaces: [], version: '1.1.3' },
+  })
+  const offlineGeneral = paneOf('general')
+  assert.equal(walk(offlineGeneral).find((node) => node.id === 'dshCurrentUrl').textContent, '（未连接）')
+  const offlineCopy = walk(offlineGeneral).find((node) => node.tagName === 'BUTTON' && node.textContent === '复制')
+  assert.equal(offlineCopy.disabled, true)
+})
+
+test('session drawer: rows are ordered by last modification time (newest first)', async () => {
+  const script = getBundleScript('order-by-time-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const ids = () => context.document.getElementById('drawerList').childNodes
+    .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+    .map((row) => row.getAttribute('data-session-id'))
+
+  // 宿主即使发来乱序（或旧版本顺序不对），抽屉也必须按 updatedAt 倒序渲染。
+  const base = { running: false, blank: false, archived: false }
+  dispatch({
+    type: 'hydrate', status: 'ready', workspace: null, selectedSessionId: null, conversation: [],
+    sessions: [
+      { sessionId: 'A', displayTitle: 'A', updatedAt: 100, ...base },
+      { sessionId: 'B', displayTitle: 'B', updatedAt: 300, ...base },
+      { sessionId: 'C', displayTitle: 'C', updatedAt: 200, ...base },
+    ],
+  })
+  assert.deepEqual(ids(), ['B', 'C', 'A'])
+
+  // 某个会话被修改（updatedAt 变大）后应立刻排到最前。
+  dispatch({
+    type: 'sessions', selectedSessionId: null,
+    sessions: [
+      { sessionId: 'A', displayTitle: 'A', updatedAt: 400, ...base },
+      { sessionId: 'B', displayTitle: 'B', updatedAt: 300, ...base },
+      { sessionId: 'C', displayTitle: 'C', updatedAt: 200, ...base },
+    ],
+  })
+  assert.deepEqual(ids(), ['A', 'B', 'C'], '越近修改的会话越靠上')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
 })

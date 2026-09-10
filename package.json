@@ -2,7 +2,7 @@
   "name": "dsh-vsc-weblike",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "1.1.2",
+  "version": "1.1.4",
   "publisher": "ysen",
   "license": "MIT",
   "engines": {
@@ -89,8 +89,8 @@
         },
         "dsh-vsc.minDshVersion": {
           "type": "string",
-          "default": "0.1.5",
-          "description": "Minimum accepted dsh version (semver, prerelease-aware)."
+          "default": "0.1.5-rc.1",
+          "description": "Minimum accepted dsh version (semver, prerelease-aware). The plugin no longer blocks startup on it: the version of a plugin-started backend is checked in the background and you are reminded to upgrade when it is lower."
         },
         "dsh-vsc.autoStart": {
           "type": "boolean",
