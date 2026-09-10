@@ -17,6 +17,7 @@
         </label>
         <span class="spacer" style="flex:1"></span>
         <button id="drawerNewBtn" class="primary">＋ New Session</button>
+        <button id="drawerArchivedToggle" class="drawer-archived-toggle" hidden></button>
         <button id="drawerCloseBtn" title="关闭">✕</button>
       </div>
       <input id="drawerSearch" class="drawer-search" type="text" placeholder="Search sessions…" />
@@ -24,13 +25,18 @@
     </div>
     <div id="moreMenu" class="more-menu">
       <button id="moreOpenWebBtn">🌐 打开 dsh Web</button>
+      <button id="moreRevealFolderBtn" hidden>📁 在文件管理器中显示</button>
+      <button id="morePresetDirBtn" hidden>🧩 打开 preset 目录</button>
     </div>
     <div id="toast" class="toast"></div>
+    <div id="sessionBanner" class="session-banner" hidden></div>
     <div id="chat" class="chat">
       <div class="empty">正在连接 DeepSeek Harness…</div>
     </div>
     <div class="composer">
+      <div id="promptStash" class="prompt-stash" hidden></div>
       <div id="pendingImages" class="pending-images" hidden></div>
+      <div id="pendingFiles" class="pending-images pending-files" hidden></div>
       <div id="composerNotice" class="composer-notice" hidden></div>
       <div id="filePicker" class="file-picker"></div>
       <div id="commandPicker" class="file-picker command-picker"></div>
@@ -41,13 +47,17 @@
       <div class="composer-capsule">
         <div id="composerRow" class="composer-row">
           <button id="imageBtn" class="icon-btn" title="选择图片">📷</button>
+          <button id="fileBtn" class="icon-btn" title="添加文件">📎</button>
           <textarea id="composerInput" rows="1" placeholder="Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令"></textarea>
           <input type="file" id="imageFileInput" accept="image/*" multiple hidden>
+          <input type="file" id="attachFileInput" multiple hidden>
           <button id="sendBtn" class="primary" title="发送"><span class="send-label">发送</span><span class="send-count" hidden></span></button>
           <button id="actionsBtn" class="icon-btn slash-btn" title="模型与权限"><span class="slash-icon"></span></button>
           <button id="stopBtn" class="icon-btn" title="停止生成" style="display:none">■</button>
+          <button id="stashAddBtn" class="icon-btn stash-add-btn" title="添加提示词暂存框">＋</button>
         </div>
       </div>
+      <div id="jobsPanel" class="composer-popover jobs-panel" hidden></div>
       <div id="modelPopover" class="composer-popover">
         <div class="cp-row">
           <label id="modelLabel">模型</label>

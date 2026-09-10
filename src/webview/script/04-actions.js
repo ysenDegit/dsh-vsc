@@ -128,9 +128,9 @@
 
     function sendMessage() {
       var text = inputEl.value.trim();
-      if (!text && pendingImages.length === 0) return;
+      if (!text && pendingImages.length === 0 && pendingFiles.length === 0) return;
       if (state.status !== 'ready') return;
-      if (pendingImages.length > 0 && text.charAt(0) === '/') {
+      if ((pendingImages.length > 0 || pendingFiles.length > 0) && text.charAt(0) === '/') {
         var token = text.split(/s+/)[0];
         var known = null;
         var cmds = state.commands || [];
@@ -142,11 +142,20 @@
           return;
         }
       }
-      post({ type: 'send', text: text, images: pendingImages.slice(), clientTimeZone: clientTimeZoneName() });
+      post({
+        type: 'send',
+        text: text,
+        images: pendingImages.slice(),
+        files: pendingFiles.slice(),
+        clientTimeZone: clientTimeZoneName(),
+      });
       inputEl.value = '';
       inputEl.style.height = 'auto';
+      updateStashAddButton();
       pendingImages = [];
+      pendingFiles = [];
       renderPendingImages();
+      renderPendingFiles();
       closePicker();
     }
 
@@ -172,8 +181,9 @@
       var countEl = sendBtn.querySelector('.send-count');
       if (labelEl) labelEl.textContent = t('send');
       if (countEl) {
-        countEl.hidden = pendingImages.length === 0;
-        countEl.textContent = String(pendingImages.length);
+        var total = pendingImages.length + pendingFiles.length;
+        countEl.hidden = total === 0;
+        countEl.textContent = String(total);
       }
       sendBtn.title = t('send');
     }
@@ -222,6 +232,51 @@
           if (added === total) showComposerNotice(t('imagePicked', { count: String(added) }));
         };
         reader.onerror = function () { showComposerNotice(t('imageReadFailed')); };
+        reader.readAsDataURL(file);
+      })(files[j]);
+    }
+
+    function renderPendingFiles() {
+      if (!pendingFilesEl) return;
+      pendingFilesEl.innerHTML = '';
+      if (pendingFiles.length === 0) { pendingFilesEl.hidden = true; return; }
+      pendingFilesEl.hidden = false;
+      for (var i = 0; i < pendingFiles.length; i++) {
+        (function (entry, index) {
+          var box = document.createElement('div');
+          box.className = 'pending-file';
+          var name = document.createElement('span');
+          name.className = 'pending-file-name';
+          name.textContent = entry.name || t('attachFile');
+          var rm = document.createElement('button');
+          rm.textContent = '×';
+          rm.title = t('imageRemove');
+          rm.addEventListener('click', function () {
+            pendingFiles.splice(index, 1);
+            renderPendingFiles();
+          });
+          box.appendChild(name);
+          box.appendChild(rm);
+          pendingFilesEl.appendChild(box);
+        })(pendingFiles[i], i);
+      }
+    }
+
+    /** 读取待发送文件为 base64（宿主发送前用 file-upload 的 upload 端点换 receiptId）。 */
+    function readAttachFiles(files) {
+      for (var j = 0; j < files.length; j++) (function (file) {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var dataUrl = String(reader.result || '');
+          var m = /^data:([^;,]*);base64,(.+)$/.exec(dataUrl);
+          if (!m) return;
+          pendingFiles.push({ name: file.name || '', data: m[2] });
+          renderPendingFiles();
+          showComposerNotice(t('attachedFiles', { count: String(pendingFiles.length) }));
+        };
+        reader.onerror = function () {
+          showComposerNotice(t('filePickFailed', { message: file.name || '' }));
+        };
         reader.readAsDataURL(file);
       })(files[j]);
     }
@@ -838,6 +893,8 @@
       closeModelPopover();
       if (hasQuestion || hasApproval) workIndicatorEl.style.display = 'none';
       else updateWorkingBar();
+      // 待回答问题/审批时 composer 行整行隐藏，悬浮暂存层一并收起，避免遮挡面板。
+      renderPromptStash();
     }
 
     function setRunning(running) {
@@ -1057,9 +1114,113 @@
           parts.push(t('stats.inputOutput', { input: formatTokens(billedInput), output: formatTokens(output) }));
         }
       }
+      var jobs = (stats && stats.jobs) || [];
+      var activeJobs = 0;
+      for (var ji = 0; ji < jobs.length; ji++) {
+        if (jobs[ji] && (jobs[ji].status === 'running' || jobs[ji].status === 'stopping')) activeJobs++;
+      }
+      if (activeJobs > 0) parts.push(t('stats.jobs', { count: activeJobs }));
       statsTextEl.textContent = parts.join(' | ');
       renderTodos();
       renderPermissions();
+      renderSessionBanner(stats);
+      renderJobs(stats);
+    }
+
+    /**
+     * 目标/计划模式横幅（0.1.5 的 goal / plan 投影）。
+     * 目标部分可被用户点 × 关闭：宿主记录"当前目标指纹"，目标更新后自动再次显示。
+     */
+    function renderSessionBanner(stats) {
+      if (!sessionBannerEl) return;
+      var goal = stats && stats.goal;
+      var plan = stats && stats.plan;
+      var dismissed = !!(stats && stats.goalDismissed);
+      var parts = [];
+      // 0.1.5 投影：plan = {active,pending}；goal = {goal:{objective,phase,maxGoalRounds},...}。
+      if (plan && plan.active) parts.push(t('planTitle'));
+      else if (plan && plan.pending) parts.push(t('planTitle') + '…');
+      var snapshot = goal && typeof goal === 'object' ? goal.goal : null;
+      var objective = snapshot && typeof snapshot.objective === 'string' ? snapshot.objective : '';
+      var showGoal = Boolean(objective) && !dismissed;
+      if (showGoal) {
+        var phase = snapshot.phase ? ' (' + String(snapshot.phase) + ')' : '';
+        parts.push(t('goalTitle') + ': ' + objective.slice(0, 120) + phase);
+      }
+      if (!parts.length) {
+        sessionBannerEl.hidden = true;
+        sessionBannerEl.innerHTML = '';
+        return;
+      }
+      sessionBannerEl.hidden = false;
+      sessionBannerEl.innerHTML = '';
+      var text = document.createElement('span');
+      text.className = 'session-banner-text';
+      text.textContent = parts.join(' · ');
+      sessionBannerEl.appendChild(text);
+      if (showGoal) {
+        var dismiss = document.createElement('button');
+        dismiss.className = 'session-banner-close';
+        dismiss.textContent = '×';
+        dismiss.title = t('closePanel');
+        dismiss.addEventListener('click', function (event) {
+          event.stopPropagation();
+          post({ type: 'dismissGoalBanner', sessionId: state.selectedSessionId });
+          sessionBannerEl.hidden = true;
+        });
+        sessionBannerEl.appendChild(dismiss);
+      }
+    }
+
+    /** 后台任务面板：统计行里的任务数字可点开查看详情。 */
+    function renderJobs(stats) {
+      if (!jobsPanel) return;
+      var jobs = (stats && stats.jobs) || [];
+      state.jobs = jobs;
+      jobsPanel.innerHTML = '';
+      var title = document.createElement('div');
+      title.className = 'cp-group-title';
+      title.textContent = t('jobsTitle');
+      jobsPanel.appendChild(title);
+      if (!jobs.length) {
+        var empty = document.createElement('div');
+        empty.className = 'hint';
+        empty.textContent = t('jobsEmpty');
+        jobsPanel.appendChild(empty);
+        return;
+      }
+      for (var i = 0; i < jobs.length; i++) {
+        (function (job) {
+          var row = document.createElement('div');
+          row.className = 'jobs-row';
+          var label = document.createElement('div');
+          label.className = 'jobs-label';
+          label.textContent = job.label || job.kind || job.id;
+          var status = document.createElement('span');
+          status.className = 'jobs-status jobs-status-' + String(job.status || '');
+          status.textContent = String(job.status || '');
+          row.appendChild(label);
+          row.appendChild(status);
+          if (job.detail) {
+            var detail = document.createElement('div');
+            detail.className = 'jobs-detail';
+            detail.textContent = String(job.detail);
+            row.appendChild(detail);
+          }
+          jobsPanel.appendChild(row);
+        })(jobs[i]);
+      }
+    }
+
+    function toggleJobsPanel() {
+      if (!jobsPanel) return;
+      jobsPanel.hidden = !jobsPanel.hidden;
+    }
+
+    /** 刷新按钮的进行中状态：禁用 + 旋转。 */
+    function setRefreshing(active) {
+      refreshBtn.disabled = !!active;
+      refreshBtn.classList.toggle('spinning', !!active);
     }
 
     function openSettingsModal() {

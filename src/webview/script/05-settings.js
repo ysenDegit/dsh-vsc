@@ -339,12 +339,42 @@
       sendModeSelect.addEventListener('change', function () {
         var next = sendModeSelect.value === 'true';
         state.enterToSend = next;
-        composerInput.placeholder = next ? t('composerPlaceholder') : t('composerPlaceholderAlt');
+        updateComposerPlaceholder();
         post({ type: 'setEnterToSend', value: next });
       });
       sendModeField.appendChild(sendModeSelect);
       sendModeSection.appendChild(sendModeField);
       generalPane.appendChild(sendModeSection);
+
+      // 悬浮提示词暂存框（dsh-vsc.promptStash）：关闭只隐藏界面，已写内容保留。
+      var stashSection = document.createElement('div');
+      stashSection.className = 'settings-section';
+      var stashTitle = document.createElement('h3');
+      stashTitle.textContent = t('promptStashSection');
+      stashSection.appendChild(stashTitle);
+      var stashField = document.createElement('div');
+      stashField.className = 'settings-field';
+      var stashLabel = document.createElement('label');
+      stashLabel.className = 'field-label';
+      var stashCheck = document.createElement('input');
+      stashCheck.type = 'checkbox';
+      stashCheck.checked = data.promptStashEnabled !== false;
+      var stashName = document.createElement('span');
+      stashName.textContent = t('promptStashLabel');
+      stashLabel.appendChild(stashCheck);
+      stashLabel.appendChild(stashName);
+      stashField.appendChild(stashLabel);
+      stashSection.appendChild(stashField);
+      var stashHint = document.createElement('div');
+      stashHint.className = 'hint';
+      stashHint.textContent = t('promptStashHint');
+      stashSection.appendChild(stashHint);
+      stashCheck.addEventListener('change', function () {
+        state.promptStashEnabled = stashCheck.checked;
+        renderPromptStash();
+        post({ type: 'setPromptStash', value: stashCheck.checked });
+      });
+      generalPane.appendChild(stashSection);
 
       var startupSection = document.createElement('div');
       startupSection.className = 'settings-section';
@@ -364,26 +394,20 @@
       autoStartLabel.appendChild(autoStartCheck);
       autoStartLabel.appendChild(autoStartName);
       autoStartField.appendChild(autoStartLabel);
+      // 勾选自动启动时提示 session 冲突风险；未勾选时给出推荐做法。
+      var autoStartWarning = document.createElement('div');
+      autoStartWarning.className = 'warn';
+      autoStartWarning.textContent = t('autoStartWarning');
+      autoStartWarning.hidden = data.autoStart === false;
+      autoStartField.appendChild(autoStartWarning);
       startupSection.appendChild(autoStartField);
+      var autoStartRecommended = document.createElement('div');
+      autoStartRecommended.className = 'hint';
+      autoStartRecommended.textContent = t('autoStartRecommended');
+      startupSection.appendChild(autoStartRecommended);
       autoStartCheck.addEventListener('change', function () {
+        autoStartWarning.hidden = !autoStartCheck.checked;
         post({ type: 'setAutoStart', value: autoStartCheck.checked });
-      });
-
-      var autoOpenField = document.createElement('div');
-      autoOpenField.className = 'settings-field';
-      var autoOpenLabel = document.createElement('label');
-      autoOpenLabel.className = 'field-label';
-      var autoOpenCheck = document.createElement('input');
-      autoOpenCheck.type = 'checkbox';
-      autoOpenCheck.checked = data.autoOpenChat !== false;
-      var autoOpenName = document.createElement('span');
-      autoOpenName.textContent = t('autoOpenChatLabel');
-      autoOpenLabel.appendChild(autoOpenCheck);
-      autoOpenLabel.appendChild(autoOpenName);
-      autoOpenField.appendChild(autoOpenLabel);
-      startupSection.appendChild(autoOpenField);
-      autoOpenCheck.addEventListener('change', function () {
-        post({ type: 'setAutoOpenChat', value: autoOpenCheck.checked });
       });
 
       generalPane.appendChild(startupSection);
@@ -486,6 +510,19 @@
       wsArchCheck.addEventListener('change', function () {
         post({ type: 'setShowArchivedSessions', value: wsArchCheck.checked });
       });
+      // 批量清除"仅插件内显示"（本地取消归档）：旧版"隐藏已归档"按钮曾把全部归档会话写进本地集合，
+      // 这里给一个一键恢复入口（只改插件视图）。
+      var restoredCount = Number(data.restoredCount) || 0;
+      if (restoredCount > 0) {
+        var clearRestoredBtn = document.createElement('button');
+        clearRestoredBtn.textContent = t('clearRestoredBtn', { count: restoredCount });
+        clearRestoredBtn.title = t('clearRestoredHint');
+        clearRestoredBtn.addEventListener('click', function () {
+          post({ type: 'clearRestoredSessions' });
+          clearRestoredBtn.disabled = true;
+        });
+        wsAllTitleRow.appendChild(clearRestoredBtn);
+      }
       var wsRefreshBtn = document.createElement('button');
       wsRefreshBtn.textContent = t('workspaceRefreshBtn');
       wsRefreshBtn.addEventListener('click', function () { post({ type: 'workspaceRefresh' }); });
@@ -540,6 +577,57 @@
       }
       workspacePane.appendChild(wsAllSection);
       }
+
+      // 赞助页：微信/支付宝收款码（图片以 data URI 内嵌，见 src/webview.js）。
+      var sponsorPane = makeSettingsPane('sponsor', t('tabSponsor'));
+      var sponsorSection = document.createElement('div');
+      sponsorSection.className = 'settings-section';
+      var sponsorTitle = document.createElement('h3');
+      sponsorTitle.textContent = t('sponsorSection');
+      sponsorSection.appendChild(sponsorTitle);
+      var sponsorSlogan = document.createElement('div');
+      sponsorSlogan.className = 'sponsor-slogan';
+      sponsorSlogan.textContent = t('sponsorSlogan');
+      sponsorSection.appendChild(sponsorSlogan);
+      var sponsorHint = document.createElement('div');
+      sponsorHint.className = 'hint';
+      sponsorHint.textContent = t('sponsorHint');
+      sponsorSection.appendChild(sponsorHint);
+      var sponsorRow = document.createElement('div');
+      sponsorRow.className = 'sponsor-row';
+      var sponsorCodes = [
+        { key: 'wechat', label: t('sponsorWechat') },
+        { key: 'alipay', label: t('sponsorAlipay') },
+      ];
+      var sponsorData = (typeof DSH_SPONSOR === 'object' && DSH_SPONSOR) ? DSH_SPONSOR : {};
+      for (var sci = 0; sci < sponsorCodes.length; sci++) {
+        (function (code) {
+          var box = document.createElement('div');
+          box.className = 'sponsor-code';
+          box.title = t('sponsorZoomHint');
+          var src = sponsorData[code.key] || '';
+          if (src) {
+            var img = document.createElement('img');
+            img.src = src;
+            img.alt = code.label;
+            box.appendChild(img);
+            // 点一下放大到 2 倍，方便手机扫码（再点恢复）。
+            box.addEventListener('click', function () { box.classList.toggle('zoomed'); });
+          } else {
+            var missing = document.createElement('div');
+            missing.className = 'field-status';
+            missing.textContent = t('sponsorMissing');
+            box.appendChild(missing);
+          }
+          var caption = document.createElement('div');
+          caption.className = 'sponsor-label';
+          caption.textContent = code.label;
+          box.appendChild(caption);
+          sponsorRow.appendChild(box);
+        })(sponsorCodes[sci]);
+      }
+      sponsorSection.appendChild(sponsorRow);
+      sponsorPane.appendChild(sponsorSection);
 
       var webNoticeSection = document.createElement('div');
       webNoticeSection.className = 'settings-section';

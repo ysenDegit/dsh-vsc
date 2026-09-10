@@ -5,6 +5,15 @@ const { spawn } = require('node:child_process')
 const URL_LINE_RE = /dsh web: (\S+)/u
 const BOOT_TIMEOUT_MS = 60_000
 const GRACE_MS = 5_000
+/** 启动期 stdout/stderr 的保留上限：只用于报错，避免长跑进程把日志全留在内存里。 */
+const MAX_CAPTURE_BYTES = 64 * 1024
+
+/** 追加输出但不超过上限（超限后截断并标注）。 */
+function appendCapped(buffer, chunk, limit = MAX_CAPTURE_BYTES) {
+  if (buffer.length >= limit) return buffer
+  const next = buffer + chunk
+  return next.length > limit ? `${next.slice(0, limit)}\n…（输出已截断）` : next
+}
 
 function parseReadyUrl(readyLine) {
   const url = new URL(readyLine)
@@ -71,9 +80,10 @@ function startDshWeb(options) {
 
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk) => {
-      stdoutBuf += chunk
       onStdout?.(chunk)
+      // 就绪后不再累积：stdout 只在启动超时/启动失败时需要。
       if (!settled) {
+        stdoutBuf = appendCapped(stdoutBuf, chunk)
         const match = URL_LINE_RE.exec(stdoutBuf)
         if (match?.[1]) {
           settled = true
@@ -86,8 +96,8 @@ function startDshWeb(options) {
 
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk) => {
-      stderrBuf += chunk
       onStderr?.(chunk)
+      if (!settled) stderrBuf = appendCapped(stderrBuf, chunk)
     })
 
     child.on('error', (error) => {
@@ -141,4 +151,4 @@ function makeServer(child, baseUrl, token, port, stderrBuf) {
   }
 }
 
-module.exports = { startDshWeb, launcherNeedsShell, webArgs, parseReadyUrl }
+module.exports = { startDshWeb, launcherNeedsShell, webArgs, parseReadyUrl, appendCapped }

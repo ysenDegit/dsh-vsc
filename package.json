@@ -2,7 +2,7 @@
   "name": "dsh-vsc-weblike",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "publisher": "ysen",
   "license": "MIT",
   "engines": {
@@ -63,7 +63,7 @@
       },
       {
         "command": "dsh-vsc.refreshSessions",
-        "title": "dsh: Refresh Sessions"
+        "title": "dsh: Refresh Sessions and Catalogs"
       },
       {
         "command": "dsh-vsc.openInBrowser",
@@ -89,13 +89,13 @@
         },
         "dsh-vsc.minDshVersion": {
           "type": "string",
-          "default": "0.1.2-rc.1",
+          "default": "0.1.5",
           "description": "Minimum accepted dsh version (semver, prerelease-aware)."
         },
         "dsh-vsc.autoStart": {
           "type": "boolean",
           "default": true,
-          "description": "Auto-start dsh web when a workspace window opens; when disabled, still connects to an already running dsh web instance without spawning one."
+          "description": "Auto-start the dsh backend when the plugin activates; when disabled, the plugin only reuses an already running dsh web instance. An auto-started backend may cause session conflicts, so starting the backend manually is recommended."
         },
         "dsh-vsc.dshUrl": {
           "type": [
@@ -162,11 +162,6 @@
           "default": "zh",
           "description": "插件界面语言。"
         },
-        "dsh-vsc.autoOpenChat": {
-          "type": "boolean",
-          "default": true,
-          "description": "启动 VS Code 时，若检测到 dsh 已在运行，自动打开工作区 dsh 面板。"
-        },
         "dsh-vsc.showArchivedSessions": {
           "type": "boolean",
           "default": false,
@@ -176,6 +171,11 @@
           "type": "boolean",
           "default": false,
           "description": "Enter 键行为：true = Enter 发送、Shift+Enter 换行；false = Shift+Enter 发送、Enter 换行（默认）。"
+        },
+        "dsh-vsc.promptStash": {
+          "type": "boolean",
+          "default": true,
+          "description": "是否启用悬浮提示词暂存框：在输入框上方右侧显示暂存槽（数量不限），用于预先写下接下来要发送的提示词（支持图片，缩略图可单独移除）；composer 行右侧的 ＋ 新建暂存槽，输入框里有文字/待发送图片时会一起存入新槽并清空 composer，每个暂存槽右侧的按钮可把该条提示词（文字+图片）发送到当前会话。关闭后暂存内容保留。"
         }
       }
     },

@@ -113,8 +113,33 @@
     .drawer-item .drawer-main { flex: 1; min-width: 0; }
     .drawer-item .drawer-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .drawer-item .drawer-meta { color: var(--muted); font-size: 11px; }
+    /* 设置 → 赞助：收款码图片（点击放大到 2 倍）。 */
+    .sponsor-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
+    .sponsor-slogan { font-weight: 600; line-height: 1.6; margin-bottom: 4px; }
+    .sponsor-code { text-align: center; cursor: zoom-in; }
+    .sponsor-code.zoomed { cursor: zoom-out; }
+    .sponsor-code img {
+      width: 160px; height: 160px; object-fit: contain; display: block;
+      background: #fff; padding: 4px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    }
+    .sponsor-code.zoomed img { width: 320px; height: 320px; }
+    .sponsor-label { color: var(--muted); font-size: 11px; margin-top: 4px; }
+    /* 会话模式标签（如"标准模式""PTC 模式"）：行右侧的小胶囊，窄面板下隐藏。 */
+    .drawer-item .drawer-mode {
+      flex: 0 0 auto; max-width: 45%; margin-left: 6px; padding: 1px 7px;
+      border: 1px solid var(--border-soft); border-radius: 999px;
+      color: var(--muted); font-size: 11px; line-height: 1.5;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* 面板不够宽（<480px）时不显示模式标签，避免挤压会话标题。 */
+    @media (max-width: 480px) {
+      .drawer-item .drawer-mode { display: none; }
+    }
     .drawer-item .drawer-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
     .drawer-item.running .drawer-dot { background: var(--ok); }
+    .drawer-section-title { margin: 6px 8px 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .drawer-item.drawer-hit { align-items: flex-start; }
+    .drawer-item .drawer-snippet { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
     .drawer-item .drawer-actions { display: none; flex: 0 0 auto; gap: 2px; }
     .drawer-item:hover .drawer-actions { display: inline-flex; }
     .drawer-item .drawer-actions button { height: 20px; min-width: 24px; padding: 0 4px; font-size: 11px; line-height: 1; }
@@ -302,6 +327,51 @@
       border-radius: var(--radius-lg); box-shadow: var(--shadow);
       padding: 6px; display: flex; flex-direction: column; gap: 4px;
     }
+    /* 悬浮提示词暂存框：composer 上方右侧，绝对定位（不挤压聊天区），固定行高、不换行。 */
+    .prompt-stash {
+      position: absolute; right: 10px; bottom: calc(100% + 6px);
+      width: min(520px, calc(100% - 20px)); max-width: 100%;
+      display: flex; flex-direction: column; gap: 4px; padding: 6px;
+      /* 暂存框数量不设上限：悬浮层自身限高并滚动，堆再多也不会盖住整屏聊天区。 */
+      max-height: min(45vh, 320px); overflow-y: auto;
+      background: var(--surface-2); border: 1px solid var(--border-soft);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow);
+      z-index: 9;
+    }
+    .prompt-stash .stash-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    /* 暂存框里的图片缩略图（行高不变，缩略图 20px 内联在行首）。 */
+    .prompt-stash .stash-thumbs { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+    .prompt-stash .stash-thumb { position: relative; display: inline-block; }
+    .prompt-stash .stash-thumb img {
+      height: 20px; width: auto; max-width: 40px; object-fit: cover;
+      border-radius: 3px; border: 1px solid var(--border); display: block;
+    }
+    .prompt-stash .stash-thumb button {
+      position: absolute; top: -6px; right: -6px; width: 14px; height: 14px; padding: 0;
+      border-radius: 50%; background: var(--bg); border: 1px solid var(--border);
+      color: var(--muted); cursor: pointer; font-size: 10px; line-height: 12px; text-align: center;
+    }
+    .prompt-stash .stash-thumb button:hover { color: var(--error); }
+    .prompt-stash .stash-thumb-more { color: var(--muted); font-size: 10px; padding: 0 2px; }
+    .prompt-stash .stash-input {
+      flex: 1; min-width: 0; height: 26px; padding: 0 8px;
+      background: var(--input-bg); color: var(--input-fg);
+      border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+      font: inherit; font-size: 12px; line-height: 26px;
+      /* 高度固定、不换行：超出部分只显示能显示出来的内容（省略号收尾）。 */
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .prompt-stash .stash-input:focus { outline: 1px solid var(--accent); }
+    .prompt-stash .stash-send,
+    .prompt-stash .stash-remove {
+      flex: 0 0 auto; height: 24px; min-width: 24px; padding: 0 6px;
+      font-size: 11px; line-height: 1;
+    }
+    .prompt-stash .stash-send:disabled { opacity: 0.45; }
+    .prompt-stash .stash-remove { color: var(--muted); }
+    .prompt-stash .stash-remove:hover { color: var(--error); }
+    /* 暂存框 ＋ 位于 composer 行右侧（发送/权限/停止之后），与左侧按钮组留一点间距。 */
+    .stash-add-btn { font-size: 14px; margin-left: 2px; }
     .file-picker {
       position: absolute; bottom: 100%; left: 10px; right: 10px; max-height: 220px; overflow-y: auto;
       background: var(--input-bg); border: 1px solid var(--border); border-radius: 4px; z-index: 10;
@@ -473,6 +543,7 @@
       .composer { padding: 6px 8px; }
       .top-bar { padding: 4px 6px; gap: 4px; }
       .composer-capsule { padding: 4px; }
+      .prompt-stash { left: 8px; right: 8px; width: auto; }
     }
     /* hidden 属性必须优先于任何 display 规则（否则 display:flex 会盖掉它）。 */
     [hidden] { display: none !important; }
@@ -563,6 +634,26 @@
     .settings-field:last-child { margin-bottom: 0; }
     .settings-field .field-label { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
     .settings-field .field-status { font-size: 11px; color: var(--muted); }
+    .settings-field .warn { margin-top: 4px; font-size: 11px; color: var(--warn); }
+    .session-banner { display: flex; align-items: center; gap: 6px; margin: 4px 8px; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
+    .session-banner .session-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .session-banner .session-banner-close { border: none; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; padding: 0 2px; }
+    .top-bar-actions button.spinning { animation: dsh-spin 0.9s linear infinite; opacity: .7; }
+    @keyframes dsh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .pending-file { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; padding: 2px 6px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--surface-2); font-size: 11px; }
+    .pending-file .pending-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .jobs-panel { min-width: 260px; max-height: 260px; overflow: auto; }
+    .jobs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 2px; font-size: 12px; }
+    .jobs-row .jobs-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .jobs-status { font-size: 10px; padding: 1px 4px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+    .jobs-status-running { color: var(--ok); }
+    .jobs-status-failed { color: var(--error); }
+    .jobs-detail { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+    /* 谱系子行（fork/派生会话与子代理会话）：缩进按 depth 内联设置，这里只做弱化。 */
+    .drawer-item.drawer-child { opacity: .9; }
+    .drawer-item.drawer-subagent { opacity: .8; }
+    .drawer-archived-toggle { font-size: 11px; }
+    .window-wrap { position: sticky; top: 0; z-index: 1; }
     .settings-field input[type=password], .settings-field input[type=text], .settings-field select {
       width: 100%; background: var(--input-bg); color: var(--input-fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;

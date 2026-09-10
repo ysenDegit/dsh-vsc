@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events')
 const { randomUUID } = require('node:crypto')
 const { homedir } = require('node:os')
 const { join, dirname } = require('node:path')
-const { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } = require('node:fs')
+const { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, chmodSync } = require('node:fs')
 const { discoverDsh } = require('./discovery.js')
 const { startDshWeb } = require('./server.js')
 const {
@@ -324,7 +324,9 @@ class DshService extends EventEmitter {
         ...(token ? { token } : {}),
         pid: childPid ?? process.pid,
         at: new Date().toISOString(),
-      }, null, 2))
+      }, null, 2), { mode: 0o600 })
+      // 文件里存着 launch token：确保已有文件也被收紧到仅属主可读写。
+      chmodSync(STATE_FILE, 0o600)
     } catch {
       // 状态文件仅是复用提示；写失败不影响主流程。
     }

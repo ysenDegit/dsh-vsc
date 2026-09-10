@@ -56,7 +56,7 @@ test('empty partial is removed on turn end', () => {
   assert.equal(items[0].type, 'note')
 })
 
-test('keeps only the latest context injection', () => {
+test('detailed mode shows every distinct context injection in event order', () => {
   const events = [
     ev(1, 'user/message', { content: [{ type: 'text', text: 'context-1' }], source: { kind: 'plugin', form: 'snapshot' } }),
     ev(2, 'user/message', { content: [{ type: 'text', text: 'hello' }], source: { kind: 'user' } }),
@@ -64,8 +64,8 @@ test('keeps only the latest context injection', () => {
   ]
   const { items } = foldEvents(events)
   const contextItems = items.filter((i) => i.type === 'context')
-  assert.equal(contextItems.length, 1)
-  assert.equal(contextItems[0].text, 'context-2')
+  assert.deepEqual(contextItems.map((i) => i.text), ['context-1', 'context-2'])
+  assert.deepEqual(items.map((i) => i.type), ['context', 'user', 'context'])
 })
 
 test('tool call and result pair by callId', () => {
@@ -199,4 +199,91 @@ test('concise fold marks hidden-only content so UI can show its hint', () => {
     ev(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
   ], { mode: 'concise' })
   assert.deepEqual(items.map((i) => i.type), ['hidden-hint'])
+})
+
+test('live assistant partial is appended while the step is unsettled', () => {
+  const events = [
+    ev(1, 'turn/start', { turn: 1 }),
+    ev(2, 'user/message', { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
+  ]
+  const live = { turn: 1, step: 1, text: 'streaming…', reasoning: 'think', id: 'assistant-live-a1' }
+  const detailed = foldEvents(events, { live })
+  const last = detailed.items[detailed.items.length - 1]
+  assert.equal(last.type, 'assistant')
+  assert.equal(last.text, 'streaming…')
+  assert.equal(last.reasoning, 'think')
+  assert.equal(last.partial, true)
+  assert.equal(detailed.running, true)
+
+  // 简洁模式：只显示文本增量，思考增量只置"有隐藏详情"标记。
+  const concise = foldEvents(events, { mode: 'concise', live })
+  const conciseLast = concise.items[concise.items.length - 1]
+  assert.equal(conciseLast.type, 'assistant')
+  assert.equal(conciseLast.text, 'streaming…')
+  assert.equal(conciseLast.reasoning, undefined)
+})
+
+test('durable assistant/message supersedes the live partial for the same step', () => {
+  const events = [
+    ev(1, 'turn/start', { turn: 1 }),
+    ev(2, 'assistant/message', { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'final' }] }, stream: [] }),
+  ]
+  const { items } = foldEvents(events, { live: { turn: 1, step: 1, text: 'streaming…', id: 'assistant-live-a1' } })
+  const assistants = items.filter((item) => item.type === 'assistant')
+  assert.equal(assistants.length, 1)
+  assert.equal(assistants[0].text, 'final')
+  assert.equal(assistants[0].partial, false)
+})
+
+test('detailed mode keeps one entry per context injection and skips wrapper-only lines', () => {
+  const injectA = {
+    content: [{ type: 'text', text: '<system-reminder>\nAdditional instructions from: sub/AGENTS.md\n\nbody A' }],
+    source: { kind: 'agent-instructions' },
+  }
+  const injectB = {
+    content: [{ type: 'text', text: 'This is an automatically generated checkpoint summary.' }],
+    source: { kind: 'plugin' },
+  }
+  const { items } = foldEvents([
+    ev(1, 'user/message', { content: [{ type: 'text', text: 'hi' }], source: { kind: 'user' } }),
+    ev(2, 'user/message', injectA),
+    ev(3, 'user/message', injectB),
+    ev(4, 'user/message', injectA),
+  ])
+
+  const contexts = items.filter((item) => item.type === 'context')
+  assert.equal(contexts.length, 2)
+  assert.equal(contexts[0].summary, 'Additional instructions from: sub/AGENTS.md')
+  assert.equal(contexts[0].source, 'agent-instructions')
+  assert.equal(contexts[1].summary, 'This is an automatically generated checkpoint summary.')
+  assert.equal(contexts[1].text, injectB.content[0].text)
+})
+
+test('context injections fall back to a source label and stay hidden in concise mode', () => {
+  const injection = { content: [], source: { kind: 'session-reference' } }
+  const detailed = foldEvents([ev(1, 'user/message', injection)])
+  const context = detailed.items.find((item) => item.type === 'context')
+  assert.equal(context.summary, '上下文注入：会话引用')
+  assert.equal(context.text, '')
+
+  const concise = foldEvents([ev(1, 'user/message', injection)], { mode: 'concise' })
+  assert.equal(concise.items.filter((item) => item.type === 'context').length, 0)
+  assert.equal(concise.items.length, 1)
+  assert.equal(concise.items[0].type, 'hidden-hint')
+})
+
+test('folded items carry sourceSeq so the host can trim the loaded window', () => {
+  const events = []
+  for (let seq = 1; seq <= 20; seq += 1) {
+    events.push(ev(seq, 'user/message', { content: [{ type: 'text', text: 'm' + String(seq) }], source: { kind: 'user' } }))
+  }
+  const { items } = foldEvents(events)
+  assert.equal(items.length, 20)
+  assert.deepEqual(items.map((item) => item.sourceSeq), events.map((event) => event.seq))
+
+  // 宿主裁剪：保留最近 5 条时，cutSeq 之后的事件足以重建这 5 条。
+  const cutSeq = items[items.length - 5].sourceSeq
+  const trimmed = foldEvents(events.filter((event) => event.seq >= cutSeq))
+  assert.equal(trimmed.items.length, 5)
+  assert.deepEqual(trimmed.items.map((item) => item.text), ['m16', 'm17', 'm18', 'm19', 'm20'])
 })

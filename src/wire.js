@@ -165,6 +165,8 @@ class RemoteMuxClient extends EventEmitter {
     this.url = options.url
     this.cookie = options.cookie || ''
     this.reconnectMs = options.reconnectMs ?? 1000
+    this.maxReconnectMs = options.maxReconnectMs ?? 15_000
+    this.reconnectDelay = this.reconnectMs
     this.wsImpl = options.wsImpl ?? loadWebSocketImpl()
     this.socket = null
     this.closed = false
@@ -222,6 +224,8 @@ class RemoteMuxClient extends EventEmitter {
     this.socket = socket
 
     socket.onopen = () => {
+      // 连接恢复后退避清零，下一次断线重新从 1s 开始。
+      this.reconnectDelay = this.reconnectMs
       for (const [streamId, stream] of this.streams) {
         this.sendFrame({ type: 'open', streamId, endpoint: stream.endpoint, payload: stream.payload })
       }
@@ -280,10 +284,12 @@ class RemoteMuxClient extends EventEmitter {
   scheduleReconnect() {
     if (this.closed || this.stopping) return
     if (this.reconnectTimer) return
+    const delay = this.reconnectDelay
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, this.maxReconnectMs)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.connect()
-    }, this.reconnectMs)
+    }, delay)
     this.reconnectTimer.unref?.()
   }
 }

@@ -4,18 +4,22 @@ const vscode = require('vscode')
 const { DshService } = require('./dsh-service.js')
 const { SessionService } = require('./session-service.js')
 const { ChatViewProvider } = require('./chat-view.js')
+const { translate } = require('./i18n.js')
 
-// 记录"用户关闭过工作区 dsh 面板"的 workspaceState 键：关闭面板后，
-// 重启 VS Code 不再自动弹出，直到用户手动打开一次面板后清除。
-const CHAT_PANEL_DISMISSED_KEY = 'dsh-vsc.chatPanelDismissed'
-let deactivating = false
+/** 本地"取消归档/隐藏归档"集合的 globalState 键（dsh 无 unarchive API，仅插件视图）。 */
+const UNARCHIVED_KEY = 'dsh-vsc.unarchivedSessions'
+/** 悬浮提示词暂存框内容的 globalState 键（数量不设上限，空串代表空槽）。 */
+const PROMPT_STASH_KEY = 'dsh-vsc.promptStash'
+/** 插件视图内"提升为普通会话"的集合（dsh 无改谱系 API，仅插件抽屉显示）。 */
+const PROMOTED_KEY = 'dsh-vsc.promotedSessions'
+
 
 function activate(context) {
   const output = vscode.window.createOutputChannel('DeepSeek Harness')
   const log = (line) => output.appendLine(line)
 
   const config = vscode.workspace.getConfiguration('dsh-vsc')
-  const minimumVersion = config.get('minDshVersion', '0.1.0-rc.6')
+  const minimumVersion = config.get('minDshVersion', '0.1.5')
   const explicitPath = config.get('dshPath', null)
   const explicitUrl = config.get('dshUrl', null)
   const autoStart = config.get('autoStart', true)
@@ -23,12 +27,12 @@ function activate(context) {
   const fontSize = config.get('fontSize', 13)
   const maxWidth = config.get('maxWidth', 1000)
   const language = config.get('language', 'zh')
-  const autoOpenChat = config.get('autoOpenChat', true)
   const showArchivedSessions = config.get('showArchivedSessions', false)
   const enterToSend = config.get('enterToSend', false)
   const showContextUsage = config.get('showContextUsage', true)
   const contextBarColor = config.get('contextBarColor', 'var(--accent)')
   const contextBarOpacity = config.get('contextBarOpacity', 30)
+  const promptStash = config.get('promptStash', true)
 
   const dsh = new DshService({
     minimumVersion,
@@ -52,7 +56,29 @@ function activate(context) {
   })
 
   const sessions = new SessionService(() => dsh.client)
-  const provider = new ChatViewProvider(dsh, sessions, { onLog: (line) => log(line), sessionDisplay, fontSize, maxWidth, language, enterToSend, showContextUsage, contextBarColor, contextBarOpacity, autoStart, autoOpenChat, showArchivedSessions })
+  const provider = new ChatViewProvider(dsh, sessions, {
+    onLog: (line) => log(line),
+    sessionDisplay,
+    fontSize,
+    maxWidth,
+    language,
+    enterToSend,
+    showContextUsage,
+    contextBarColor,
+    contextBarOpacity,
+    autoStart,
+    showArchivedSessions,
+    promptStashEnabled: promptStash,
+    // 本地取消归档：持久化在 VS Code globalState（跨窗口/跨重启保留）。
+    loadUnarchived: () => context.globalState.get(UNARCHIVED_KEY, []),
+    persistUnarchived: (ids) => context.globalState.update(UNARCHIVED_KEY, ids),
+    // 悬浮提示词暂存框：同样落在 globalState，重启/换窗口后内容仍在。
+    loadPromptStash: () => context.globalState.get(PROMPT_STASH_KEY, []),
+    persistPromptStash: (items) => context.globalState.update(PROMPT_STASH_KEY, items),
+    // 提升为普通会话（仅插件视图）：同样落在 globalState。
+    loadPromoted: () => context.globalState.get(PROMOTED_KEY, []),
+    persistPromoted: (ids) => context.globalState.update(PROMOTED_KEY, ids),
+  })
   let chatPanel = null
 
   context.subscriptions.push(
@@ -67,9 +93,7 @@ function activate(context) {
     }),
     vscode.commands.registerCommand('dsh-vsc.openChatFromTitle', async () => {
       // 与 Claude Code 插件行为一致：在工作区打开 DeepSeek Harness 窗口（编辑器 Webview Panel），
-      // 内容与侧边栏插件保持一致。
-      // 手动打开即视为用户希望恢复自动弹出，清除“上次关闭过面板”的标记。
-      await context.workspaceState.update(CHAT_PANEL_DISMISSED_KEY, false)
+      // 内容与侧边栏插件保持一致（唯一的面板打开入口，插件不再自动打开）。
       if (chatPanel) {
         provider.refreshPanel(chatPanel)
         chatPanel.reveal()
@@ -83,11 +107,6 @@ function activate(context) {
       )
       chatPanel.onDidDispose(() => {
         chatPanel = null
-        // 记住用户关闭了工作区面板；扩展宿主正在关闭/重载时不记录，
-        // 避免“面板明明开着却被当成已关闭”。
-        if (!deactivating) {
-          void context.workspaceState.update(CHAT_PANEL_DISMISSED_KEY, true)
-        }
       })
       provider.attachPanel(chatPanel)
     }),
@@ -106,50 +125,20 @@ function activate(context) {
       await provider.handleMessage({ type: 'newSession' })
     }),
     vscode.commands.registerCommand('dsh-vsc.refreshSessions', async () => {
-      await provider.refreshSessions()
+      // 与顶栏刷新按钮一致：会话列表 + 模型/命令目录 + 工作模式 + 设置快照。
+      await provider.refreshAll()
     }),
   )
 
   // rc.1：remote.mux 连接状态 → webview 重同步
   dsh.on('muxClose', () => provider.onMuxClose())
 
-  // 自动打开候选：dsh web 已在运行（条件1）且上次未关闭面板（条件3）。
-  // “当前目录已在 dsh 工作区中”（条件2）在 ready 后由 maybeAutoOpen 校验。
-  let autoOpenCandidate = false
-  let autoOpenAttempted = false
-
-  // 条件2：当前目录必须已经在 dsh 工作区中（只查不建，不弹确认框），
-  // 新窗口/新目录未加入过 dsh 工作区时不会自动弹出。
-  const maybeAutoOpen = async () => {
-    if (autoOpenAttempted || !autoOpenCandidate) return
-    autoOpenAttempted = true
-    try {
-      const folder = vscode.workspace.workspaceFolders?.[0]
-      if (!folder) {
-        log('未打开工作区目录，本次不自动打开面板')
-        return
-      }
-      const workspace = await sessions.findWorkspace(folder.uri.fsPath)
-      if (!workspace) {
-        log('当前目录不在 dsh 工作区中，本次不自动打开面板')
-        return
-      }
-      const autoOpenTimer = setTimeout(() => {
-        void vscode.commands.executeCommand('dsh-vsc.openChatFromTitle')
-      }, 1000)
-      context.subscriptions.push({ dispose: () => clearTimeout(autoOpenTimer) })
-    } catch (error) {
-      log(`自动打开前检查失败: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
   dsh.on('status', (status) => {
     if (status === 'ready') {
       // rc.1：先建立 $events / session.control / workspace.follow 长流。
       provider.ensureStreams()
-      // 先做自动打开前的“当前目录已在 dsh 工作区中”校验，再走正常的工作区/会话初始化。
-      // （工作区确认框仅在用户打开插件界面后弹出，见 ChatViewProvider.ensureWorkspace）
-      void maybeAutoOpen().then(() => provider.ensureWorkspaceAndSession())
+      // 工作区确认框仅在用户打开插件界面后弹出，见 ChatViewProvider.ensureWorkspace。
+      void provider.ensureWorkspaceAndSession()
     }
   })
 
@@ -177,40 +166,18 @@ function activate(context) {
         contextBarColor: config.get('contextBarColor', 'var(--accent)'),
         contextBarOpacity: config.get('contextBarOpacity', 30),
         autoStart: config.get('autoStart', true),
-        autoOpenChat: config.get('autoOpenChat', true),
         showArchivedSessions: config.get('showArchivedSessions', false),
+        promptStashEnabled: config.get('promptStash', true),
       })
     }),
   )
-
-  if (autoOpenChat) {
-    // 条件1：只有检测到 dsh web 已经在运行（即重启前/重启后仍存活的实例），
-    // 才可能自动打开工作区 dsh 面板；未运行时不自动打开。
-    // 条件3：若用户上次关闭过面板（workspaceState 标记），则不再自动打开，
-    // 直到用户手动打开一次面板后清除标记（见 openChatFromTitle）。
-    // 条件2（当前目录已在 dsh 工作区中）由 ready 后的 maybeAutoOpen 校验。
-    dsh.findExistingInstance()
-      .then((existing) => {
-        if (!existing) return
-        if (context.workspaceState.get(CHAT_PANEL_DISMISSED_KEY, false)) {
-          log('工作区 dsh 面板上次被用户关闭，本次不自动打开')
-          return
-        }
-        autoOpenCandidate = true
-        // 竞态兜底：若 dsh 已在本次激活中先进入 ready，则立即补做自动打开校验。
-        if (dsh.statusValue === 'ready') void maybeAutoOpen()
-      })
-      .catch((error) => {
-        log(`检测既有 dsh 实例失败: ${error instanceof Error ? error.message : String(error)}`)
-      })
-  }
 
   if (autoStart) {
     // 自动启动：复用已运行的 dsh web；没有则自动生成一个。
     dsh.start().catch((error) => {
       const message = error instanceof Error ? error.message : String(error)
       log(`启动失败: ${message}`)
-      void vscode.window.showErrorMessage(`dsh 启动失败: ${message}`)
+      void vscode.window.showErrorMessage(translate(language, 'dialog.startFailed', { message }))
     })
   } else {
     // 关闭自动启动：不自动生成实例，但仍复用/连接用户手动启动的 dsh web；
@@ -224,7 +191,6 @@ function activate(context) {
   // 要求 4：VS Code 窗口关闭时退出由本插件生成的 dsh 实例。
   context.subscriptions.push({
     dispose: () => {
-      deactivating = true
       void dsh.stop()
     },
   })
@@ -232,7 +198,6 @@ function activate(context) {
 
 function deactivate() {
   // dsh.stop() 由 activation 的 subscription 负责。
-  deactivating = true
 }
 
 module.exports = { activate, deactivate }

@@ -8,7 +8,7 @@
         'status.error': '错误',
         'statusRetry': '点击重新检测 dsh web 实例',
         'newSessionTitle': '新建会话',
-        'refreshTitle': '刷新会话',
+        'refreshTitle': '刷新会话/模型/命令/设置',
         'renameSession': '重命名会话',
         'closeSession': '归档/关闭会话',
         'sessions': 'Sessions',
@@ -25,6 +25,18 @@
         'send': '发送',
         'composerPlaceholder': 'Enter 发送 · Shift+Enter 换行 · @ 引用文件 · / 命令',
         'composerPlaceholderAlt': 'Shift+Enter 发送 · Enter 换行 · @ 引用文件 · / 命令',
+        'composerStashHint': ' · Ctrl+Shift+Enter 暂存',
+        'promptStashAdd': '添加提示词暂存框',
+        'promptStashShortcutHint': '（Ctrl+Shift+Enter 暂存输入框内容）',
+        'promptStashAddFromInput': '把输入框内容存入新的暂存框',
+        'promptStashPlaceholder': '待输入提示词{index}',
+        'promptStashInputTitle': '预先写下接下来要发送的提示词（Enter 发送）',
+        'promptStashSendTitle': '发送该暂存框内的提示词',
+        'promptStashRemoveTitle': '移除该暂存框',
+        'promptStashSection': '提示词暂存框',
+        'promptStashImagesTitle': '已暂存 {count} 张图片',
+        'promptStashLabel': '启用悬浮提示词暂存框',
+        'promptStashHint': '在输入框上方右侧显示悬浮暂存框（数量不限），用于预先写下接下来要发送的提示词；composer 行右侧的 ＋ 新建暂存框，输入框里有文字或待发送图片时会一起存入新框并清空（图片显示为缩略图，可单独移除）；也可以直接在输入框里按 **Ctrl+Shift+Enter** 快速暂存当前内容（输入框占位符里有该提示）。每个框右侧按钮直接发送该条内容（**发送后该框即被删除**）。',
         'imageAttachment': '图片',
         'imageRemove': '移除图片',
         'imageReadFailed': '图片读取失败',
@@ -41,6 +53,39 @@
         'blankTitle': '新会话',
         'session': '会话',
         'noSessions': '暂无会话',
+        'searchResults': '内容匹配',
+        'attachFile': '添加文件',
+        'attachedFiles': '已添加 {count} 个文件',
+        'filePickFailed': '读取文件失败：{message}',
+        'jobsTitle': '后台任务',
+        'jobsEmpty': '当前没有后台任务',
+        'goalTitle': '目标',
+        'planTitle': '计划模式',
+        'restoreSession': '取消归档（仅插件）',
+        'hideArchivedView': '隐藏已归档',
+        'tabSponsor': '赞助',
+        'sponsorSection': '赞助作者',
+        'sponsorSlogan': '为爱发电，永久免费，如果此插件合您心意，请随意打点。',
+        'sponsorHint': '如果这个插件帮到了你，可以扫码请作者喝杯咖啡 ☕（完全自愿，不影响任何功能）。点图片可放大，方便手机扫码。',
+        'sponsorWechat': '微信',
+        'sponsorAlipay': '支付宝',
+        'sponsorZoomHint': '点击放大/还原',
+        'sponsorMissing': '未找到收款码图片',
+        'archivedSection': '已归档（{count}）',
+        'archivedToggleAllRestored': '（本工作区的归档会话都已被"本地恢复显示"，共 {count} 条，因此这个开关暂时无事可做；可在 设置 → 管理工作区 里点"清除仅插件内显示"）',
+        'showArchivedView': '显示已归档',
+        'restoredLocally': '已归档会话（仅插件内显示）',
+        'restoredLocallyTitle': '该会话在 dsh 里已归档；dsh 没有取消归档接口（网页端会把归档会话直接过滤掉），插件只是在本地把它显示在列表里——不影响 dsh 的归档状态。',
+        'clearRestoredBtn': '清除"仅插件内显示"（{count}）',
+        'clearRestoredHint': '把插件本地取消归档过（"仅插件内显示"）的会话恢复为不显示；只改插件视图，不动 dsh 的归档状态。',
+        'unrestoreSession': '重新隐藏（仅插件视图）',
+        'subagentSession': '子代理会话',
+        'sessionModeTitle': '会话模式：{name}',
+        'promoteSession': '提升为普通会话（仅插件视图）',
+        'demoteSession': '恢复层级显示（仅插件视图）',
+        'promotedSession': '已提升为普通会话',
+        'openWorkspaceFolder': '在文件管理器中显示',
+        'openPresetDirectory': '打开 preset 目录',
         'ungroupedToggle': '未分组',
         'ungroupedToggleTitle': '显示 cwd 为当前工作区的未分组会话',
         'ungroupedTitle': '未分组会话',
@@ -152,8 +197,9 @@
         'sendModeEnter': 'Enter 发送，Shift+Enter 换行',
         'sendModeShiftEnter': 'Shift+Enter 发送，Enter 换行',
         'startupSection': '启动行为',
-        'autoStartLabel': '启动 VS Code 时自动启动 dsh web',
-        'autoOpenChatLabel': '启动时自动打开面板',
+        'autoStartLabel': '启动插件时自动启动 dsh 后端',
+        'autoStartWarning': '自动启动的 dsh 后端可能会导致 session 冲突，请谨慎使用。',
+        'autoStartRecommended': '推荐手动启动 dsh 后端服务。',
         'settingsWebNotice': 'LLM模型相关设置请移步web端',
         'loadEarlier': '加载更早',
         'loadingEarlier': '加载中…',
@@ -161,6 +207,7 @@
         'stats.ctx': '上下文:{pct}%',
         'stats.cacheHit': '缓存命中 {pct}%',
         'stats.inputOutput': '输入 {input} tokens · 输出 {output} tokens',
+        'stats.jobs': '{count} 个后台任务',
         'planReview': '计划评审',
         'chatAboutIt': '聊一聊'
       },
@@ -173,7 +220,7 @@
         'status.error': 'Error',
         'statusRetry': 'Click to re-detect the dsh web instance',
         'newSessionTitle': 'New Session',
-        'refreshTitle': 'Refresh Sessions',
+        'refreshTitle': 'Refresh sessions, models, commands and settings',
         'renameSession': 'Rename Session',
         'closeSession': 'Archive/Close Session',
         'sessions': 'Sessions',
@@ -190,6 +237,18 @@
         'send': 'Send',
         'composerPlaceholder': 'Enter to send · Shift+Enter for newline · @ files · / commands',
         'composerPlaceholderAlt': 'Shift+Enter to send · Enter for newline · @ files · / commands',
+        'composerStashHint': ' · Ctrl+Shift+Enter stashes',
+        'promptStashAdd': 'Add a prompt stash box',
+        'promptStashShortcutHint': ' (Ctrl+Shift+Enter stashes the input)',
+        'promptStashAddFromInput': 'Move the input text into a new stash box',
+        'promptStashPlaceholder': 'Prompt {index}',
+        'promptStashInputTitle': 'Draft the next prompt to send (Enter sends it)',
+        'promptStashSendTitle': 'Send the prompt in this box',
+        'promptStashRemoveTitle': 'Remove this stash box',
+        'promptStashSection': 'Prompt stash boxes',
+        'promptStashImagesTitle': '{count} stashed image(s)',
+        'promptStashLabel': 'Enable floating prompt stash boxes',
+        'promptStashHint': 'Shows floating stash boxes above the composer (no limit) for prompts you plan to send next. The ＋ on the right of the composer row adds a box — text in the input and any pending images are moved into the new box and cleared from the composer (images show as thumbnails and can be removed individually). You can also press **Ctrl+Shift+Enter** inside the input to stash the current draft (the placeholder advertises it). The button on the right of each box sends that prompt to the session (the box is **removed** once sent).',
         'imageAttachment': 'Image',
         'imageRemove': 'Remove image',
         'imageReadFailed': 'Failed to read image',
@@ -205,6 +264,39 @@
         'conciseHidden': 'Concise mode has hidden tool calls and reasoning.',
         'blankTitle': 'New Session',
         'session': 'Session',
+        'searchResults': 'Content matches',
+        'attachFile': 'Attach file',
+        'attachedFiles': 'Added {count} file(s)',
+        'filePickFailed': 'Failed to read the file: {message}',
+        'jobsTitle': 'Background jobs',
+        'jobsEmpty': 'No background jobs',
+        'goalTitle': 'Goal',
+        'planTitle': 'Plan mode',
+        'restoreSession': 'Unarchive (plugin only)',
+        'hideArchivedView': 'Hide archived',
+        'tabSponsor': 'Sponsor',
+        'sponsorSection': 'Support the author',
+        'sponsorSlogan': 'Built for the love of it — free forever. If this extension suits you, feel free to tip whatever you like.',
+        'sponsorHint': 'If this extension helps you, feel free to scan the code and buy the author a coffee ☕ (entirely optional, nothing changes either way). Click an image to enlarge it for scanning.',
+        'sponsorWechat': 'WeChat Pay',
+        'sponsorAlipay': 'Alipay',
+        'sponsorZoomHint': 'Click to enlarge / restore',
+        'sponsorMissing': 'Payment QR image not found',
+        'archivedSection': 'Archived ({count})',
+        'archivedToggleAllRestored': ' (every archived session here is already "shown anyway" locally — {count} of them — so this toggle has nothing to do; clear it under Settings → Manage workspaces)',
+        'showArchivedView': 'Show archived',
+        'restoredLocally': 'Archived session (extension view only)',
+        'restoredLocallyTitle': 'This session is archived in dsh; dsh has no unarchive API (the web UI filters archived sessions out), so the extension only shows it in its own list — the dsh archive state is untouched.',
+        'clearRestoredBtn': 'Clear "extension view only" ({count})',
+        'clearRestoredHint': 'Stop showing the sessions this extension locally unarchived ("extension view only"); this only affects the extension view and never touches dsh archive state.',
+        'unrestoreSession': 'Hide again (plugin view only)',
+        'subagentSession': 'Subagent session',
+        'sessionModeTitle': 'Session mode: {name}',
+        'promoteSession': 'Promote to a normal session (plugin view only)',
+        'demoteSession': 'Restore nesting (plugin view only)',
+        'promotedSession': 'Promoted to a normal session',
+        'openWorkspaceFolder': 'Reveal in file manager',
+        'openPresetDirectory': 'Open preset directory',
         'noSessions': 'No Sessions',
         'ungroupedToggle': 'Ungrouped',
         'ungroupedToggleTitle': 'Show ungrouped sessions with cwd matching the current workspace',
@@ -317,8 +409,9 @@
         'sendModeEnter': 'Enter to send, Shift+Enter for newline',
         'sendModeShiftEnter': 'Shift+Enter to send, Enter for newline',
         'startupSection': 'Startup',
-        'autoStartLabel': 'Auto-start dsh web when VS Code starts',
-        'autoOpenChatLabel': 'Auto-open the panel on startup',
+        'autoStartLabel': 'Auto-start the dsh backend when the plugin starts',
+        'autoStartWarning': 'An auto-started dsh backend may cause session conflicts; use with caution.',
+        'autoStartRecommended': 'Manually starting the dsh backend service is recommended.',
         'settingsWebNotice': 'LLM model settings: please use the web UI.',
         'loadEarlier': 'Load earlier',
         'loadingEarlier': 'Loading…',
@@ -326,6 +419,7 @@
         'stats.ctx': 'ctx:{pct}%',
         'stats.cacheHit': 'cache hit {pct}%',
         'stats.inputOutput': 'input {input} tokens · output {output} tokens',
+        'stats.jobs': '{count} background job(s)',
         'planReview': 'Plan Review',
         'chatAboutIt': 'Chat about it'
       }
@@ -342,6 +436,16 @@
       return str;
     }
 
+    /**
+     * 输入框占位符：发送方式提示 +（**暂存框功能开启时**）Ctrl+Shift+Enter 暂存提示。
+     * 三处调用（语言切换/发送方式切换/暂存开关切换）都走这里，避免文案各写一份。
+     */
+    function updateComposerPlaceholder() {
+      var text = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
+      if (promptStashOn()) text += t('composerStashHint');
+      composerInput.placeholder = text;
+    }
+
     function applyLanguage() {
       refreshBtn.title = t('refreshTitle');
       settingsBtn.title = t('settings');
@@ -350,7 +454,7 @@
       stopBtn.title = t('stop');
       sendBtn.title = t('send');
       renderSendLabel();
-      composerInput.placeholder = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
+      updateComposerPlaceholder();
       settingsOpenDocBtn.textContent = t('settingsOpenDoc');
       settingsDoneBtn.textContent = t('settingsDone');
       archiveCancelBtn.textContent = t('cancel');
@@ -364,6 +468,10 @@
       ungroupedToggleLabelEl.textContent = t('ungroupedToggle');
       ungroupedToggleEl.title = t('ungroupedToggleTitle');
       moreOpenWebBtn.textContent = '🌐 ' + t('openDshWeb');
+      moreRevealFolderBtn.textContent = '📁 ' + t('openWorkspaceFolder');
+      morePresetDirBtn.textContent = '🧩 ' + t('openPresetDirectory');
+      moreRevealFolderBtn.hidden = false;
+      morePresetDirBtn.hidden = false;
       $('modelLabel').textContent = t('modelLabel');
       $('effortLabel').textContent = t('effortLabel');
       renderStatus();
@@ -374,5 +482,7 @@
       renderQuestion();
       updatePermissionUi();
       renderModelButton();
+      // 占位符/按钮文案随语言变化，暂存框需要整棵重建。
+      renderPromptStash(true);
     }
 

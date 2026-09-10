@@ -139,18 +139,22 @@
       var staleWelcome = chatEl.querySelector('.mode-welcome');
       if (staleWelcome) staleWelcome.remove();
 
-      // 节点已在 DOM 且顺序正确时不再重复 appendChild；“加载更早”会在头部插入新消息
-      // （首节点不再是 expectedPrev），此时整体重建消息区（保留“加载更早”按钮）。
+      // 节点已在 DOM 且顺序正确时不再重复 appendChild；一旦头部内容变化
+      // （"加载更早"在头部插入新条目，或首条被替换/移除）就必须整体重建，
+      // 否则新增条目会被 appendChild 追加到旧节点后面，DOM 顺序与折叠结果相反。
+      var scrollAnchor = null;
       if (itemNodes.size > 0 && displayItems.length > 0) {
         var firstItem = displayItems[0];
         var firstKey = firstItem.id || (firstItem.type + '-0');
         var firstRec = itemNodes.get(firstKey);
-        if (firstRec && firstRec.node && firstRec.node.parentNode === chatEl) {
-          var expectedPrev = earlierWrapEl || null;
-          if (firstRec.node.previousSibling !== expectedPrev) {
-            while (chatEl.lastChild && chatEl.lastChild !== earlierWrapEl) chatEl.removeChild(chatEl.lastChild);
-            itemNodes.clear();
-          }
+        var expectedPrev = earlierWrapEl || null;
+        var headOk = Boolean(firstRec && firstRec.node && firstRec.node.parentNode === chatEl
+          && firstRec.node.previousSibling === expectedPrev);
+        if (!headOk) {
+          // 重建前记录视口顶部那一条，重建后把视线放回原处（加载更早时不跳走）。
+          scrollAnchor = captureScrollAnchor();
+          while (chatEl.lastChild && chatEl.lastChild !== earlierWrapEl) chatEl.removeChild(chatEl.lastChild);
+          itemNodes.clear();
         }
       }
 
@@ -225,10 +229,35 @@
         return;
       }
 
-      if (wasNearBottom) {
+      if (scrollAnchor) {
+        restoreScrollAnchor(scrollAnchor);
+      } else if (wasNearBottom) {
         chatEl.scrollTop = chatEl.scrollHeight;
       }
       // 未在底部时保持原滚动位置（节点复用不会重置滚动）。
+    }
+
+    /** 记录当前视口顶部对应的条目（重建 DOM 前后用它恢复视线位置）。 */
+    function captureScrollAnchor() {
+      var top = chatEl.scrollTop;
+      var best = null;
+      for (var entry of itemNodes) {
+        var node = entry[1] && entry[1].node;
+        if (!node || node.parentNode !== chatEl) continue;
+        var offset = node.offsetTop;
+        if (typeof offset !== 'number') return null;
+        if (offset <= top + 1 && (!best || offset > best.offset)) best = { key: entry[0], offset: offset };
+      }
+      if (!best) return null;
+      return { key: best.key, delta: best.offset - top };
+    }
+
+    /** 把重建前记录的条目放回原视线位置（条目已不在时退回底部对齐）。 */
+    function restoreScrollAnchor(anchor) {
+      var rec = itemNodes.get(anchor.key);
+      var node = rec && rec.node;
+      if (!node || typeof node.offsetTop !== 'number') return;
+      chatEl.scrollTop = node.offsetTop - anchor.delta;
     }
 
     // 简洁会话流式助手消息的轻量节点：纯文本 + pre-wrap + 光标，
@@ -480,16 +509,28 @@
       return wrap;
     }
 
+    /** 与 dsh Web 端一致的目录名：去掉尾部斜杠后取最后一段（兼容 Windows 反斜杠）。 */
+    function workspaceTitleOf(path) {
+      var trimmed = String(path || '').replace(/[/\\]+$/, '');
+      var cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+      return trimmed.slice(cut + 1);
+    }
+
+    /**
+     * 会话显示名，规则与 dsh Web 端一致（sessions/service.ts 的 displayTitleOf）：
+     * 宿主预计算的 displayTitle → title → 投影 title → cwd 目录名 → 原始 sessionId；
+     * 空白会话显示本地化的"新会话"。
+     */
     function sessionDisplayTitle(s) {
       if (!s) return '';
+      if (typeof s.displayTitle === 'string' && s.displayTitle) return s.displayTitle;
       if (s.title) return s.title;
       var projectedTitle = s.projections && s.projections.values && s.projections.values.title;
       if (typeof projectedTitle === 'string' && projectedTitle) return projectedTitle;
       if (s.blank) return t('blankTitle');
-      var id = String(s.sessionId || '');
-      var short = id.indexOf('session-') === 0 ? id.slice('session-'.length) : id;
-      short = short.slice(0, 8);
-      return short ? t('session') + ' ' + short : t('session');
+      var base = workspaceTitleOf(s.cwd);
+      if (base) return base;
+      return String(s.sessionId || '');
     }
 
     function renderSessions() {
@@ -502,6 +543,147 @@
       sessionTitleEl.textContent = cur ? sessionDisplayTitle(cur) : t('noSessions');
       renderDrawerList(sessions, current);
       moreOpenWebBtn.disabled = false;
+    }
+
+    /**
+     * 会话谱系展平：**只有子代理会话（`origin:'subagent'`）挂在父会话下**并缩进，
+     * fork/派生出来的会话（dsh `session/fork` 虽然也写 `parentSession`，但没有 origin）
+     * 就是普通会话——不再区分、不再缩进、不再标注，按更新时间与其它会话一起排在顶层。
+     * root 保持输入顺序；父会话不在列表里的"孤儿"降级为 root（不丢弃），环状引用用 visited 兜底。
+     */
+    function buildSessionLineage(sessions) {
+      var byId = {};
+      for (var i = 0; i < sessions.length; i++) byId[sessions[i].sessionId] = sessions[i];
+      var children = {};
+      var roots = [];
+      for (var j = 0; j < sessions.length; j++) {
+        var item = sessions[j];
+        // 只有子代理会话参与嵌套；被"提升为普通会话"（插件视图内）的子代理也不参与。
+        var parentId = (isSubagentSessionRow(item) && !item.promotedLocally) ? item.parentSessionId : null;
+        if (parentId && byId[parentId]) {
+          if (!children[parentId]) children[parentId] = [];
+          children[parentId].push(item);
+        } else {
+          roots.push(item);
+        }
+      }
+      var out = [];
+      var visited = {};
+      function walk(session, depth) {
+        if (visited[session.sessionId]) return;
+        visited[session.sessionId] = true;
+        out.push({ session: session, depth: depth });
+        var kids = children[session.sessionId] || [];
+        for (var k = 0; k < kids.length; k++) walk(kids[k], depth + 1);
+      }
+      for (var r = 0; r < roots.length; r++) walk(roots[r], 0);
+      return out;
+    }
+
+    /** dsh 的 `origin` 只有 `'subagent'` 一种取值（list.ts 的 listFields）：子代理会话不可 fork/重命名/归档。 */
+    function isSubagentSessionRow(session) {
+      return !!(session && session.origin === 'subagent');
+    }
+
+    /**
+     * 会话行。depth > 0 只会出现在 `origin:'subagent'` 的子代理会话上：标"子代理会话"、
+     * 仅可选中（不给 fork/重命名/归档）。fork/派生出来的会话与普通会话完全一样渲染。
+     */
+    function makeSessionRow(s, current, depth) {
+      var subagent = isSubagentSessionRow(s);
+      // 插件视图内的"提升为普通会话"（dsh 没有改谱系 API）：depth 已经被谱系展平置 0，
+      // 这里只补标记与"恢复层级"入口。
+      var promoted = s.promotedLocally === true;
+      var item = document.createElement('div');
+      item.className = 'drawer-item'
+        + (depth > 0 ? ' drawer-child' : '')
+        + (subagent ? ' drawer-subagent' : '')
+        + (s.sessionId === current ? ' selected' : '')
+        + (s.running ? ' running' : '');
+      if (depth > 0) item.style.paddingLeft = (8 + depth * 14) + 'px';
+      item.setAttribute('data-session-id', s.sessionId);
+      var dot = document.createElement('span');
+      dot.className = 'drawer-dot';
+      item.appendChild(dot);
+      var main = document.createElement('div');
+      main.className = 'drawer-main';
+      var titleEl = document.createElement('div');
+      titleEl.className = 'drawer-title-text';
+      // 不区分分支会话与普通会话：标题只用会话显示名（子代理标题为空时回退"子代理会话"）。
+      titleEl.textContent = sessionDisplayTitle(s) || (subagent ? t('subagentSession') : String(s.sessionId || ''));
+      main.appendChild(titleEl);
+      var meta = document.createElement('div');
+      meta.className = 'drawer-meta';
+      var parts = [];
+      if (subagent) parts.push(t('subagentSession'));
+      if (promoted) parts.push(t('promotedSession'));
+      if (s.archived) parts.push(t('archived'));
+      // 本地"取消归档（仅插件视图）"过的会话：标出来（并给 meta 一个说明 tooltip），
+      // 否则用户会疑惑"这个会话为什么 dsh 网页端看不到"。
+      if (s.restoredLocally) {
+        parts.push(t('restoredLocally'));
+        meta.title = t('restoredLocallyTitle');
+      }
+      if (s.running) parts.push(t('running'));
+      if (s.updatedAt) parts.push(relativeTime(s.updatedAt));
+      meta.textContent = parts.join(' · ');
+      main.appendChild(meta);
+      item.appendChild(main);
+      // 会话模式标签（如"标准模式""PTC 模式"）：只在面板宽度足够时显示（见 style.css 媒体查询）。
+      var modeLabel = sessionModeLabel(sessionModeId(s));
+      if (modeLabel) {
+        var modeEl = document.createElement('span');
+        modeEl.className = 'drawer-mode';
+        modeEl.textContent = modeLabel;
+        modeEl.title = t('sessionModeTitle', { name: modeLabel });
+        item.appendChild(modeEl);
+      }
+      var actions = document.createElement('div');
+      actions.className = 'drawer-actions';
+      // 子行（分支会话/子代理会话）可提升为顶层行；已提升的可恢复层级显示。
+      if (promoted || depth > 0) {
+        actions.appendChild(makeDrawerAction(
+          promoted ? 'demoteSession' : 'promoteSession',
+          promoted ? '⇩' : '⇧',
+          promoted ? t('demoteSession') : t('promoteSession')
+        ));
+      }
+      if (!subagent) {
+        actions.appendChild(makeDrawerAction('forkSession', '⧉', t('forkSession')));
+        actions.appendChild(makeDrawerAction('renameSession', '✎', t('renameSession')));
+        // 已归档会话提供"取消归档（仅插件视图）"；本地已恢复的提供反向操作
+        // （注意：本地恢复过的会话宿主下发的 archived 是 false，所以只能看 restoredLocally）。
+        if (s.restoredLocally) actions.appendChild(makeDrawerAction('unrestoreSession', '↪', t('unrestoreSession')));
+        else if (s.archived) actions.appendChild(makeDrawerAction('restoreSession', '↩', t('restoreSession')));
+        actions.appendChild(makeDrawerAction('closeSession', '✕', t('closeSession')));
+      }
+      if (actions.childNodes.length) item.appendChild(actions);
+      item.addEventListener('click', function (ev) {
+        var itemEl = ev.currentTarget;
+        var sid = itemEl.getAttribute('data-session-id');
+        var btn = (ev.target && ev.target.closest) ? ev.target.closest('button') : null;
+        if (btn) {
+          var kind = btn.getAttribute('data-action');
+          if (kind === 'restoreSession') {
+            post({ type: 'restoreSession', sessionId: sid });
+          } else if (kind === 'forkSession') {
+            showToast('正在 fork 会话…', '', true);
+            post({ type: 'forkSession', sessionId: sid });
+          } else if (kind === 'unrestoreSession') {
+            post({ type: 'unrestoreSession', sessionId: sid });
+          } else if (kind === 'promoteSession') {
+            post({ type: 'promoteSession', sessionId: sid, promoted: true });
+          } else if (kind === 'demoteSession') {
+            post({ type: 'promoteSession', sessionId: sid, promoted: false });
+          } else if (kind === 'renameSession') post({ type: 'renameSession', sessionId: sid });
+          else if (kind === 'closeSession') openArchiveModal(sid);
+          closeSessionDrawer();
+          return;
+        }
+        if (sid && sid !== state.selectedSessionId) post({ type: 'selectSession', sessionId: sid });
+        closeSessionDrawer();
+      });
+      return item;
     }
 
     function makeDrawerAction(kind, label, title) {
@@ -530,61 +712,98 @@
     function renderDrawerList(sessions, current) {
       drawerList.innerHTML = '';
       var query = (drawerSearch.value || '').trim().toLowerCase();
-      var shown = 0;
-      for (var i = 0; i < sessions.length; i++) {
-        var s = sessions[i];
-        var title = sessionDisplayTitle(s);
-        if (query && title.toLowerCase().indexOf(query) < 0) continue;
-        shown++;
-        var item = document.createElement('div');
-        item.className = 'drawer-item'
-          + (s.sessionId === current ? ' selected' : '')
-          + (s.running ? ' running' : '');
-        item.setAttribute('data-session-id', s.sessionId);
-        var dot = document.createElement('span');
-        dot.className = 'drawer-dot';
-        item.appendChild(dot);
-        var main = document.createElement('div');
-        main.className = 'drawer-main';
-        var titleEl = document.createElement('div');
-        titleEl.className = 'drawer-title-text';
-        titleEl.textContent = title;
-        main.appendChild(titleEl);
-        var meta = document.createElement('div');
-        meta.className = 'drawer-meta';
-        var parts = [];
-        if (s.archived) parts.push(t('archived'));
-        if (s.running) parts.push(t('running'));
-        if (s.updatedAt) parts.push(relativeTime(s.updatedAt));
-        meta.textContent = parts.join(' · ');
-        main.appendChild(meta);
-        item.appendChild(main);
-        var actions = document.createElement('div');
-        actions.className = 'drawer-actions';
-        actions.appendChild(makeDrawerAction('forkSession', '⧉', t('forkSession')));
-        actions.appendChild(makeDrawerAction('renameSession', '✎', t('renameSession')));
-        actions.appendChild(makeDrawerAction('closeSession', '✕', t('closeSession')));
-        item.appendChild(actions);
-        item.addEventListener('click', function (ev) {
-          var itemEl = ev.currentTarget;
-          var sid = itemEl.getAttribute('data-session-id');
-          var btn = ev.target && ev.target.closest ? ev.target.closest('button') : null;
-          if (btn) {
-            var kind = btn.getAttribute('data-action');
-            if (kind === 'forkSession') {
-              showToast('正在 fork 会话…', '', true);
-              post({ type: 'forkSession', sessionId: sid });
-            } else if (kind === 'renameSession') post({ type: 'renameSession', sessionId: sid });
-            else if (kind === 'closeSession') openArchiveModal(sid);
-            closeSessionDrawer();
-            return;
-          }
-          if (sid && sid !== state.selectedSessionId) post({ type: 'selectSession', sessionId: sid });
-          closeSessionDrawer();
-        });
-        drawerList.appendChild(item);
+      // 已归档视图开关：按钮文案 = "点下去会发生什么"，状态与设置里的
+      // `dsh-vsc.showArchivedSessions` 是同一个（默认 false＝归档会话不显示）。
+      // 旧实现按"本地取消归档集合大小"推断，文案与真实状态相反，点到第二次就再也隐藏不了。
+      // 再带上数量："显示已归档（13）"——用户点之前就知道会有多少条出现，
+      // 避免归档行都排在列表末尾（时间序）导致"点了没反应"的错觉。
+      var archivedShown = state.showArchivedSessions === true;
+      var archivedCount = Number(state.archivedAvailable) || 0;
+      var restoredCount = Number(state.restoredCount) || 0;
+      var archivedToggleLabel = (archivedShown ? t('hideArchivedView') : t('showArchivedView'))
+        + (archivedCount > 0 ? '（' + archivedCount + '）' : '');
+      drawerArchivedToggle.hidden = false;
+      drawerArchivedToggle.textContent = archivedToggleLabel;
+      // 一条可切换的归档会话都没有、但存在"仅插件内显示"的会话时，开关本来就无事可做——
+      // 把原因写进 tooltip，避免再次被当成"按钮坏了"。
+      drawerArchivedToggle.title = (archivedCount === 0 && restoredCount > 0)
+        ? archivedToggleLabel + t('archivedToggleAllRestored', { count: restoredCount })
+        : archivedToggleLabel;
+      // 会话谱系（同 dsh 网页端 flattenLineage）：带 parentSessionId 的会话缩进挂在父会话下，
+      // 递归到任意深度——fork 出来的会话同样只写 parentSessionId（origin 为空），
+      // 旧实现只渲染一层且把所有子行硬标成"子代理会话"，fork 出的 fork 更是整行消失。
+      // 归档会话（且没有本地恢复）单独成组：显示时排在活动会话之后，并带"已归档（N）"分区标题，
+      // 这样滚动到列表末尾就能看出哪些是归档的，而不是混在时间序里。
+      var activeSessions = [];
+      var archivedSessions = [];
+      for (var si = 0; si < sessions.length; si++) {
+        var session = sessions[si];
+        if (session.archived && !session.restoredLocally) archivedSessions.push(session);
+        else activeSessions.push(session);
       }
-      if (!shown && !state.ungroupedOpen) {
+      var shown = 0;
+      function appendGroup(list) {
+        var lineage = buildSessionLineage(list);
+        var count = 0;
+        for (var i = 0; i < lineage.length; i++) {
+          var s = lineage[i].session;
+          var title = sessionDisplayTitle(s);
+          if (query && title.toLowerCase().indexOf(query) < 0) continue;
+          count++;
+          drawerList.appendChild(makeSessionRow(s, current, lineage[i].depth));
+        }
+        return count;
+      }
+      shown += appendGroup(activeSessions);
+      var archivedHeaderEl = null;
+      if (archivedShown && archivedSessions.length) {
+        archivedHeaderEl = document.createElement('div');
+        archivedHeaderEl.className = 'drawer-section-title';
+        archivedHeaderEl.textContent = t('archivedSection', { count: archivedSessions.length });
+        drawerList.appendChild(archivedHeaderEl);
+        shown += appendGroup(archivedSessions);
+      }
+      // 刚点开"显示已归档"：把抽屉滚到归档分区，让这次点击的效果立刻可见。
+      if (archivedShown && !lastArchivedShown && archivedHeaderEl && typeof archivedHeaderEl.offsetTop === 'number') {
+        if (drawerList.scrollTo) drawerList.scrollTo({ top: Math.max(0, archivedHeaderEl.offsetTop - 4) });
+        else drawerList.scrollTop = Math.max(0, archivedHeaderEl.offsetTop - 4);
+      }
+      lastArchivedShown = archivedShown;
+      var search = state.sessionSearch;
+      var hits = (query && search && search.query === drawerSearch.value.trim()) ? (search.items || []) : [];
+      if (hits.length) {
+        var hitsTitle = document.createElement('div');
+        hitsTitle.className = 'drawer-section-title';
+        hitsTitle.textContent = t('searchResults');
+        drawerList.appendChild(hitsTitle);
+        for (var hi = 0; hi < hits.length; hi++) {
+          (function (hit) {
+            var known = null;
+            for (var k = 0; k < sessions.length; k++) {
+              if (sessions[k].sessionId === hit.sessionId) { known = sessions[k]; break; }
+            }
+            var row = document.createElement('div');
+            row.className = 'drawer-item drawer-hit';
+            var hitMain = document.createElement('div');
+            hitMain.className = 'drawer-main';
+            var hitTitle = document.createElement('div');
+            hitTitle.className = 'drawer-title-text';
+            hitTitle.textContent = known ? sessionDisplayTitle(known) : hit.sessionId;
+            hitMain.appendChild(hitTitle);
+            var snippet = document.createElement('div');
+            snippet.className = 'drawer-meta drawer-snippet';
+            snippet.textContent = hit.snippet || '';
+            hitMain.appendChild(snippet);
+            row.appendChild(hitMain);
+            row.addEventListener('click', function () {
+              if (hit.sessionId !== state.selectedSessionId) post({ type: 'selectSession', sessionId: hit.sessionId });
+              closeSessionDrawer();
+            });
+            drawerList.appendChild(row);
+          })(hits[hi]);
+        }
+      }
+      if (!shown && !hits.length && !state.ungroupedOpen) {
         var empty = document.createElement('div');
         empty.className = 'drawer-empty';
         empty.textContent = t('noSessions');
@@ -739,6 +958,7 @@
       badge.classList.toggle('retryable', retryable);
       badge.title = retryable ? t('statusRetry') : '';
       sendBtn.disabled = status !== 'ready';
+      updatePromptStashButtons();
       modelBtn.disabled = status !== 'ready';
       modelSelectEl.disabled = status !== 'ready';
       effortSelectEl.disabled = status !== 'ready';
@@ -750,6 +970,36 @@
         if (sessions[i].sessionId === state.selectedSessionId) return sessions[i];
       }
       return null;
+    }
+
+    /**
+     * 会话模式（agent preset）的显示名，用于抽屉行右侧的模式标签：
+     * 宿主 `agentPresets/list` 的名字优先（自定义 preset 只有它有），其次是内置 id 的
+     * 本地化短名（dsh 的 PTC 模式 id 实际是 `ptc`，历史映射里写作 `code`），最后退回原始 id。
+     */
+    function sessionModeLabel(id) {
+      if (!id) return '';
+      var presets = state.presets || [];
+      for (var i = 0; i < presets.length; i++) {
+        if (presets[i].id === id && presets[i].name) return presets[i].name;
+      }
+      var isEn = state.language === 'en';
+      var builtInNames = {
+        standard: isEn ? 'Standard' : '标准模式',
+        ptc: isEn ? 'PTC Mode' : 'PTC 模式',
+        code: isEn ? 'PTC Mode' : 'PTC 模式',
+        minimal: isEn ? 'Minimal' : '极简模式',
+        cordis: isEn ? 'Creative' : '创造模式',
+      };
+      return builtInNames[id] || String(id);
+    }
+
+    /** 会话行用的模式 id：宿主下发的 agentPreset → 投影值（hydrate 首帧可能只有投影）。 */
+    function sessionModeId(session) {
+      if (!session) return '';
+      if (typeof session.agentPreset === 'string' && session.agentPreset) return session.agentPreset;
+      var projected = session.projections && session.projections.values && session.projections.values.agentPreset;
+      return typeof projected === 'string' ? projected : '';
     }
 
     function presetName(id) {
@@ -807,7 +1057,9 @@
       wrap.appendChild(desc);
       var list = document.createElement('div');
       list.className = 'preset-list';
-      var presets = state.presets || [];
+      // 0.1.5-rc.2 起后端可关闭未命名新会话的模式选择（modeSelectionEnabled=false）：
+      // 此时只显示"新会话已就绪"提示，不再给模式卡片。
+      var presets = state.modeSelectionEnabled === false ? [] : (state.presets || []);
       for (var i = 0; i < presets.length; i++) {
         (function (preset) {
           var div = document.createElement('div');
@@ -833,7 +1085,7 @@
           list.appendChild(div);
         })(presets[i]);
       }
-      if (!presets.length) {
+      if (!presets.length && state.modeSelectionEnabled !== false) {
         var loading = document.createElement('div');
         loading.className = 'hint';
         loading.textContent = t('loadingModes');

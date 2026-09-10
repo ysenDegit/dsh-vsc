@@ -2,7 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { SessionService } = require('../src/session-service.js')
+const { SessionService, sessionPresetOf, historyRecordEvent } = require('../src/session-service.js')
 
 function fakeClient(handler) {
   return {
@@ -122,4 +122,100 @@ test('reset re-arms the workspace baseline wait after clearing the cache', async
   await waiting
   assert.equal(resolved, true)
   assert.equal((await service.findWorkspace('/ws1'))?.workspaceId, 'ws-1')
+})
+
+test('executeCommand sends dsh 0.1.5 submittedAttachments and normalizes legacy image objects', async () => {
+  const calls = []
+  const client = fakeClient(async (endpoint, args) => {
+    calls.push({ endpoint, args })
+    return { commandId: 'cmd-1', result: { kind: 'success' } }
+  })
+  const service = new SessionService(() => client)
+
+  await service.executeCommand('session-1', '/permission read-only')
+  assert.deepEqual(calls[0], {
+    endpoint: 'commands/execute',
+    args: { agentId: 'session-1', line: '/permission read-only', submittedAttachments: [] },
+  })
+
+  await service.executeCommand('session-1', '/cmd', [
+    { mediaType: 'image/png', data: 'aGk=', name: 'a.png' },
+    { type: 'image', mediaType: 'image/jpeg', data: 'aGk=' },
+    { type: 'file', receiptId: 'r-1' },
+    { mediaType: 'image/png' },
+  ])
+  assert.deepEqual(calls[1].args.submittedAttachments, [
+    { type: 'image', mediaType: 'image/png', data: 'aGk=', name: 'a.png' },
+    { type: 'image', mediaType: 'image/jpeg', data: 'aGk=' },
+    { type: 'file', receiptId: 'r-1' },
+  ])
+})
+
+test('sessionPresetOf reads the agentPreset projection before the legacy top-level field', () => {
+  assert.equal(sessionPresetOf({ projections: { values: { agentPreset: 'minimal' } } }), 'minimal')
+  assert.equal(sessionPresetOf({ agentPreset: 'standard' }), 'standard')
+  assert.equal(sessionPresetOf({ projections: { values: {} }, agentPreset: 'ptc' }), 'ptc')
+  assert.equal(sessionPresetOf({}), null)
+  assert.equal(sessionPresetOf(null), null)
+})
+
+test('workspace order frames reorder the cached workspace list', () => {
+  const service = new SessionService(() => null)
+  service.applyWorkspaceFrame({
+    type: 'baseline',
+    value: {
+      items: [
+        { workspaceId: 'ws-1', path: '/a', sessionIds: [] },
+        { workspaceId: 'ws-2', path: '/b', sessionIds: [] },
+        { workspaceId: 'ws-3', path: '/c', sessionIds: [] },
+      ],
+      archivedSessionIds: [],
+    },
+  })
+
+  service.applyWorkspaceFrame({ type: 'order', workspaceIds: ['ws-3', 'ws-1'] })
+
+  assert.deepEqual(service.workspaces.map((w) => w.workspaceId), ['ws-3', 'ws-1', 'ws-2'])
+})
+
+test('historyRecordEvent passes through 0.1.5 event records and ignores legacy packed rows', () => {
+  const event = { type: 'user/message', seq: 3, time: 30, data: {} }
+  assert.deepEqual(historyRecordEvent({ type: 'event', event }), [{ event, time: 30 }])
+  assert.deepEqual(historyRecordEvent({ type: 'chunks', event: { seq: 1, data: {} } }), [])
+  assert.deepEqual(historyRecordEvent(null), [])
+})
+
+test('locals unarchive set subtracts from the host archive set', async () => {
+  const service = new SessionService(() => null)
+  service.applyWorkspaceFrame({
+    type: 'baseline',
+    value: {
+      items: [{ workspaceId: 'ws-1', path: '/ws1', sessionIds: ['s1', 's2'] }],
+      archivedSessionIds: ['s1', 's2'],
+    },
+  })
+  assert.equal(service.isArchived('s1'), true)
+
+  service.setArchivedIgnored(['s1'])
+
+  assert.equal(service.isArchived('s1'), false)
+  assert.equal(service.isArchived('s2'), true)
+  assert.deepEqual(service.effectiveArchivedSet().size, 1)
+})
+
+test('uploadFile and openWorkspacePath use the 0.1.5 payloads', async () => {
+  const calls = []
+  const client = fakeClient(async (endpoint, args) => {
+    calls.push({ endpoint, args })
+    if (endpoint === 'fileUploads/upload') return { receiptId: 'r-1', file: {} }
+    return { items: [] }
+  })
+  const service = new SessionService(() => client)
+
+  const uploaded = await service.uploadFile('session-1', 'aGk=', 'a.txt')
+  assert.equal(uploaded.receiptId, 'r-1')
+  await service.openWorkspacePath('/tmp/x', 'reveal')
+
+  assert.deepEqual(calls[0], { endpoint: 'fileUploads/upload', args: { agentId: 'session-1', request: { data: 'aGk=', name: 'a.txt' } } })
+  assert.deepEqual(calls[1], { endpoint: 'session/openWorkspacePath', args: { request: { path: '/tmp/x', action: 'reveal' } } })
 })

@@ -37,8 +37,18 @@
           var opacityVal = Number(msg.contextBarOpacity);
           state.contextBarOpacity = Number.isFinite(opacityVal) && opacityVal >= 0 && opacityVal <= 100 ? opacityVal : 30;
           state.autoStart = msg.autoStart !== false;
-          state.autoOpenChat = msg.autoOpenChat !== false;
           state.showArchivedSessions = msg.showArchivedSessions === true;
+          if (msg.archivedAvailable !== undefined) state.archivedAvailable = Number(msg.archivedAvailable) || 0;
+          if (msg.restoredCount !== undefined) state.restoredCount = Number(msg.restoredCount) || 0;
+          if (msg.promptStash) {
+            state.promptStashEnabled = msg.promptStash.enabled !== false;
+            var incomingStash = normalizePromptStashItems(msg.promptStash.items);
+            // 正在输入的暂存框不被 hydrate 顶掉：宿主值可能落后于本地 300ms 防抖。
+            for (var stashIdx = 0; stashIdx < stashRows.length && stashIdx < incomingStash.length; stashIdx++) {
+              if (document.activeElement === stashRows[stashIdx].input) incomingStash[stashIdx].text = stashRows[stashIdx].input.value;
+            }
+            state.promptStashItems = incomingStash;
+          }
           applyFontSize();
           applyMaxWidth();
           updateContextBar(null);
@@ -76,6 +86,8 @@
         case 'sessions': {
           var previousSessionId = state.selectedSessionId;
           state.sessions = msg.sessions || [];
+          if (msg.archivedAvailable !== undefined) state.archivedAvailable = Number(msg.archivedAvailable) || 0;
+          if (msg.restoredCount !== undefined) state.restoredCount = Number(msg.restoredCount) || 0;
           // sessions 总是携带 selectedSessionId（可为 null）；显式更新以支持清空。
           if (msg.selectedSessionId !== undefined) state.selectedSessionId = msg.selectedSessionId;
           if (state.selectedSessionId !== previousSessionId) clearSessionState();
@@ -92,9 +104,20 @@
           }
           break;
         }
+        case 'refreshing':
+          // 刷新期间禁用按钮并转圈，避免重复点击；样式复用 status-dot 的旋转变换。
+          setRefreshing(msg.value === true);
+          break;
+        case 'sessionSearch':
+          state.sessionSearch = { query: msg.query || '', items: msg.items || [], hasMore: msg.hasMore === true };
+          renderDrawerList(state.sessions || [], state.selectedSessionId);
+          break;
         case 'presets':
           state.presets = msg.presets || [];
+          state.modeSelectionEnabled = msg.modeSelectionEnabled !== false;
           renderConversation();
+          // 抽屉行右侧的模式标签用 preset 目录里的显示名（自定义 preset 只有这里有名字）。
+          renderSessions();
           break;
         case 'models':
           if (msg.sessionId === state.selectedSessionId) {
@@ -145,16 +168,19 @@
           break;
         case 'enterToSend':
           state.enterToSend = msg.value === true;
-          composerInput.placeholder = state.enterToSend ? t('composerPlaceholder') : t('composerPlaceholderAlt');
+          updateComposerPlaceholder();
           break;
         case 'autoStart':
           state.autoStart = msg.value !== false;
           break;
-        case 'autoOpenChat':
-          state.autoOpenChat = msg.value !== false;
-          break;
         case 'showArchivedSessions':
           state.showArchivedSessions = msg.value === true;
+          // 抽屉按钮文案跟着状态走，不等下一次 sessions 帧。
+          renderSessions();
+          break;
+        case 'promptStashEnabled':
+          state.promptStashEnabled = msg.value !== false;
+          renderPromptStash(true);
           break;
         case 'conversation':
           // 只处理当前选中会话的帧。这里绝不使用帧里携带的 selectedSessionId 反向覆盖
@@ -197,7 +223,7 @@
           break;
         case 'attachmentData':
           if (msg.attachmentId) {
-            if (!msg.error) attachmentCache[msg.attachmentId] = { mediaType: msg.mediaType, data: msg.data };
+            if (!msg.error) cacheAttachment(msg.attachmentId, { mediaType: msg.mediaType, data: msg.data });
             var imgSlots = document.querySelectorAll('.msg-image[data-attachment-id="' + msg.attachmentId + '"]');
             for (var si = 0; si < imgSlots.length; si++) fillImageSlot(imgSlots[si], msg);
           }
