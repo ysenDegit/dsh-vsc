@@ -182,6 +182,20 @@
           state.promptStashEnabled = msg.value !== false;
           renderPromptStash(true);
           break;
+        case 'promptStash': {
+          // 别的窗口（同一工作区）改了暂存内容：整份替换并重绘。
+          if (msg.enabled !== undefined) state.promptStashEnabled = msg.enabled !== false;
+          var externalStash = normalizePromptStashItems(msg.items);
+          // 正在输入的暂存框不回填：本窗口可能刚好还没把这次输入上报给宿主。
+          for (var extIdx = 0; extIdx < stashRows.length && extIdx < externalStash.length; extIdx++) {
+            if (document.activeElement === stashRows[extIdx].input) {
+              externalStash[extIdx].text = stashRows[extIdx].input.value;
+            }
+          }
+          state.promptStashItems = externalStash;
+          renderPromptStash(true);
+          break;
+        }
         case 'conversation':
           // 只处理当前选中会话的帧。这里绝不使用帧里携带的 selectedSessionId 反向覆盖
           // 用户的最新选择：旧会话在切换后仍可能有在途会话帧（运行中高频出现），

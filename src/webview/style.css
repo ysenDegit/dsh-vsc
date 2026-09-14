@@ -160,8 +160,30 @@
     @media (max-width: 480px) {
       .drawer-item .drawer-mode { display: none; }
     }
+    /* 行首"主状态点"（与 dsh Web UI 同一优先级）：运行中=强调色、已完成=绿、
+       待处理交互（等待回答/计划待审/等待审批）=琥珀并带一圈光晕。
+       顺序要紧：pending 写在最后，保证"既在跑又在等你回答"时显示琥珀。 */
     .drawer-item .drawer-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-    .drawer-item.running .drawer-dot { background: var(--ok); }
+    .drawer-item.running .drawer-dot { background: var(--accent); }
+    .drawer-item.completed .drawer-dot { background: var(--ok); }
+    .drawer-item.pending .drawer-dot {
+      background: var(--warn);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 30%, transparent);
+    }
+    /* 选中行是深色/强调色底：里面的说明文字、模式胶囊、悬停操作按钮都改用行前景色。
+       此前它们固定用 --muted（灰），压在选中底色上几乎看不清（用户反馈）。 */
+    .drawer-item.selected .drawer-meta { color: inherit; opacity: 0.92; }
+    .drawer-item.selected .drawer-title-text { color: inherit; }
+    .drawer-item.selected .drawer-mode {
+      color: inherit; opacity: 0.95; border-color: color-mix(in srgb, currentColor 50%, transparent);
+      background: color-mix(in srgb, currentColor 12%, transparent);
+    }
+    .drawer-item.selected .drawer-actions button {
+      color: inherit; border-color: color-mix(in srgb, currentColor 45%, transparent);
+    }
+    .drawer-item.selected .drawer-actions button:hover {
+      background: color-mix(in srgb, currentColor 20%, transparent);
+    }
     .drawer-section-title { margin: 6px 8px 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
     .drawer-item.drawer-hit { align-items: flex-start; }
     .drawer-item .drawer-snippet { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; white-space: normal; }
@@ -440,9 +462,14 @@
     .question-panel .q-header .spacer { flex: 1; }
     .question-panel .q-question { font-size: 12px; margin-bottom: 6px; }
     .question-panel .q-detail {
-      max-height: 180px; overflow-y: auto; border: 1px solid var(--border);
+      max-height: 240px; overflow-y: auto; border: 1px solid var(--border);
       border-radius: 4px; padding: 6px 8px; margin-bottom: 8px;
       background: var(--bg);
+    }
+    /* 计划待审：正文是整份计划，默认给更高的可视高度（可随面板高度伸缩）。 */
+    .question-panel .q-detail-plan {
+      max-height: min(55vh, 520px);
+      min-height: min(220px, 35vh);
     }
     .question-panel .q-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
     .question-panel .q-option {
@@ -662,7 +689,6 @@
     .settings-field .warn { margin-top: 4px; font-size: 11px; color: var(--warn); }
     .session-banner { display: flex; align-items: center; gap: 6px; margin: 4px 8px; padding: 4px 8px; border-radius: 6px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
     .session-banner .session-banner-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .session-banner .session-banner-close { border: none; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; padding: 0 2px; }
     .top-bar-actions button.spinning { animation: dsh-spin 0.9s linear infinite; opacity: .7; }
     @keyframes dsh-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     .pending-file { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; padding: 2px 6px; border: 1px solid var(--border-soft); border-radius: 6px; background: var(--surface-2); font-size: 11px; }
@@ -675,8 +701,6 @@
     .jobs-status-failed { color: var(--error); }
     .jobs-detail { flex-basis: 100%; color: var(--muted); font-size: 11px; }
     /* 谱系子行（fork/派生会话与子代理会话）：缩进按 depth 内联设置，这里只做弱化。 */
-    .drawer-item.drawer-child { opacity: .9; }
-    .drawer-item.drawer-subagent { opacity: .8; }
     .drawer-archived-toggle { font-size: 11px; }
     .window-wrap { position: sticky; top: 0; z-index: 1; }
     .settings-field input[type=password], .settings-field input[type=text], .settings-field select {

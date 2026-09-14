@@ -46,6 +46,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 状态徽标实时显示：发现中 / 启动中 / 就绪 / 重连中 / 停止 / 错误；停止/错误状态可点击重新检测 dsh web 实例。
 
 #### 2. 工作区与会话管理
+- **作用域：只服务当前 VS Code 工作目录**。VS Code 以"打开的文件夹"为工作单位，因此插件**刻意不做跨工作区浏览**——会话抽屉只列出当前目录对应的 dsh 工作区的会话（外加"未分组"里 cwd 与当前目录一致、尚未被记账的会话）。要看/管理其它工作区的会话，请用 dsh Web UI（插件 `⋯` 菜单可一键打开，地址自带 launch token），或直接在本窗口打开那个文件夹。多根窗口当前只使用**第一个根**。
 - 自动将当前 VS Code 工作目录加入 dsh 工作区。
   - 已存在：按 canonical path 匹配后直接使用。
   - 不存在：打开插件界面时弹出确认框（启动阶段不打扰，后台静默初始化），经用户确认后创建。
@@ -57,8 +58,11 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - **启动时默认打开"最近修改过"的会话**：排序口径与抽屉一致（dsh 的 `updatedAt` + 插件观察到的活动时间，**正在运行的会话视为此刻正在被修改**），只在完全没有现存会话时才新建空白会话；选择结果会写进输出面板日志（`启动时打开最近修改的会话: …`）。
 - Session 抽屉**按最近修改时间倒序**（越近修改越靠上）：dsh 的 `updatedAt` 只等于 `max(创建时间, 最近一次发提示词)`，插件再叠加自己观察到的活动时间（提示词事件、运行开始/结束、当前会话的每条新事件），所以"刚刚还在跑"的会话一定在最前面；webview 渲染前还会再按 `updatedAt` 倒序兜一次底，保证顺序和行内的时间标签一致。
 - 会话行右侧显示**会话模式**标签（如"标准模式""PTC 模式""锚定标准模式"）：名字优先取 dsh 的 `agentPresets/list`（自定义 preset 也有名字），其次内置 id 的中文/英文短名；没有模式的会话不显示；**面板宽度 < 480px 时自动隐藏**（宽度足够才显示），标签最多占行宽 45% 且超长省略，不会挤压会话标题。
-- 会话列表**不区分分支会话与普通会话**：dsh 的 `session/fork` 会给子会话写 `parentSession`（所以它出现在 dsh 的会话谱系里），但插件把它按普通会话显示——不缩进、不加任何"分支"标记、fork/重命名/归档操作与其它会话完全一致。只有 **子代理会话**（`origin: 'subagent'`，含子代理再派生的子代理）会缩进挂在父会话下方、标注"子代理会话"且仅可选中查看。
-- **子代理会话可"提升为普通会话"（仅插件视图）**：鼠标悬停子代理行点 **⇧**，它在抽屉里就作为顶层会话显示（点 **⇩** 恢复嵌套），集合持久化在 VS Code 全局状态。dsh 的谱系只写在创建时的 header（`parentSession`）里且**没有修改接口**（RPC 面只有 create/rename/fork/prompt 等，没有 detach/promote），所以这只改变插件抽屉的显示层级，dsh Web UI 里的层级不受影响。
+- **不显示子代理会话**：`origin: 'subagent'` 的会话（含子代理再派生的子代理）一律不出现在会话抽屉与搜索结果里，也不参与工作区会话数统计——子代理属于 dsh 内部的执行细节，不是插件需要管理的对象（要看它们请用 dsh Web UI）。
+- 会话列表**不区分分支会话与普通会话**：dsh 的 `session/fork` 会给子会话写 `parentSession`（所以它出现在 dsh 的会话谱系里），但插件把它按普通会话显示——不缩进、不加任何"分支"标记、fork/重命名/归档操作与其它会话完全一致。
+- **行首状态点**（与 dsh Web UI 同一优先级，一眼看出"哪个会话在等你"）：
+  - **琥珀点 = 待处理交互**：等待回答 / 计划待审 / 等待审批（鼠标悬停有说明），优先级**高于**运行指示——Agent 正卡在那一轮等你动手，不处理它不会自己结束；
+  - 蓝点 = 运行中；**绿点 = 已完成**（跑完了但你还没打开过，切过去看即清除）；灰点 = 空闲。
 - 归档会话：dsh 无 unarchive API，插件提供"取消归档（仅插件视图，↩）"与抽屉里的"显示已归档 / 隐藏已归档（按钮文案 = 点击后会做什么：归档会话未显示时写"显示已归档"，已显示时写"隐藏已归档"，与设置里的 `dsh-vsc.showArchivedSessions` 同一状态、可反复切换）"（本地集合持久化在 VS Code globalState，不影响 dsh 状态）。按钮上会带数量（如"显示已归档（13）"）；若该工作区的归档会话**全部**已被"本地恢复显示"，就没有可切换的会话，按钮 tooltip 会说明原因并指向设置里的"清除仅插件内显示"。这类会话在列表里标为"**已归档会话（仅插件内显示）**"（悬停有说明）——它们**在 dsh 里确实是归档状态**，dsh 没有取消归档接口、网页端也把归档会话直接过滤掉（`ui-workspace` 的会话树用 `archivedSessionIds` 过滤），所以**只有在插件里能看到**；设置 → 管理工作区里有"清除"仅插件内显示"（N）"可一次性撤销（旧版"隐藏已归档"按钮曾把全部归档会话写进本地集合，一键即可清理）。
 - 长会话分页：初始只挂载最近 500 条（宿主裁剪"已加载窗口"，超出部分不留在内存里）；列表顶部的"加载更早"是**唯一**的向前翻页入口，点击时向 dsh 请求更早一页（`session/page`）并插入到顶部，同时保持当前阅读位置不跳走。
 - **设置面板结构**：左侧导航为 关于 / **显示**（**界面语言**、会话显示模式、字号、最大宽度、上下文占用）/ **通用**（发送方式、提示词暂存框、启动行为、**dsh 服务器**）/ 管理工作区（连接后）/ **赞助**。"dsh 服务器"分区显示当前服务的完整地址（含 token，只读不可选中 + **复制**按钮），并提供"连接到其他 dsh 服务"输入框与**重新连接**按钮（粘贴 dsh 启动时输出的完整 URL 即可切换/重连，留空则重连当前服务）。
@@ -76,7 +80,9 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 简洁会话 / 详细会话两种模式，默认简洁。
   - 简洁模式隐藏工具调用与思考流程，只保留用户、Assistant 最终输出与命令节点。
   - 详细模式（web 端风格时间线）：工具调用显示为单行 `✍️ Write file.ext`（路径只显示文件名、无下划线，点击展开参数与结果，错误显示 `❌` 红字）；思考过程显示为单行 `💭 Think · 预览`（换行折叠为单行，点击展开完整思维链），流式思考为 `💭 Thinking · …`；回合结束时若成功修改了文件，会像 dsh web 端一样显示 **产物** 列表（文件名 chips，点击在 VS Code 中打开；超过 5 个显示 `+N`）。
-  - 简洁模式下底部统计行为同一行：左侧常驻 `working` 标识（圆点颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中）、居中 LLM 统计信息（缓存命中 / 输入输出）、右下角当前模型与推理强度。
+  - 聊天区顶部只保留**计划模式**横幅（用户要求删掉此前的"目标"横幅，`goal` 投影不再显示在界面上）。
+- 会话抽屉里**选中行**的说明文字/模式标签/操作按钮改用行前景色（此前的灰色文字压在选中底色上几乎看不清）。
+- 简洁模式下底部统计行为同一行：左侧常驻 `working` 标识（圆点颜色表示会话状态：灰 = 空闲、绿 = 思考中、红 = 工具调用中、蓝 = 输出中）、居中 LLM 统计信息（缓存命中 / 输入输出）、右下角当前模型与推理强度。
 - 流式 Assistant 输出。
 - 工具调用与工具结果按 `callId` 配对。
 - `/` 命令执行结果以命令节点展示（`command/run` → `command/done`，含成功/失败信息）。
@@ -106,7 +112,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 - 发送按钮：位于输入框右侧，文字"发送"；带 N 张图片时在按钮内显示一个小数字徽标。
 - Composer 整体为一个圆角胶囊区域；输入框默认带外边框；面板宽度 <900px 时，底部统计行隐藏中间"缓存命中 / LLM 用量"，保留左侧 `working` 与右下角模型/权限信息。
 - 附件：📷 粘贴/选择图片；📎 选择任意文件（0.1.5 `file-upload`，发送前自动上传换收据并以 `{type:'file',receiptId}` 进入 prompt）。
-- **悬浮提示词暂存框**（`dsh-vsc.promptStash`，默认开启）：输入框上方右侧的悬浮层，用于预先写下"接下来准备发送的提示词"，**数量不限**，用 composer 行**右侧**（发送按钮之后）的 **＋** 逐个增加——**输入框里有文字/待发送图片时，＋ 会把它们一起存进新暂存框并清空 composer**（多行内容原样保存，只是单行框显示不下换行；图片在行内显示为缩略图，最多 3 张、更多显示 `+N`，每张缩略图都可以单独 `×` 移除），输入框为空时则新建一个空框；悬浮层自带限高滚动，堆多了也不会盖住整屏。**图片会随暂存框一起持久化**（存在 VS Code 全局状态里，重启/换窗口后仍在），发送时文字与图片一起作为一条消息提交给会话。每个槽位是固定高度的单行框（不自动换行，只显示能显示出来的内容），右侧按钮（或在该框内按 **Enter**）把该条提示词直接发送到当前会话——**发送后该暂存框即被删除**（剩下的框上移重新编号，焦点回到输入框）；也可以点 **×** 手动移除该框。功能开启时，输入框占位符里会多出"**· Ctrl+Shift+Enter 暂存**"提示（功能关闭时不显示），在输入框里按 **Ctrl+Shift+Enter**（macOS 上 Cmd+Enter）可直接把当前内容（文字+图片）暂存到一个新框——输入框为空时该快捷键不做任何事；暂存后焦点仍在输入框，方便接着写吓一条。内容持久化在 VS Code 全局状态（重启/换窗口后仍在），关闭开关只隐藏界面、不清空内容；待回答问题/审批时随输入行一起收起。开关位置：设置 → 通用 → 提示词暂存框。
+- **悬浮提示词暂存框**（`dsh-vsc.promptStash`，默认开启）：输入框上方右侧的悬浮层，用于预先写下"接下来准备发送的提示词"，**数量不限**，用 composer 行**右侧**（发送按钮之后）的 **＋** 逐个增加——**输入框里有文字/待发送图片时，＋ 会把它们一起存进新暂存框并清空 composer**（多行内容原样保存，只是单行框显示不下换行；图片在行内显示为缩略图，最多 3 张、更多显示 `+N`，每张缩略图都可以单独 `×` 移除），输入框为空时则新建一个空框；悬浮层自带限高滚动，堆多了也不会盖住整屏。**图片会随暂存框一起持久化**（存在插件的**工作区存储目录**里，重启/换窗口后仍在），发送时文字与图片一起作为一条消息提交给会话。每个槽位是固定高度的单行框（不自动换行，只显示能显示出来的内容），右侧按钮（或在该框内按 **Enter**）把该条提示词直接发送到当前会话——**发送后该暂存框即被删除**（剩下的框上移重新编号，焦点回到输入框）；也可以点 **×** 手动移除该框。功能开启时，输入框占位符里会多出"**· Ctrl+Shift+Enter 暂存**"提示（功能关闭时不显示），在输入框里按 **Ctrl+Shift+Enter**（macOS 上 Cmd+Enter）可直接把当前内容（文字+图片）暂存到一个新框——输入框为空时该快捷键不做任何事；暂存后焦点仍在输入框，方便接着写吓一条。内容**按工作区独立保存**（存在插件的 `storageUri` 工作区存储目录下的 `prompt-stash.json`：换工作区就是另一份内容、互不干扰；同一个工作区的多个窗口指向同一文件，靠文件监听**实时同步**，也不会再出现「后动手的窗口覆盖先改动窗口」的问题；没有打开文件夹时退化到全局存储目录，重启/换窗口后内容仍在），关闭开关只隐藏界面、不清空内容；待回答问题/审批时随输入行一起收起。开关位置：设置 → 通用 → 提示词暂存框。
 - 上下文占用：以输入框背景按占用比例填充显示，悬停输入框可见具体百分比；可在设置中关闭，并可自定义进度条颜色（默认与用户消息框同色）。
 - 底部统计行（同一行，左起 working 指示器、居中缓存命中与输入输出、右下角当前模型与推理强度 + 当前权限；存在运行中的后台任务时显示“{n} 个后台任务”，点击可展开任务列表；会话有目标/计划模式时，聊天区顶部显示横幅，目标横幅可用 × 关闭——关闭后该目标不再显示，目标更新（objective/phase/轮次变化）时自动重新出现）：
   - 中文：`缓存命中 42% | 输入 12.3K tokens · 输出 2.1K tokens`
@@ -115,6 +121,9 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 #### 5. 工具审批 / 计划条 / 权限 / 问题 / 命令节点
 - 工具审批（Approval）：输入框区域切换为审批面板，支持 `允许一次` / `拒绝`。
+- 计划评审（plan review）面板：正文（整份计划）默认给更高的可视高度（最多 `min(55vh, 520px)`，随面板高度伸缩），批准 / Keep planning / 聊一聊 三个按钮都走同一套 dsh `eventId` 应答。
+- 提问/审批的提交：面板右侧"提交回答"、plan-review 的批准/不批准、审批的允许一次/拒绝都会把 dsh 的 **`eventId`** 一起上报（宿主同时兼容旧的 `rpcId`）；提交后面板保持到宿主确认才收起，失败会给出提示而不是静默无反应。
+- 提问/审批面板的健壮性：同一会话里每次提问都会重新调出选择器（dsh 的提问工具会阻塞该回合，所以新提问一定取代上一个未回答的条目，不会再被"答不掉的旧条目"挡住）；落在**非当前会话**的提问/审批会提示是哪个会话在等回答；面板万一没出现，点顶栏 **⟳** 刷新即可重新拉出（刷新会重发待回答的提问/审批）；每次收到提问/审批都会在输出面板记一行 `[waterfall] …` 日志便于排查。
 - 计划条（Todo）：展示计划列表与状态统计。
 - 权限选择（Permission）：读取 dsh `permissions` 投影，切换时执行 `/permission <preset>`。
 - 命令节点：`/` 命令执行后，会话中显示命令行与执行结果（成功/失败），简洁模式同样保留。
@@ -185,7 +194,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 | `dsh-vsc.language` | string | zh | 插件界面语言：zh / en |
 | `dsh-vsc.showArchivedSessions` | boolean | false | 是否在会话列表中显示已归档会话（默认隐藏） |
 | `dsh-vsc.enterToSend` | boolean | false | Enter 键行为：false（默认）= Shift+Enter 发送、Enter 换行；true = Enter 发送 |
-| `dsh-vsc.promptStash` | boolean | true | 是否启用悬浮提示词暂存框（输入框上方可一键发送的提示词槽位，数量不限、文字与图片跨会话保留；＋ 会把输入框里的文字与待发送图片存进新槽） |
+| `dsh-vsc.promptStash` | boolean | true | 是否启用悬浮提示词暂存框（输入框上方可一键发送的提示词槽位，数量不限、文字与图片**按工作区**保留，同一工作区的多个窗口实时同步；＋ 会把输入框里的文字与待发送图片存进新槽） |
 
 ### 三、运行环境
 
@@ -197,7 +206,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 | 插件版本 | 最低 dsh 版本 | 主要适配内容 |
 |---|---|---|
-| **1.1.4**（当前） | **0.1.5-rc.1** | 协议要求与 1.1.3 相同（dsh 0.1.5 系列）；本版集中在启动/连接体验（自动启动不再做版本检测、改为启动后提醒升级；离线可用性与 token 手动入口；启动默认打开最近修改的会话）与设置面板调整，详见 CHANGELOG |
+| **1.1.4**（当前） | **0.1.5-rc.1** | 协议要求与 1.1.3 相同（dsh 0.1.5 系列）；本版集中在启动/连接体验（自动启动不再做版本检测、改为启动后提醒升级；离线可用性与 token 手动入口；启动默认打开最近修改的会话）、提示词暂存框改为**按工作区隔离 + 跨窗口实时同步**、计划评审面板加高，详见 CHANGELOG |
 | 1.1.3 | **0.1.5-rc.1** | 会话抽屉（最近修改时间排序、归档分组/一键清理、模式标签）、悬浮提示词暂存框（图片暂存、Ctrl+Shift+Enter）、设置 → 赞助页、前后端解耦与 dsh 认证手动入口 |
 | 1.1.2 | **0.1.5** | 实时助手输出改用进程内 assistant-stream（durable 日志不再写 `assistant/chunk`）；`commands/execute` 附件参数改为 `submittedAttachments`；工作模式/模型选择分别以 `agentPreset`、`modelSelection` 投影为准；新增抽屉内容搜索、后台任务提示 |
 | 1.1.1 | 0.1.2-rc.1 | 修复新会话"选择工作模式"点击无反馈；设置页与顶栏"打开 dsh Web"链接携带认证 token（协议同 1.1.0） |
@@ -254,6 +263,7 @@ vsce package
 - Status badge updates in real time: discovering / starting / ready / reconnecting / stopped / error; click it in the stopped/error state to re-detect the dsh web instance.
 
 #### 1.2 Workspace and Session Management
+- **Scope: this extension serves only the current VS Code workspace directory.** VS Code works per opened folder, so the extension **deliberately does not offer cross-workspace browsing** — the session drawer lists only sessions of the dsh workspace that maps to the current folder (plus "ungrouped" sessions whose cwd matches this folder and that no workspace accounts for). To view or manage sessions of other workspaces, use the dsh Web UI (the `⋯` menu opens it with a launch-token URL) or open that folder in this window. In a multi-root window only the **first root** is used.
 - Automatically adds the current VS Code workspace directory to the dsh workspace.
   - If it already exists: matched by canonical path and reused directly.
   - If not: a confirmation dialog appears when the plugin UI is opened (no prompt during startup; background initialization stays silent), and the workspace is created after user confirmation.
@@ -265,7 +275,11 @@ vsce package
 - The drawer is sorted by **last modification time, newest first** — dsh `updatedAt` only equals `max(createdAt, last prompt)`, so the extension layers its own observed activity on top (prompt events, run start/finish, every new event of the open session); the webview also re-sorts by `updatedAt` as a safety net so the order always matches the relative-time labels.
 - The session list is sorted by **last modification time**: dsh `session/list` only exposes `updatedAt = max(createdAt, last prompt time)` (`sessionListMetadata` carries just `lastPromptAt`), so the extension additionally records the activity it observes (`api-session/activity` prompt times, `api-session/status` start/finish times, and every new event of the open session), takes the larger value, and both sorts and renders relative times from it — sessions the model is currently modifying stay at (or return to) the top instead of being stuck at their last-prompt time.
 - Each drawer row shows a **session mode** chip on the right (e.g. "Standard", "PTC Mode", "Anchored Standard"): the name comes from dsh `agentPresets/list` first (custom presets only have a name there), then from the built-in localized short names; sessions without a mode show no chip. It is **hidden automatically below 480px of panel width** (shown only when there is room), capped at 45% of the row width with an ellipsis so it never squeezes the session title.
+- **Subagent sessions are never listed**: sessions with `origin: 'subagent'` (including nested ones) do not appear in the session drawer or in search results, and are excluded from the workspace session counts — subagents are an internal execution detail of dsh, not something this extension manages (use the dsh Web UI to inspect them).
 - The session list **does not distinguish forked sessions from normal ones**: dsh `session/fork` writes `parentSession` on the child (which is why it appears in dsh's lineage), but the plugin renders it exactly like any other session — no indent, no "fork" label, identical fork/rename/archive actions. Only **subagent sessions** (`origin: 'subagent'`, including subagents spawned by subagents) are nested under their parent, labelled "Subagent session" and select-only.
+- **Row status dot** (same precedence as the dsh Web UI, so you can see at a glance which session is waiting for you):
+  - **Amber = pending interaction**: waiting for an answer / plan review / approval (hover shows which one). It outranks the running indicator — the agent is blocked on that turn until you act.
+  - Blue = running; **green = finished** (the turn completed and you have not opened it yet; selecting the session clears it); gray = idle.
 - **A subagent session can be promoted to a normal (top-level) session — plugin view only**: hover a subagent row and click **⇧** to render it as a top-level row in the drawer (click **⇩** to restore nesting); the set is persisted in VS Code global state. dsh stores lineage in the creation-time header (`parentSession`) and exposes **no API to change it** (the RPC surface only has create/rename/fork/prompt/…, no detach/promote), so this only changes the plugin drawer — nesting in the dsh Web UI is unaffected.
 - Archived sessions: dsh has no unarchive API, so the plugin offers "Unarchive (plugin only, ↩)" plus a drawer-level toggle that labels the action it performs — "Show archived" while archived sessions are hidden, "Hide archived" while they are shown (same state as the `dsh-vsc.showArchivedSessions` setting, toggleable back and forth) — and a locally unarchived row is marked "Restored (plugin view only)" with a `↪ Hide again (plugin view only)` action. Such rows are labelled "**Archived session (extension view only)**" (hover for the explanation) — they really are archived in dsh, and since dsh has no unarchive API and its web UI filters archived sessions out of the session tree (`ui-workspace` filters by `archivedSessionIds`), they are visible **only inside the extension**; Settings → Manage workspaces offers "Clear \"extension view only\" (N)" to undo them in one click (the old "Hide archived" button used to write every archived session into that local set). The button carries the count (e.g. "Show archived (13)"); if every archived session of this workspace is already "shown anyway" locally there is nothing left to toggle, and the button tooltip explains that and points at the "Clear extension view only" action in Settings. When archived sessions are shown they are listed under an "**Archived (N)**" section header after the active ones (they are older, so they naturally sat at the bottom of a time-ordered list — now it is obvious which rows are archived), and turning the view on scrolls the drawer to that section.
 - Long-conversation paging: the initial mount keeps only the latest 500 items (the host trims its loaded window; the rest is not retained in memory). The single "Load earlier" button on top requests one older page from dsh (`session/page`), prepends it, and keeps the reading position anchored.
@@ -284,7 +298,9 @@ vsce package
 - Two display modes: concise / detailed, concise by default.
   - Concise mode hides tool calls and thinking traces, keeping only user messages, the Assistant's final output, and command nodes.
   - Detailed mode (web-style timeline): tool calls appear as one-line `✍️ Write file.ext` (paths show only the file name, no underline; click to expand arguments and results; errors show `❌` in red); thinking appears as one-line `💭 Think · preview` (newlines collapsed to a single line; click to expand the full chain), with streaming shown as `💭 Thinking · …`; when a turn ends having successfully modified files, a **Produced** list appears like the dsh web UI (file-name chips, click to open in VS Code; `+N` when there are more than 5).
-  - In concise mode, the bottom stats row is a single line: a persistent `working` indicator on the left (dot color shows session status: gray = idle, green = thinking, red = tool call, blue = streaming output), LLM stats in the center (cache hit / input-output), and the current model and reasoning effort at the bottom right.
+  - The chat area keeps only the **plan mode** banner; the previous "goal" banner was removed on request (the `goal` projection is no longer rendered).
+- In the session drawer, the **selected row** now uses the row foreground color for its meta text, mode chip and action buttons (the previous gray text was nearly invisible on the selection background).
+- In concise mode, the bottom stats row is a single line: a persistent `working` indicator on the left (dot color shows session status: gray = idle, green = thinking, red = tool call, blue = streaming output), LLM stats in the center (cache hit / input-output), and the current model and reasoning effort at the bottom right.
 - Streaming Assistant output.
 - Tool calls and tool results are paired by `callId`.
 - `/` command execution results are shown as command nodes (`command/run` → `command/done`, including success/failure information).
@@ -323,6 +339,9 @@ vsce package
 
 #### 1.5 Tool Approval / Todo Bar / Permissions / Questions / Command Nodes
 - Tool approval: the input area switches to an approval panel, supporting `Allow once` / `Reject`.
+- Plan-review panel: the plan body gets a taller viewport by default (up to `min(55vh, 520px)`, scaling with the panel), and its Approve / Keep planning / Chat about it buttons all answer through the same dsh `eventId` path.
+- Submitting an answer: the "Submit Answer" button, plan-review approve/reject and the approval allow-once/reject buttons all send dsh's **`eventId`** (the host still accepts the legacy `rpcId`); the panel stays until the host confirms and failures are reported instead of being silently ignored.
+- Robust question/approval panels: every question in a session brings the selector back (dsh's question tool blocks the turn, so a new request always supersedes an unanswered older entry instead of being masked by an unanswerable stale one); a question/approval that lands in **another session** tells you which session is waiting; if the panel ever fails to appear, clicking **⟳** in the top bar re-posts the pending question/approval; every incoming waterfall is logged as `[waterfall] …` in the output channel for diagnosis.
 - Todo bar: shows the plan list and status statistics.
 - Permission: reads the dsh `permissions` projection; switching executes `/permission <preset>`.
 - Command nodes: after a `/` command executes, the command line and its result (success/failure) are shown in the session, and are kept in concise mode as well.

@@ -333,7 +333,7 @@ test('prompt stash: settings switch, pending question and hydrate never clobber 
   await new Promise((resolve) => setTimeout(resolve, 350))
 })
 
-test('session drawer: forked sessions render exactly like normal sessions; only subagents nest', async () => {
+test('session drawer: forked sessions render exactly like normal sessions (no subagent rows at all)', async () => {
   const script = getBundleScript('lineage-nonce')
   const posted = []
   const listeners = []
@@ -341,14 +341,13 @@ test('session drawer: forked sessions render exactly like normal sessions; only 
   vm.runInContext(script, context, { timeout: 10_000 })
   const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
 
-  // dsh 的会话列表里：fork 出来的会话只有 parentSessionId（origin 为空），
-  // 子代理会话才有 origin:'subagent'；fork 可以再 fork，子代理也可以再派子代理。
+  // dsh 的会话列表里：fork 出来的会话只有 parentSessionId，子代理会话才有 origin:'subagent'。
+  // 子代理显示功能已删除（用户要求）——宿主不再下发子代理行，这里再补一帧带子代理的列表做兜底断言：
+  // 即使宿主漏发，webview 也不渲染任何子代理行、不缩进、不标"子代理会话"。
   const sessions = [
     { sessionId: 'S-root', displayTitle: 'anchored-standard维护', running: false, blank: false, updatedAt: 1, archived: false },
     { sessionId: 'S-fork', displayTitle: '会话（fork 02:15）', parentSessionId: 'S-root', running: false, blank: false, updatedAt: 2, archived: false },
     { sessionId: 'S-fork2', displayTitle: '会话（fork 02:40）', parentSessionId: 'S-fork', running: false, blank: false, updatedAt: 3, archived: false },
-    { sessionId: 'S-sub', displayTitle: 'subagent', parentSessionId: 'S-root', origin: 'subagent', running: true, blank: false, updatedAt: 4, archived: false },
-    { sessionId: 'S-sub2', displayTitle: 'subagent-2', parentSessionId: 'S-sub', origin: 'subagent', running: false, blank: false, updatedAt: 5, archived: false },
   ]
   dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-root', conversation: [] })
 
@@ -357,93 +356,27 @@ test('session drawer: forked sessions render exactly like normal sessions; only 
   const rowById = new Map(rows.map((row) => [row.getAttribute('data-session-id'), row]))
   assert.deepEqual(
     rows.map((row) => row.getAttribute('data-session-id')),
-    ['S-fork2', 'S-fork', 'S-root', 'S-sub', 'S-sub2'],
-    '顶层按最近修改时间倒序；子代理会话紧随其父会话',
+    ['S-fork2', 'S-fork', 'S-root'],
+    '全部平铺、按最近修改时间倒序，没有缩进层级',
   )
   const metaOf = (row) => row.childNodes[1].childNodes[1].textContent
   const actionKinds = (row) => {
     const actions = (row.childNodes || []).find((node) => node && String(node.className) === 'drawer-actions')
     return actions ? actions.childNodes.map((btn) => btn.getAttribute('data-action')) : []
   }
-
-  // 分支会话 = 普通会话：不缩进、不带任何"分支"标记、操作与顶层会话完全一致。
   for (const forkRow of [rowById.get('S-fork'), rowById.get('S-fork2')]) {
     assert.equal(forkRow.style.paddingLeft, undefined, 'a forked session must not be indented')
     assert.ok(!String(forkRow.className).includes('drawer-child'))
-    assert.ok(!String(forkRow.className).includes('drawer-subagent'))
-    assert.ok(!metaOf(forkRow).includes('分支会话'), 'forked sessions are no longer distinguished')
+    assert.ok(!metaOf(forkRow).includes('子代理会话'))
     assert.deepEqual(actionKinds(forkRow), ['forkSession', 'renameSession', 'closeSession'])
   }
-
-  // 只有子代理会话嵌套（含子代理的子代理），标"子代理会话"且只给视图级提升操作。
-  assert.match(metaOf(rowById.get('S-sub')), /^子代理会话/)
-  assert.equal(rowById.get('S-sub').style.paddingLeft, '22px')
-  assert.deepEqual(actionKinds(rowById.get('S-sub')), ['promoteSession'])
-  assert.match(metaOf(rowById.get('S-sub2')), /^子代理会话/)
-  assert.equal(rowById.get('S-sub2').style.paddingLeft, '36px', 'depth 2 indents deeper than depth 1')
-
-  await new Promise((resolve) => setTimeout(resolve, 250))
-})
-
-test('session drawer: a subagent session can be promoted to a top-level row (plugin view) and restored', async () => {
-  const script = getBundleScript('promote-nonce')
-  const posted = []
-  const listeners = []
-  const context = vm.createContext(makeFakeDom(posted, listeners))
-  vm.runInContext(script, context, { timeout: 10_000 })
-  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
-  const rowsOf = () => context.document.getElementById('drawerList').childNodes
-    .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
-  const rowById = (id) => rowsOf().find((row) => row.getAttribute('data-session-id') === id)
-  const metaOf = (row) => row.childNodes[1].childNodes[1].textContent
-  const actionButton = (row, kind) => {
-    const actions = (row.childNodes || []).find((node) => node && String(node.className) === 'drawer-actions')
-    return actions ? actions.childNodes.find((btn) => btn.getAttribute('data-action') === kind) : null
+  // 抽屉里不再有"提升/恢复层级"这类子代理专用操作。
+  for (const row of rows) {
+    assert.ok(!actionKinds(row).includes('promoteSession'))
+    assert.ok(!actionKinds(row).includes('demoteSession'))
   }
-
-  const sessions = [
-    { sessionId: 'S-root', displayTitle: 'root', running: false, blank: false, updatedAt: 1, archived: false },
-    { sessionId: 'S-sub', displayTitle: 'subagent', parentSessionId: 'S-root', origin: 'subagent', running: false, blank: false, updatedAt: 2, archived: false },
-  ]
-  // dsh 的谱系不可改（header.parentSession 只在创建时写入），提升只是插件视图内的显示开关；
-  // 分支会话已按普通会话顶层显示，所以只有子代理会话还需要这个开关。
-  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-root', conversation: [] })
-  assert.match(metaOf(rowById('S-sub')), /^子代理会话/)
-
-  // 事件委托：点行本身 = 选中会话，点行内按钮 = 执行该动作。
-  rowById('S-sub').click()
-  assert.deepEqual(
-    posted.filter((message) => message.type === 'selectSession').pop(),
-    { type: 'selectSession', sessionId: 'S-sub' },
-  )
-
-  actionButton(rowById('S-sub'), 'promoteSession').click()
-  assert.deepEqual(
-    posted.filter((message) => message.type === 'promoteSession').pop(),
-    { type: 'promoteSession', sessionId: 'S-sub', promoted: true },
-  )
-
-  // 宿主落盘后回推的列表带 promotedLocally：该会话变成顶层行（无缩进），并给出"恢复层级"。
-  dispatch({
-    type: 'sessions', selectedSessionId: 'S-root',
-    sessions: [sessions[0], { ...sessions[1], promotedLocally: true }],
-  })
-  const promotedRow = rowById('S-sub')
-  assert.equal(promotedRow.style.paddingLeft, undefined, 'a promoted session must render as a top-level row')
-  assert.ok(!String(promotedRow.className).includes('drawer-child'))
-  assert.ok(metaOf(promotedRow).includes('已提升为普通会话'))
-  assert.ok(actionButton(promotedRow, 'demoteSession'), 'a promoted row must offer "restore nesting"')
-
-  actionButton(promotedRow, 'demoteSession').click()
-  assert.deepEqual(
-    posted.filter((message) => message.type === 'promoteSession').pop(),
-    { type: 'promoteSession', sessionId: 'S-sub', promoted: false },
-  )
-
-  // 恢复层级后重新嵌套回父会话下面。
-  dispatch({ type: 'sessions', selectedSessionId: 'S-root', sessions })
-  assert.match(metaOf(rowById('S-sub')), /^子代理会话/)
-  assert.equal(rowById('S-sub').style.paddingLeft, '22px')
+  // 抽屉头部也没有"显示子代理"勾选框了。
+  assert.equal(context.document.getElementById('subagentsCheck').childNodes.length, 0)
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })
@@ -1034,6 +967,252 @@ test('session drawer: rows are ordered by last modification time (newest first)'
     ],
   })
   assert.deepEqual(ids(), ['A', 'B', 'C'], '越近修改的会话越靠上')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('question selector keeps appearing for every question in one session (plan review too)', async () => {
+  const script = getBundleScript('questions-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const panel = context.document.getElementById('questionPanel')
+  const panelText = () => {
+    const walk = (node, out = []) => {
+      for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+      return out
+    }
+    return walk(panel).map((node) => node.textContent).join(' ')
+  }
+
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: 'S-1', conversation: [] })
+
+  const ask = (id, extra = {}) => dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: { eventId: 'e-' + id, questions: [{ id, question: '问题 ' + id, options: [{ label: 'a' }, { label: 'b' }], ...extra }] },
+  })
+
+  // 普通提问 → 面板出现，选项可点。
+  ask('q1')
+  assert.equal(panel.style.display, 'block')
+  assert.ok(panelText().includes('问题 q1'), panelText())
+
+  // 回答后（宿主回发 pending:null）面板收起。
+  dispatch({ type: 'question', sessionId: 'S-1', pending: null })
+  assert.equal(panel.style.display, 'none')
+
+  // 计划评审提问（plan-review intent）→ 走专门的 Plan Review 面板。
+  ask('q2', { intent: { kind: 'plan-review', approve: 'a' }, detail: '## 计划\n内容' })
+  assert.equal(panel.style.display, 'block')
+  assert.ok(panelText().includes('计划评审'), panelText())
+  assert.ok(panelText().includes('问题 q2'), panelText())
+
+  dispatch({ type: 'question', sessionId: 'S-1', pending: null })
+  assert.equal(panel.style.display, 'none')
+
+  // 同一个会话再问一次 → 依然要能调出选择器（历史 bug：第二次起被旧条目挡住）。
+  ask('q3')
+  assert.equal(panel.style.display, 'block')
+  assert.ok(panelText().includes('问题 q3'), panelText())
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('answering posts the waterfall eventId (the rpcId-only payload used to be dropped silently)', async () => {
+  const script = getBundleScript('answer-payload-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+  const panel = context.document.getElementById('questionPanel')
+  const approvalPanel = context.document.getElementById('approvalPanel')
+  const button = (root, text) => walk(root).find((node) => node.tagName === 'BUTTON' && node.textContent === text)
+  const answers = () => posted.filter((message) => message.type === 'questionAnswer')
+  const approvals = () => posted.filter((message) => message.type === 'approvalAnswer')
+
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: 'S-1', conversation: [] })
+
+  // 普通单选提问：点选项 → 点"提交回答"。
+  dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: { eventId: 'e-1', questions: [{ id: 'q1', question: 'Q?', options: [{ label: '甲' }, { label: '乙' }] }] },
+  })
+  button(panel, '甲').click()
+  button(panel, '提交回答').click()
+  assert.equal(answers().length, 1)
+  assert.equal(answers()[0].eventId, 'e-1', '必须带 eventId（宿主只认这个字段）')
+  assert.equal(answers()[0].rpcId, 'e-1', '同时保留 rpcId 兼容旧宿主')
+  assert.deepEqual(answers()[0].answers, [{ id: 'q1', selected: ['甲'] }])
+  assert.equal(panel.style.display, 'block', '提交后不本地清空，等宿主回发 pending:null 再收起')
+
+  // 宿主确认后收起。
+  dispatch({ type: 'question', sessionId: 'S-1', pending: null })
+  assert.equal(panel.style.display, 'none')
+
+  // 计划评审：批准 / 不批准两个按钮都要带 eventId。
+  dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: { eventId: 'e-2', questions: [{ id: 'plan', question: '批准计划？', detail: '## 计划', options: [{ label: '批准' }, { label: '调整' }], intent: { kind: 'plan-review', approve: '批准' } }] },
+  })
+  // 计划评审的正文用更高的专用容器（q-detail-plan），便于通读整份计划。
+  const detail = walk(panel).find((node) => String(node.className).includes('q-detail'))
+  assert.ok(String(detail.className).includes('q-detail-plan'), '计划评审正文需要专用高度样式')
+
+  button(panel, '批准').click()
+  assert.equal(answers().pop().eventId, 'e-2')
+  assert.deepEqual(answers().pop().answers, [{ id: 'plan', selected: ['批准'] }])
+  button(panel, '调整').click()
+  assert.deepEqual(answers().pop().answers, [{ id: 'plan', selected: ['调整'] }])
+  button(panel, '聊一聊').click()
+  const cancel = posted.filter((message) => message.type === 'questionCancel').pop()
+  assert.equal(cancel.eventId, 'e-2', '✕/聊一聊 也要带 eventId')
+
+  // 工具审批：允许一次 / 拒绝。
+  dispatch({ type: 'question', sessionId: 'S-1', pending: null })
+  dispatch({ type: 'approval', sessionId: 'S-1', pending: { eventId: 'a-1', approvalId: 'ap-1', toolName: 'bash', reason: 'why' } })
+  button(approvalPanel, '允许一次').click()
+  assert.equal(approvals().pop().eventId, 'a-1')
+  assert.equal(approvals().pop().approvalId, 'ap-1')
+  assert.equal(approvals().pop().outcome, 'allowed-once')
+  button(approvalPanel, '拒绝').click()
+  assert.equal(approvals().pop().outcome, 'rejected')
+  assert.equal(approvals().pop().eventId, 'a-1')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('prompt stash: a host push from another window replaces the boxes (workspace-wide sync)', async () => {
+  const script = getBundleScript('stash-sync-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+
+  dispatch({
+    type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: null,
+    conversation: [], promptStash: { enabled: true, items: [{ id: 'a', text: '本窗口的草稿', images: [] }] },
+  })
+
+  const stash = context.document.getElementById('promptStash')
+  const rowAt = (index) => stash.childNodes[index]
+  const inputOf = (row) => (row.childNodes || []).find((node) => node && String(node.className) === 'stash-input')
+  assert.equal(inputOf(rowAt(0)).value, '本窗口的草稿')
+
+  // 另一个窗口（同一工作区）新增了一个暂存框 → 宿主下发整份内容，本窗口立刻跟上。
+  dispatch({
+    type: 'promptStash',
+    enabled: true,
+    items: [
+      { id: 'a', text: '本窗口的草稿', images: [] },
+      { id: 'b', text: '别的窗口写的', images: [] },
+    ],
+  })
+  assert.equal(stash.hidden, false)
+  assert.equal(stash.childNodes.length, 2)
+  assert.equal(inputOf(rowAt(1)).value, '别的窗口写的')
+
+  // 正在输入的框不被顶掉（本窗口这次输入可能还没上报给宿主）。
+  const typing = inputOf(rowAt(0))
+  typing.focus()
+  typing.value = '正在输入'
+  dispatch({
+    type: 'promptStash',
+    enabled: true,
+    items: [{ id: 'a', text: '本窗口的草稿', images: [] }, { id: 'b', text: '更新版', images: [] }],
+  })
+  assert.equal(inputOf(rowAt(0)).value, '正在输入', 'focused box keeps what the user is typing')
+  assert.equal(inputOf(rowAt(1)).value, '更新版', 'other boxes still follow the host')
+
+  // 别的窗口删空了 → 悬浮层收起。
+  dispatch({ type: 'promptStash', enabled: true, items: [] })
+  assert.equal(stash.childNodes.length, 0)
+  assert.equal(stash.hidden, true)
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('session drawer: pending dots outrank running and completed is green', async () => {
+  const script = getBundleScript('row-state-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+
+  const sessions = [
+    { sessionId: 'S-idle', displayTitle: '空闲会话', running: false, blank: false, updatedAt: 1, archived: false },
+    { sessionId: 'S-work', displayTitle: '正在跑', running: true, blank: false, updatedAt: 2, archived: false },
+    { sessionId: 'S-done', displayTitle: '跑完了没人看', completed: true, running: false, blank: false, updatedAt: 3, archived: false },
+    { sessionId: 'S-ask', displayTitle: '等你回答', running: true, pendingKind: 'question', blank: false, updatedAt: 4, archived: false },
+    { sessionId: 'S-plan', displayTitle: '等你审计划', running: true, pendingKind: 'plan-review', blank: false, updatedAt: 5, archived: false },
+    { sessionId: 'S-approve', displayTitle: '等你批准', running: true, pendingKind: 'approval', blank: false, updatedAt: 6, archived: false },
+  ]
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-idle', conversation: [] })
+
+  const rowsOf = () => context.document.getElementById('drawerList').childNodes
+    .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const rowById = (id) => rowsOf().find((row) => row.getAttribute('data-session-id') === id)
+  const metaOf = (row) => row.childNodes[1].childNodes[1].textContent
+  const dotOf = (row) => (row.childNodes || []).find((node) => node && String(node.className) === 'drawer-dot')
+
+  // 每个行的"主状态"都能从 data-state 读出来（点色由 CSS 按类上色）。
+  assert.equal(rowById('S-idle').getAttribute('data-state'), 'idle')
+  assert.equal(rowById('S-work').getAttribute('data-state'), 'running')
+  assert.equal(rowById('S-done').getAttribute('data-state'), 'completed')
+  assert.match(String(rowById('S-done').className), /completed/, 'completed 行用绿点')
+  assert.equal(rowById('S-ask').getAttribute('data-state'), 'question')
+  assert.equal(rowById('S-plan').getAttribute('data-state'), 'plan-review')
+  assert.equal(rowById('S-approve').getAttribute('data-state'), 'approval')
+
+  // 待处理交互优先于"运行中"：类名与文案都是琥珀点那一套。
+  for (const [id, label] of [['S-ask', '等待回答'], ['S-plan', '计划待审'], ['S-approve', '等待审批']]) {
+    const row = rowById(id)
+    assert.match(String(row.className), /pending/, `${id} 要有 pending 类（琥珀点）`)
+    assert.equal(String(row.className).includes('running'), false, `${id} 不该同时用运行中的点色`)
+    assert.ok(metaOf(row).includes(label), `${id} 的文案应是 ${label}：${metaOf(row)}`)
+    assert.ok(String(dotOf(row).title).includes(label), '点的 tooltip 说明是哪种等待')
+  }
+  assert.equal(metaOf(rowById('S-work')).includes('工作中'), true)
+
+  // 子代理计数落在父行上。
+  // 状态清掉后（宿主重发帧）回到普通状态。
+  dispatch({ type: 'sessions', sessions: sessions.map((s) => ({ ...s, pendingKind: null, completed: false })), selectedSessionId: 'S-idle' })
+  assert.equal(rowById('S-ask').getAttribute('data-state'), 'running')
+  assert.equal(rowById('S-done').getAttribute('data-state'), 'idle')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('the goal banner is gone (plan banner stays)', async () => {
+  const script = getBundleScript('no-goal-banner-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: 'S-1', conversation: [] })
+
+  const banner = context.document.getElementById('sessionBanner')
+  // 只有目标、没有计划模式：不再显示横幅（用户要求删掉目标横幅）。
+  dispatch({ type: 'stats', sessionId: 'S-1', stats: { goal: { goal: { objective: '把插件适配到 0.1.2-alpha.2', phase: 'active' } }, plan: null } })
+  assert.equal(banner.hidden, true)
+  assert.equal(banner.childNodes.length, 0)
+
+  // 计划模式仍然显示，且不再有"关闭"按钮（目标横幅那个 × 已随目标横幅一起删除）。
+  dispatch({ type: 'stats', sessionId: 'S-1', stats: { plan: { active: true }, goal: { goal: { objective: 'x' } } } })
+  assert.equal(banner.hidden, false)
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+  assert.ok(walk(banner).some((node) => node.textContent === '计划模式'))
+  assert.equal(walk(banner).some((node) => String(node.className).includes('session-banner-close')), false)
+  assert.equal(walk(banner).some((node) => String(node.textContent).includes('目标')), false)
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })

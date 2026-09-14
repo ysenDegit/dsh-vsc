@@ -568,11 +568,8 @@
       close.addEventListener('click', function () {
         post({
           type: 'approvalAnswer', sessionId: state.selectedSessionId,
-          rpcId: approval.rpcId, approvalId: approval.approvalId, outcome: 'rejected',
+          eventId: approval.eventId, rpcId: approval.eventId, approvalId: approval.approvalId, outcome: 'rejected',
         });
-        state.pendingApproval = null;
-        renderApproval();
-        updateQuestionUi();
       });
       header.appendChild(close);
       approvalPanelEl.appendChild(header);
@@ -595,11 +592,8 @@
       reject.addEventListener('click', function () {
         post({
           type: 'approvalAnswer', sessionId: state.selectedSessionId,
-          rpcId: approval.rpcId, approvalId: approval.approvalId, outcome: 'rejected',
+          eventId: approval.eventId, rpcId: approval.eventId, approvalId: approval.approvalId, outcome: 'rejected',
         });
-        state.pendingApproval = null;
-        renderApproval();
-        updateQuestionUi();
       });
       actions.appendChild(reject);
       var allow = document.createElement('button');
@@ -608,11 +602,8 @@
       allow.addEventListener('click', function () {
         post({
           type: 'approvalAnswer', sessionId: state.selectedSessionId,
-          rpcId: approval.rpcId, approvalId: approval.approvalId, outcome: 'allowed-once',
+          eventId: approval.eventId, rpcId: approval.eventId, approvalId: approval.approvalId, outcome: 'allowed-once',
         });
-        state.pendingApproval = null;
-        renderApproval();
-        updateQuestionUi();
       });
       actions.appendChild(allow);
       approvalPanelEl.appendChild(actions);
@@ -697,17 +688,17 @@
           answers.push(answer2);
         }
       }
-      post({ type: 'questionAnswer', sessionId: state.selectedSessionId, rpcId: pending.rpcId, answers: answers });
-      state.pendingQuestion = null;
-      resetQuestionDrafts();
-      renderQuestion();
-      updateQuestionUi();
+      // dsh 的 waterfall 事件 id 字段就是 eventId（宿主快照里也是 eventId）：
+      // 之前只发 rpcId（快照里没有这个字段 → undefined）导致宿主静默丢弃、面板点了没反应。
+      // 保留 rpcId 作为兼容别名；**不在本地清空**，等宿主回发 pending=null 再收起，
+      // 这样提交失败时面板还在、可以重试。
+      post({ type: 'questionAnswer', sessionId: state.selectedSessionId, eventId: pending.eventId, rpcId: pending.eventId, answers: answers });
     }
 
     function cancelPendingQuestion() {
       var pending = state.pendingQuestion;
       if (!pending) return;
-      post({ type: 'questionCancel', sessionId: state.selectedSessionId, rpcId: pending.rpcId });
+      post({ type: 'questionCancel', sessionId: state.selectedSessionId, eventId: pending.eventId, rpcId: pending.eventId });
       state.pendingQuestion = null;
       resetQuestionDrafts();
       renderQuestion();
@@ -741,7 +732,8 @@
       questionPanelEl.appendChild(question);
 
       var detail = document.createElement('div');
-      detail.className = 'q-detail';
+      // 计划评审的正文（整份计划 markdown）单独给一个更高的高度上限，便于通读。
+      detail.className = 'q-detail q-detail-plan';
       detail.innerHTML = renderMarkdown(q.detail || '');
       questionPanelEl.appendChild(detail);
 
@@ -755,13 +747,10 @@
       refuse.textContent = otherLabel || t('reject');
       refuse.addEventListener('click', function () {
         post({
-          type: 'questionAnswer', sessionId: state.selectedSessionId, rpcId: pending.rpcId,
+          type: 'questionAnswer', sessionId: state.selectedSessionId,
+          eventId: pending.eventId, rpcId: pending.eventId,
           answers: [{ id: q.id, selected: [otherLabel] }],
         });
-        state.pendingQuestion = null;
-        resetQuestionDrafts();
-        renderQuestion();
-        updateQuestionUi();
       });
       actions.appendChild(refuse);
       var approveBtn = document.createElement('button');
@@ -769,13 +758,10 @@
       approveBtn.textContent = approve;
       approveBtn.addEventListener('click', function () {
         post({
-          type: 'questionAnswer', sessionId: state.selectedSessionId, rpcId: pending.rpcId,
+          type: 'questionAnswer', sessionId: state.selectedSessionId,
+          eventId: pending.eventId, rpcId: pending.eventId,
           answers: [{ id: q.id, selected: [approve] }],
         });
-        state.pendingQuestion = null;
-        resetQuestionDrafts();
-        renderQuestion();
-        updateQuestionUi();
       });
       actions.appendChild(approveBtn);
       questionPanelEl.appendChild(actions);
@@ -1128,25 +1114,15 @@
     }
 
     /**
-     * 目标/计划模式横幅（0.1.5 的 goal / plan 投影）。
-     * 目标部分可被用户点 × 关闭：宿主记录"当前目标指纹"，目标更新后自动再次显示。
+     * 计划模式横幅（0.1.5 的 plan 投影）。
+     * 用户要求删除此前的"目标"横幅（goal 投影）：这里只保留计划模式提示，且不再有关闭按钮。
      */
     function renderSessionBanner(stats) {
       if (!sessionBannerEl) return;
-      var goal = stats && stats.goal;
       var plan = stats && stats.plan;
-      var dismissed = !!(stats && stats.goalDismissed);
       var parts = [];
-      // 0.1.5 投影：plan = {active,pending}；goal = {goal:{objective,phase,maxGoalRounds},...}。
       if (plan && plan.active) parts.push(t('planTitle'));
       else if (plan && plan.pending) parts.push(t('planTitle') + '…');
-      var snapshot = goal && typeof goal === 'object' ? goal.goal : null;
-      var objective = snapshot && typeof snapshot.objective === 'string' ? snapshot.objective : '';
-      var showGoal = Boolean(objective) && !dismissed;
-      if (showGoal) {
-        var phase = snapshot.phase ? ' (' + String(snapshot.phase) + ')' : '';
-        parts.push(t('goalTitle') + ': ' + objective.slice(0, 120) + phase);
-      }
       if (!parts.length) {
         sessionBannerEl.hidden = true;
         sessionBannerEl.innerHTML = '';
@@ -1158,18 +1134,6 @@
       text.className = 'session-banner-text';
       text.textContent = parts.join(' · ');
       sessionBannerEl.appendChild(text);
-      if (showGoal) {
-        var dismiss = document.createElement('button');
-        dismiss.className = 'session-banner-close';
-        dismiss.textContent = '×';
-        dismiss.title = t('closePanel');
-        dismiss.addEventListener('click', function (event) {
-          event.stopPropagation();
-          post({ type: 'dismissGoalBanner', sessionId: state.selectedSessionId });
-          sessionBannerEl.hidden = true;
-        });
-        sessionBannerEl.appendChild(dismiss);
-      }
     }
 
     /** 后台任务面板：统计行里的任务数字可点开查看详情。 */

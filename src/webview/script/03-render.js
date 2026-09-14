@@ -545,83 +545,46 @@
       moreOpenWebBtn.disabled = false;
     }
 
+    /** 会话行：全部平铺，fork/派生出来的会话与普通会话完全一样渲染。 */
     /**
-     * 会话谱系展平：**只有子代理会话（`origin:'subagent'`）挂在父会话下**并缩进，
-     * fork/派生出来的会话（dsh `session/fork` 虽然也写 `parentSession`，但没有 origin）
-     * 就是普通会话——不再区分、不再缩进、不再标注，按更新时间与其它会话一起排在顶层。
-     * root 保持输入顺序；父会话不在列表里的"孤儿"降级为 root（不丢弃），环状引用用 visited 兜底。
+     * 会话行的"主状态"（与 dsh Web UI 同一优先级）：
+     * 等待回答 / 计划待审 / 等待审批（琥珀）> 运行中（蓝）> 已完成（绿，"跑完了但没被打开过"）
+     * > 空闲（灰）。
+     * 行上只体现一个主状态，避免一列小圆点看不出重点。
      */
-    function buildSessionLineage(sessions) {
-      // 列表一律按"最近修改时间"倒序（宿主已排好；这里再兜一次底，
-      // 保证展示顺序与行内"刚刚/N 分钟前"的时间标签一致）。
-      var ordered = sessions.slice().sort(function (a, b) {
-        return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
-      });
-      var byId = {};
-      for (var i = 0; i < ordered.length; i++) byId[ordered[i].sessionId] = ordered[i];
-      var children = {};
-      var roots = [];
-      for (var j = 0; j < ordered.length; j++) {
-        var item = ordered[j];
-        // 只有子代理会话参与嵌套；被"提升为普通会话"（插件视图内）的子代理也不参与。
-        var parentId = (isSubagentSessionRow(item) && !item.promotedLocally) ? item.parentSessionId : null;
-        if (parentId && byId[parentId]) {
-          if (!children[parentId]) children[parentId] = [];
-          children[parentId].push(item);
-        } else {
-          roots.push(item);
-        }
+    function sessionPrimaryState(s) {
+      var pending = s.pendingKind || null;
+      if (pending) {
+        var key = pending === 'approval' ? 'pendingApproval' : (pending === 'plan-review' ? 'pendingPlan' : 'pendingAnswer');
+        return { kind: pending, cls: 'pending', label: t(key), title: t(key) + ' · ' + t('pendingTitle') };
       }
-      var out = [];
-      var visited = {};
-      function walk(session, depth) {
-        if (visited[session.sessionId]) return;
-        visited[session.sessionId] = true;
-        out.push({ session: session, depth: depth });
-        var kids = children[session.sessionId] || [];
-        for (var k = 0; k < kids.length; k++) walk(kids[k], depth + 1);
-      }
-      for (var r = 0; r < roots.length; r++) walk(roots[r], 0);
-      return out;
+      if (s.running) return { kind: 'running', cls: 'running', label: t('running'), title: t('running') };
+      if (s.completed === true) return { kind: 'completed', cls: 'completed', label: t('sessionCompleted'), title: t('sessionCompleted') };
+      return { kind: 'idle', cls: '', label: '', title: '' };
     }
 
-    /** dsh 的 `origin` 只有 `'subagent'` 一种取值（list.ts 的 listFields）：子代理会话不可 fork/重命名/归档。 */
-    function isSubagentSessionRow(session) {
-      return !!(session && session.origin === 'subagent');
-    }
-
-    /**
-     * 会话行。depth > 0 只会出现在 `origin:'subagent'` 的子代理会话上：标"子代理会话"、
-     * 仅可选中（不给 fork/重命名/归档）。fork/派生出来的会话与普通会话完全一样渲染。
-     */
-    function makeSessionRow(s, current, depth) {
-      var subagent = isSubagentSessionRow(s);
-      // 插件视图内的"提升为普通会话"（dsh 没有改谱系 API）：depth 已经被谱系展平置 0，
-      // 这里只补标记与"恢复层级"入口。
-      var promoted = s.promotedLocally === true;
+    function makeSessionRow(s, current) {
+      var primary = sessionPrimaryState(s);
       var item = document.createElement('div');
       item.className = 'drawer-item'
-        + (depth > 0 ? ' drawer-child' : '')
-        + (subagent ? ' drawer-subagent' : '')
         + (s.sessionId === current ? ' selected' : '')
-        + (s.running ? ' running' : '');
-      if (depth > 0) item.style.paddingLeft = (8 + depth * 14) + 'px';
+        + (primary.cls ? ' ' + primary.cls : '');
       item.setAttribute('data-session-id', s.sessionId);
+      item.setAttribute('data-state', primary.kind);
       var dot = document.createElement('span');
       dot.className = 'drawer-dot';
+      if (primary.title) dot.title = primary.title;
       item.appendChild(dot);
       var main = document.createElement('div');
       main.className = 'drawer-main';
       var titleEl = document.createElement('div');
       titleEl.className = 'drawer-title-text';
-      // 不区分分支会话与普通会话：标题只用会话显示名（子代理标题为空时回退"子代理会话"）。
-      titleEl.textContent = sessionDisplayTitle(s) || (subagent ? t('subagentSession') : String(s.sessionId || ''));
+      // 不区分分支会话与普通会话：标题只用会话显示名。
+      titleEl.textContent = sessionDisplayTitle(s) || String(s.sessionId || '');
       main.appendChild(titleEl);
       var meta = document.createElement('div');
       meta.className = 'drawer-meta';
       var parts = [];
-      if (subagent) parts.push(t('subagentSession'));
-      if (promoted) parts.push(t('promotedSession'));
       if (s.archived) parts.push(t('archived'));
       // 本地"取消归档（仅插件视图）"过的会话：标出来（并给 meta 一个说明 tooltip），
       // 否则用户会疑惑"这个会话为什么 dsh 网页端看不到"。
@@ -629,9 +592,11 @@
         parts.push(t('restoredLocally'));
         meta.title = t('restoredLocallyTitle');
       }
-      if (s.running) parts.push(t('running'));
+      // 主状态文案（等待回答/计划待审/等待审批/工作中/已完成）——只显示最需要用户注意的那一个。
+      if (primary.label) parts.push(primary.label);
       if (s.updatedAt) parts.push(relativeTime(s.updatedAt));
       meta.textContent = parts.join(' · ');
+      if (primary.title) meta.title = primary.title;
       main.appendChild(meta);
       item.appendChild(main);
       // 会话模式标签（如"标准模式""PTC 模式"）：只在面板宽度足够时显示（见 style.css 媒体查询）。
@@ -645,23 +610,13 @@
       }
       var actions = document.createElement('div');
       actions.className = 'drawer-actions';
-      // 子行（分支会话/子代理会话）可提升为顶层行；已提升的可恢复层级显示。
-      if (promoted || depth > 0) {
-        actions.appendChild(makeDrawerAction(
-          promoted ? 'demoteSession' : 'promoteSession',
-          promoted ? '⇩' : '⇧',
-          promoted ? t('demoteSession') : t('promoteSession')
-        ));
-      }
-      if (!subagent) {
-        actions.appendChild(makeDrawerAction('forkSession', '⧉', t('forkSession')));
-        actions.appendChild(makeDrawerAction('renameSession', '✎', t('renameSession')));
-        // 已归档会话提供"取消归档（仅插件视图）"；本地已恢复的提供反向操作
-        // （注意：本地恢复过的会话宿主下发的 archived 是 false，所以只能看 restoredLocally）。
-        if (s.restoredLocally) actions.appendChild(makeDrawerAction('unrestoreSession', '↪', t('unrestoreSession')));
-        else if (s.archived) actions.appendChild(makeDrawerAction('restoreSession', '↩', t('restoreSession')));
-        actions.appendChild(makeDrawerAction('closeSession', '✕', t('closeSession')));
-      }
+      actions.appendChild(makeDrawerAction('forkSession', '⧉', t('forkSession')));
+      actions.appendChild(makeDrawerAction('renameSession', '✎', t('renameSession')));
+      // 已归档会话提供"取消归档（仅插件视图）"；本地已恢复的提供反向操作
+      // （注意：本地恢复过的会话宿主下发的 archived 是 false，所以只能看 restoredLocally）。
+      if (s.restoredLocally) actions.appendChild(makeDrawerAction('unrestoreSession', '↪', t('unrestoreSession')));
+      else if (s.archived) actions.appendChild(makeDrawerAction('restoreSession', '↩', t('restoreSession')));
+      actions.appendChild(makeDrawerAction('closeSession', '✕', t('closeSession')));
       if (actions.childNodes.length) item.appendChild(actions);
       item.addEventListener('click', function (ev) {
         var itemEl = ev.currentTarget;
@@ -676,10 +631,6 @@
             post({ type: 'forkSession', sessionId: sid });
           } else if (kind === 'unrestoreSession') {
             post({ type: 'unrestoreSession', sessionId: sid });
-          } else if (kind === 'promoteSession') {
-            post({ type: 'promoteSession', sessionId: sid, promoted: true });
-          } else if (kind === 'demoteSession') {
-            post({ type: 'promoteSession', sessionId: sid, promoted: false });
           } else if (kind === 'renameSession') post({ type: 'renameSession', sessionId: sid });
           else if (kind === 'closeSession') openArchiveModal(sid);
           closeSessionDrawer();
@@ -734,28 +685,31 @@
       drawerArchivedToggle.title = (archivedCount === 0 && restoredCount > 0)
         ? archivedToggleLabel + t('archivedToggleAllRestored', { count: restoredCount })
         : archivedToggleLabel;
-      // 会话谱系（同 dsh 网页端 flattenLineage）：带 parentSessionId 的会话缩进挂在父会话下，
-      // 递归到任意深度——fork 出来的会话同样只写 parentSessionId（origin 为空），
-      // 旧实现只渲染一层且把所有子行硬标成"子代理会话"，fork 出的 fork 更是整行消失。
+      // 会话列表是**平铺**的：fork 出来的会话与普通会话一样是顶层行（不再区分），
+      // 子代理会话（origin:'subagent'）宿主根本不往这里下发（用户要求删除子代理显示功能）。
       // 归档会话（且没有本地恢复）单独成组：显示时排在活动会话之后，并带"已归档（N）"分区标题，
       // 这样滚动到列表末尾就能看出哪些是归档的，而不是混在时间序里。
+      // 一律按"最近修改时间"倒序渲染（宿主已排好，这里再兜一次底），
+      // 保证展示顺序与行内"刚刚/N 分钟前"的时间标签一致。
+      var ordered = sessions.slice().sort(function (a, b) {
+        return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0);
+      });
       var activeSessions = [];
       var archivedSessions = [];
-      for (var si = 0; si < sessions.length; si++) {
-        var session = sessions[si];
+      for (var si = 0; si < ordered.length; si++) {
+        var session = ordered[si];
         if (session.archived && !session.restoredLocally) archivedSessions.push(session);
         else activeSessions.push(session);
       }
       var shown = 0;
       function appendGroup(list) {
-        var lineage = buildSessionLineage(list);
         var count = 0;
-        for (var i = 0; i < lineage.length; i++) {
-          var s = lineage[i].session;
+        for (var i = 0; i < list.length; i++) {
+          var s = list[i];
           var title = sessionDisplayTitle(s);
           if (query && title.toLowerCase().indexOf(query) < 0) continue;
           count++;
-          drawerList.appendChild(makeSessionRow(s, current, lineage[i].depth));
+          drawerList.appendChild(makeSessionRow(s, current));
         }
         return count;
       }

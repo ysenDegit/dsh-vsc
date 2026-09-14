@@ -5,13 +5,27 @@ const { DshService } = require('./dsh-service.js')
 const { SessionService } = require('./session-service.js')
 const { ChatViewProvider } = require('./chat-view.js')
 const { translate } = require('./i18n.js')
+const { PromptStashStore, migrateLegacyPromptStash, STASH_FILE_NAME } = require('./prompt-stash-store.js')
 
 /** 本地"取消归档/隐藏归档"集合的 globalState 键（dsh 无 unarchive API，仅插件视图）。 */
 const UNARCHIVED_KEY = 'dsh-vsc.unarchivedSessions'
-/** 悬浮提示词暂存框内容的 globalState 键（数量不设上限，空串代表空槽）。 */
-const PROMPT_STASH_KEY = 'dsh-vsc.promptStash'
-/** 插件视图内"提升为普通会话"的集合（dsh 无改谱系 API，仅插件抽屉显示）。 */
-const PROMOTED_KEY = 'dsh-vsc.promotedSessions'
+/** 旧版（≤1.1.4）"全局共享"的提示词暂存框内容：仅用于一次性迁移。 */
+const PROMPT_STASH_LEGACY_KEY = 'dsh-vsc.promptStash'
+/** 迁移标记：迁移只做一次，否则每个新工作区都会凭空继承同一份暂存内容。 */
+const PROMPT_STASH_MIGRATED_KEY = 'dsh-vsc.promptStashScoped'
+
+/**
+ * 提示词暂存框的存储位置：**按工作区隔离**。
+ *
+ * `context.storageUri` 是 VS Code 按工作区分配的存储目录（同一工作区的多个窗口指向同一个
+ * 目录，不同工作区互不相通）；没有打开文件夹时它是 undefined，退化到全局存储目录
+ * （此时所有"空窗口"共享一份，与旧行为一致）。
+ */
+function promptStashFilePath(context) {
+  const base = context.storageUri || context.globalStorageUri
+  if (!base) return null
+  return vscode.Uri.joinPath(base, STASH_FILE_NAME).fsPath
+}
 
 
 function activate(context) {
@@ -66,6 +80,20 @@ function activate(context) {
   })
 
   const sessions = new SessionService(() => dsh.client)
+  // 提示词暂存框：按工作区落盘 + 监听文件变化（同一工作区的多个窗口实时同步，
+  // 且不会互相覆盖——旧版存 globalState 时"每窗口一份内存副本、后写覆盖先写"）。
+  const promptStashStore = new PromptStashStore({
+    filePath: promptStashFilePath(context),
+    scope: context.storageUri ? 'workspace' : 'global',
+    onLog: log,
+  })
+  migrateLegacyPromptStash({
+    store: promptStashStore,
+    globalState: context.globalState,
+    legacyKey: PROMPT_STASH_LEGACY_KEY,
+    migratedKey: PROMPT_STASH_MIGRATED_KEY,
+    log,
+  })
   const provider = new ChatViewProvider(dsh, sessions, {
     onLog: (line) => log(line),
     sessionDisplay,
@@ -82,14 +110,15 @@ function activate(context) {
     // 本地取消归档：持久化在 VS Code globalState（跨窗口/跨重启保留）。
     loadUnarchived: () => context.globalState.get(UNARCHIVED_KEY, []),
     persistUnarchived: (ids) => context.globalState.update(UNARCHIVED_KEY, ids),
-    // 悬浮提示词暂存框：同样落在 globalState，重启/换窗口后内容仍在。
-    loadPromptStash: () => context.globalState.get(PROMPT_STASH_KEY, []),
-    persistPromptStash: (items) => context.globalState.update(PROMPT_STASH_KEY, items),
-    // 提升为普通会话（仅插件视图）：同样落在 globalState。
-    loadPromoted: () => context.globalState.get(PROMOTED_KEY, []),
-    persistPromoted: (ids) => context.globalState.update(PROMOTED_KEY, ids),
+    // 悬浮提示词暂存框：内容按工作区落在存储目录的 prompt-stash.json（见 PromptStashStore）。
+    loadPromptStash: () => promptStashStore.load(),
+    persistPromptStash: (items) => promptStashStore.save(items),
   })
   let chatPanel = null
+
+  // 别的窗口改了暂存文件 → 更新本窗口界面（同一工作区的多窗口实时一致，且不再互相覆盖）。
+  promptStashStore.watch((items) => provider.applyExternalPromptStash(items))
+  context.subscriptions.push({ dispose: () => promptStashStore.dispose() })
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {

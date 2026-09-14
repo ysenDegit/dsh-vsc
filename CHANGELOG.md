@@ -6,6 +6,58 @@
 
 （未发布：1.1.3 已于 2026-09-11 由用户发布。后续改动记录在本节。）
 
+### Added
+
+- **会话行状态点（pending 徽标 / 已完成 / 子代理计数）**——与 dsh Web UI 同一套优先级，抽屉里一眼看出"哪个会话在等你"：
+  - **琥珀点 = 待处理交互**：等待回答 / 计划待审 / 等待审批，**优先级高于运行指示**；点的 tooltip 说明是哪一种，行内文案同步显示该状态。宿主新增纯函数 `protocol.pendingKindOf()` + `isPlanReviewQuestion()`（与 webview 的计划评审判定同款条件；注意提问表里存的是 `{eventId,questions}` 条目，先摊平成问题对象再判），随 hydrate/sessions 帧下发 `pendingKind`。
+  - **绿点 = 已完成**：`running` 真→假的边沿、且该会话不是当前选中会话时置位（`completedBySession`），切过去看即清除——"跑完了但没被打开过"。
+  - **蓝点 = 运行中**，其中包括**"N 个子代理运行中"**：新增纯函数 `protocol.runningSubagentCounts()`（与网页端 subagent lineage 同口径：只有运行中的 `origin:'subagent'` 会话向上计数，沿途给每个祖先 +1，遇到第一个非子代理祖先计完即停，环状引用用 seen 兜底）。
+  - 宿主新增 `decorateSessionRows()`（hydrate 与 sessions 帧共用的行装饰，避免两处口径漂移）与 `postSessionsFrame()`（**不发 RPC** 地重发一次 sessions 帧）：待处理交互变化、运行状态变化、显示子代理开关变化时立即刷新抽屉，不必等防抖的全量刷新。
+  - 测试：`tests/protocol.test.js` 新增 2 例（pendingKindOf 优先级与计划评审判定边界；runningSubagentCounts 的聚合/普通 fork 停止点/孤儿父会话/环状引用），`tests/chat-view.test.js` 新增 1 例（completed 边沿与"选中即看过"、三种 pendingKind、计数随帧下发），`tests/webview-runtime.test.js` 新增 1 例（`data-state` 逐个断言 + pending 类不得与 running 点色共存 + 父行计数文案；**已实测把 pending 判定挪到 running 之后该用例即失败**），测试 115 → 121。
+
+- ~~**"显示子代理"勾选框 + 子代理列表**~~ **已在同一版本内删除**（见下方 Changed）：用户反馈该勾选框"完全无反应"，并指出子代理是**链式**派生的、且**子代理不是插件的必要项**，因此把子代理显示功能整体移除——勾选框（抽屉 + 设置 → 工作区 + 配置项 `dsh-vsc.showSubagents`）、子代理行渲染与缩进、"子代理会话"标记、"提升为普通会话 / 恢复层级"（⇧/⇩）与 `dsh-vsc.promotedSessions` 集合、`protocol.runningSubagentCounts()` 与"N 个子代理运行中"、内容搜索里的子代理命中，全部删除。
+
+### Changed
+
+- **删除子代理显示功能**（用户要求："显示子代理选项完全无反应；子代理是链式的；子代理不是插件的必要项，请删除此功能及其相关代码"）。`origin: 'subagent'` 的会话现在**一律不出现在插件里**：
+  - 宿主 `decorateSessionRows()` 把子代理行从 hydrate/sessions 帧里过滤掉（唯一例外：当前选中的恰好是子代理会话时保留，避免列表与顶栏标题对不上）；内容搜索的命中里属于子代理的结果也一并过滤，避免"点开一个列表里不存在的会话"。
+  - webview 删除子代理专属渲染：会话谱系展平 `buildSessionLineage()`、缩进（`drawer-child`/`drawer-subagent` 类与 `paddingLeft`）、"子代理会话"标记、"提升为普通会话 / 恢复层级"按钮（**注**：该功能只对子代理行生效，删除后已无目标）以及 `sessionPrimaryState()` 里的"N 个子代理运行中"分支；抽屉现在是**完全平铺**的列表（仍按最近修改时间倒序，渲染前再兜一次底排序），fork 出来的会话依旧与普通会话一模一样。
+  - 一并删除：配置项 `dsh-vsc.showSubagents`、`dsh-vsc.promotedSessions`（globalState）、宿主 `setShowSubagents()`/`setSessionPromoted()` 与两条 webview 消息、`protocol.runningSubagentCounts()`、i18n 十个键（`subagentsToggle`/`subagentsToggleTitle`/`subagentsRunning`/`subagentSession`/`promoteSession`/`demoteSession`/`promotedSession` 中英）、CSS 的 `.drawer-child`/`.drawer-subagent`。
+  - 测试：删除 `runningSubagentCounts` 用例、"显示子代理"勾选用例、"子代理提升为顶层行"用例；把谱系用例改写成「抽屉完全平铺、无缩进、无提升操作、抽屉头部没有该勾选框」，新增 `tests/chat-view.test.js` 一例（子代理行不下发 + 选中子代理时保留 + 搜索命中过滤），测试 121 → 118。
+  - 说明：该勾选框"无反应"的直接原因正是**子代理会话平时并不出现在插件列表里**（dsh 只把记账到工作区的会话列出来），所以勾上也没有任何行可显示；既然不是必要项，这次直接按用户要求整体删掉。
+
+- **删掉聊天区的"目标"横幅**（用户要求，附截图）：`renderSessionBanner()` 现在只渲染**计划模式**横幅，不再显示 `goal` 投影，也没有了那个 × 关闭按钮；随之删除宿主侧的 `dismissGoalBanner` 消息/`dismissedGoalBanner`/`isGoalBannerDismissed`、`stats.goalDismissed` 字段、`protocol.goalBannerFingerprint()` 及其用例、i18n `goalTitle` 与 `.session-banner-close` 样式。运行时用例断言"只有 goal 时横幅不出现、有计划模式时出现且没有关闭按钮"。
+
+- **会话抽屉选中行的文字对比度**（用户反馈，附截图：深色选中底上的灰色"6 分钟前"与灰色操作按钮几乎看不清）：选中行的说明文字、模式胶囊、悬停操作按钮改用行前景色（`color: inherit` + `currentColor` 描边/底色），不再固定用 `--muted`。
+
+- **文档：明确插件的会话作用域**——只服务当前 VS Code 工作目录（会话抽屉只列当前目录对应的 dsh 工作区的会话 + cwd 匹配的"未分组"会话），**刻意不做跨工作区浏览**（VS Code 以"打开的文件夹"为工作单位，跨工作区浏览对插件无用；多根窗口当前只用第一个根）。要在其它工作区之间浏览/管理会话请用 dsh Web UI（`⋯` 菜单一键打开，地址自带 launch token）。README 中英文的"工作区与会话管理"小节已写明；无代码改动。
+
+- **提示词暂存框改为"按工作区隔离 + 跨窗口实时同步"**（用户报告："我在两个不同的工作区下发现了同样的提示词暂存框，这个是共享的吗？"——确认是共享的：内容原先存在 `context.globalState`，其作用域是"该扩展 + 该 VS Code 用户"，与打开哪个文件夹无关；用户选择按工作区隔离）：
+  - 新增 `src/prompt-stash-store.js`（`PromptStashStore`）：内容改存 `context.storageUri`（VS Code 按**工作区**分配的存储目录）下的 `prompt-stash.json`，不同工作区各一份、互不干扰；没有打开任何文件夹时（`storageUri` 为空）退化到全局存储目录（此时空窗口之间共享一份）。写入用 tmp→rename **原子替换**（权限 0600），别的窗口不会读到半截 JSON。
+  - **跨窗口同步**：同一工作区的多个窗口指向同一个文件，`fs.watch`（监听目录，150ms 去抖）把"别的窗口改了"推给本窗口界面（新增宿主下发消息 `promptStash` + `ChatViewProvider.applyExternalPromptStash()`，webview 侧整份替换并重绘，**正在输入的暂存框不被顶掉**）。这同时修掉了旧实现的**静默互相覆盖**：`promptStashItems` 只在 provider 构造时读一次内存副本、之后再没回读，窗口 A 的改动会被后动手的窗口 B 用自己的旧列表整份写回覆盖。
+  - 不用 `context.workspaceState` 的原因：VS Code 的状态 API 没有"内容变化"事件，跨窗口同步只能靠盯文件；`storageUri` 恰好按工作区分配且同工作区的多窗口一致，一举两得。
+  - **旧数据迁移**：1.1.4 及以前的全局暂存内容**只迁移一次**（迁移标记 `dsh-vsc.promptStashScoped` 记在 globalState）：搬到第一个打开的工作区并清掉旧键——否则每打开一个新工作区都会凭空继承同一份内容，等于没隔离。
+  - 文案同步：暂存框设置项描述（package.json）、设置面板说明（中英）都写明"按工作区独立保存，同一工作区的多个窗口实时同步"。
+  - 测试：新增 `tests/prompt-stash-store.test.js` 7 例（往返 + 空槽保留 + 目录里无临时文件残留、不同工作区路径互不可见、`check()` 只对"别的窗口写入"回调而自己的写入不回调、真实 `fs.watch` 跨窗口通知、文件缺失自动建目录、损坏 JSON 不抛错、内存模式不落盘、迁移只做一次 + 清旧键 + 不覆盖已有内容、`dispose()` 后不再回调）、`tests/chat-view.test.js` 3 例（外部改动推给 webview 且内容相同时不重复推送；文本防抖按 id 合并、保留图片并写入注入的存储；界面未打开时同步消息只留最新一份快照，不堆积待发队列）、`tests/webview-runtime.test.js` 1 例（宿主下发 `promptStash` → 盒子整份替换、聚焦中的框保留输入、清空后悬浮层收起；已实测删掉 webview 分支该用例即失败），测试 104 → 115。
+
+- 计划评审（plan review）面板的正文可视高度提高：`q-detail` 通用上限 180px → 240px，计划评审的正文改用新的 `.q-detail-plan`（`max-height: min(55vh, 520px)`、`min-height: min(220px, 35vh)`，随面板高度伸缩，矮面板下不会把聊天区挤没），便于通读整份计划；运行时用例补断言（计划评审正文必须带 `q-detail-plan` 类）。
+
+### Fixed
+
+- **回答提问/审批点了没反应（网页端选择器还在）**（用户报告："提问选择器失效了，插件中点击之后无反应，同时网页端依旧存在选择器"）。根因是**字段名不匹配导致的静默丢弃**：dsh 的 waterfall 帧与插件快照里事件 id 都叫 **`eventId`**（`session-controller` 的 gateway `waterfall` 帧字段），而 webview 上报时发的是历史遗留的 **`rpcId: pending.rpcId`**（快照里根本没有 `rpcId` → `undefined`），宿主 `handleMessage` 又只读 `msg.rpcId` → `answerQuestion/cancelQuestion/answerApproval` 的守卫 `if (!eventId) return` **直接静默 return**：面板点了没反应、dsh 那轮一直等待、网页端的选择器当然也还在。修复：
+  - webview 五处上报（提交回答、plan-review 批准/不批准、✕/聊一聊、审批允许一次/拒绝/✕）统一发 `eventId` 并**附 `rpcId` 兼容别名**（`src/webview/script/04-actions.js`）。
+  - 宿主 `questionAnswer`/`questionCancel`/`approvalAnswer` 用新增的 `eventIdOf(msg)` 同时接受 `eventId` 与 `rpcId`；并且**应答缺字段时绝不再静默丢弃**——新增 `rejectMissingEvent()`：记 `[question] 应答缺少必需字段，已忽略: …` 日志 + 面板内错误提示（`notice.answerInvalid`），条目保留可重试。
+  - webview 提交后**不再本地清空** `state.pendingQuestion`/`pendingApproval`（改为等宿主回发 `pending:null` 再收起）：提交失败时面板还在，可以直接重试。
+  - 测试：新增 webview 点击穿透用例「answering posts the waterfall eventId」（普通单选提交、plan-review 批准/不批准/聊一聊、审批允许一次/拒绝，逐个断言 `eventId`/`rpcId`/`answers`/`outcome`；已实测把 payload 改回 `rpcId: pending.rpcId` 该用例即失败）与 `tests/chat-view.test.js` 两例（`handleMessage` 走 webview 真实载荷能发出 `$events/result`；缺事件 id 时只提示不静默），测试 101 → 104。**这也是上一轮"一个会话只能调出一次选择器"的放大器：每次回答都静默失败 → 旧条目永远不清 → 后续提问被挡住。**
+
+- **"一个会话只能调出一次选择器"（提问/计划评审面板有时不出现）**（用户报告："有时候无法调出选择器，好像一个 session 只能调一次选择器；这是在计划模式下遇到的问题"）。用宿主替身复现出根因：`pendingQuestionsBySession` 是**按会话累积**的列表，而 `questionSnapshot()` 只返回 `list[0]`；一旦某个提问条目因为答不掉而留在列表里（典型：`$events/result` 失败——例如 mux 重连后客户端 id/事件流已更换，dsh 回 `Remote event result identifies no active event stream`；或用户点了 ✕ 但拒绝请求没发出去），它就**永远占着 list[0]**，之后该会话的每一个新提问都被它挡住 → 面板显示的是那个答不掉的旧问题（或什么都不显示），而宿主侧那轮对话一直"运行中…"、`ask_user_question` 工具节点停在调用状态——正是截图里的样子。修复：
+  - `ingestQuestionRequested()` / `ingestApprovalRequested()`：**新事件取代同会话的旧条目**（dsh 的提问/审批工具会阻塞该回合，同一会话不可能同时有两个待回答请求），旧条目被丢弃并记日志（新增纯函数 `protocol.nextPendingRequests()`，重复上报同一事件时原样返回）。
+  - `answerQuestion()`：应答失败时区分对待——错误匹配"事件已不在"（`protocol.isEventGoneError()`：`no active event stream` / `not found` / `already` / `settled` / `expired` 等）就**清掉本地条目**并发一条错误提示；其它（可能是瞬时的）失败保留条目以便重试。`cancelQuestion()` 同样先本地清掉再尽力发送拒绝。
+  - **非当前会话**的提问/审批会提示用户（`notice.questionElsewhere` / `notice.approvalElsewhere`，带会话标题、30 秒节流），不再让那个会话静默卡在"运行中…"。
+  - 顶栏 **⟳ 刷新会重发待回答的提问/审批**（放在 `finally`，其它刷新步骤失败也照发）：选择器万一没出来，刷新一次就能拉回来。
+  - 诊断：每收到一个 waterfall 都记一行输出面板日志（`[waterfall] user-questions/request ← <sessionId> <eventId>（N 个问题）` / `approval/request …`），丢弃旧条目、应答失败也各有日志，便于下次直接判断"帧到没到"。
+  - 测试：新增 `tests/helpers/vscode-stub.js`（可复用的 `vscode` 模块替身，宿主模块首次可在 node:test 里直接 require）与 `tests/chat-view.test.js` 5 例（新提问取代旧条目 / 应答成功后清空 / 事件已不在时清空并可继续提问 / 瞬时失败保留 / 非当前会话提醒 + 节流 / ⟳ 重发 / ✕ 取消容错），`tests/protocol.test.js` 补 `nextPendingRequests` 与 `isEventGoneError` 用例，`tests/webview-runtime.test.js` 补"同一会话连续提问（普通 → 计划评审 → 普通）每次都出面板"用例，测试 93 → 101。
+
 ## [1.1.3]
 
 （2026-09-11 由用户发布。）

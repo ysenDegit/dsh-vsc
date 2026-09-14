@@ -9,7 +9,14 @@ const { getWebviewHtml } = require('./webview.js')
 const { version: extensionVersion } = require('../package.json')
 const { DshRpcError } = require('./wire.js')
 const { isCommandLine } = require('./commands.js')
-const { normalizePromptStashEntries, mergePromptStashTexts, applySessionActivity, isSubagentSession } = require('./protocol.js')
+const {
+  normalizePromptStashEntries,
+  mergePromptStashTexts,
+  applySessionActivity,
+  nextPendingRequests,
+  isEventGoneError,
+  isSubagentSession,
+} = require('./protocol.js')
 
 const viewType = 'dsh-vsc.chat'
 
@@ -23,9 +30,18 @@ const EVENT_CACHE_LIMIT = 6
 const COALESCED_MESSAGE_TYPES = new Set([
   'conversation', 'sessions', 'stats', 'queue', 'models', 'commands', 'presets',
   'question', 'approval', 'workspace', 'sessionSearch',
+  // 提示词暂存框的跨窗口同步：整份快照，界面没开时只留最新一条。
+  'promptStash',
 ])
 
 function toPosix(p) { return p.split('\\').join('/') }
+
+/** waterfall 事件 id：新 webview 发 `eventId`，旧版发 `rpcId`（两者都接受）。 */
+function eventIdOf(msg) {
+  return msg?.eventId ?? msg?.rpcId ?? null
+}
+
+
 
 /** 提示词暂存框条目是否等价（跳过重复落盘；图片按内容比较）。 */
 function samePromptStash(a, b) {
@@ -110,27 +126,40 @@ class ChatViewProvider {
     // 本地"取消归档/隐藏归档"集合（dsh 无 unarchive API，只影响插件视图）。
     this.unarchivedLocally = new Set(options.loadUnarchived?.() || [])
     this.sessions.setArchivedIgnored(this.unarchivedLocally)
-    // 悬浮提示词暂存框：开关（dsh-vsc.promptStash）+ 内容（globalState，数量不设上限）。
+    // 悬浮提示词暂存框：开关（dsh-vsc.promptStash）+ 内容（按工作区落在存储目录的
+    // prompt-stash.json，见 prompt-stash-store.js；同一工作区的多窗口通过文件监听互相同步）。
     // 空串是合法条目（代表"已创建但还没写内容的暂存槽"，过滤掉会让空框在重载后消失）。
-    // 插件视图内的"提升为普通会话"集合：dsh 没有修改会话谱系（header 的 parentSession
-    // 只在创建时写入且不可改）的 API，这里只让被提升的会话在抽屉里按顶层行显示，
-    // 持久化在 globalState，随时可恢复层级。
-    this.promotedLocally = new Set(options.loadPromoted?.() || [])
     this.promptStashEnabled = options.promptStashEnabled ?? true
     this.promptStashItems = normalizePromptStashEntries(options.loadPromptStash?.() || [])
     // sessionId -> 插件侧观察到的"最近修改时间"（提示词时间 / 运行状态变化 / 已加载的最后一条事件）。
     // dsh 的列表只给"最近提示词时间"，这里补上活动信息后列表按"最近修改时间"排序与显示。
     this.activityTimeBySession = new Map()
-    // sessionId -> 已被用户关闭的目标横幅指纹：目标更新（objective/phase/rounds 变化）后重新显示。
-    this.dismissedGoalBanner = new Map()
+    // sessionId -> "跑完了但用户还没打开过"（completed 绿点，与 dsh Web UI 同语义）。
+    // 只在 running 真→假的边沿、且该会话不是当前选中会话时置位；切过去看就清掉。
+    this.completedBySession = new Set()
     // 合并刷新时记录"这次是用户主动点的"，用于决定是否弹"dsh 未就绪"提示。
     this.refreshUserInitiated = false
+    // 非当前会话的提问/审批提醒节流（sessionId -> 上次提醒时间）。
+    this.pendingNoticeAt = new Map()
+    // 最近一次会话列表快照：用于把 sessionId 换成标题做提示。
+    this.lastSessionList = []
   }
 
   static get viewType() { return viewType }
 
   /** 宿主侧文案：按 `dsh-vsc.language` 选中英文。 */
   t(key, vars) { return translate(this.language, key, vars) }
+
+  /**
+   * 上报的应答缺少事件 id / 形状不合法时**绝不静默丢弃**：
+   * 这正是"点了没反应、网页端选择器还在"那类问题的表现形式，必须留下日志与提示。
+   */
+  rejectMissingEvent(kind, payload) {
+    const detail = JSON.stringify(payload ?? {}).slice(0, 200)
+    this.onLog(`[${kind}] 应答缺少必需字段，已忽略: ${detail}`)
+    this.post({ type: 'notice', text: this.t('notice.answerInvalid'), level: 'error' })
+    return false
+  }
 
   /**
    * "dsh 后端未就绪"错误：带 `code` 标记，统一 catch 会把它转成**面板内提示**，
@@ -282,14 +311,8 @@ class ChatViewProvider {
         case 'sessionSearch':
           await this.searchSessions(msg.query)
           break
-        case 'dismissGoalBanner':
-          this.dismissGoalBanner(msg.sessionId || this.selectedSessionId)
-          break
         case 'restoreSession':
           await this.restoreArchivedSession(msg.sessionId)
-          break
-        case 'promoteSession':
-          await this.setSessionPromoted(msg.sessionId, msg.promoted !== false)
           break
         case 'unrestoreSession':
           await this.unrestoreArchivedSession(msg.sessionId)
@@ -395,13 +418,13 @@ class ChatViewProvider {
           await this.removeQueuedItem(msg.sessionId, msg.itemId)
           break
         case 'questionAnswer':
-          await this.answerQuestion(msg.sessionId, msg.rpcId, msg.answers)
+          await this.answerQuestion(msg.sessionId, eventIdOf(msg), msg.answers)
           break
         case 'questionCancel':
-          await this.cancelQuestion(msg.sessionId, msg.rpcId)
+          await this.cancelQuestion(msg.sessionId, eventIdOf(msg))
           break
         case 'approvalAnswer':
-          await this.answerApproval(msg.sessionId, msg.rpcId, msg.approvalId, msg.outcome)
+          await this.answerApproval(msg.sessionId, eventIdOf(msg), msg.approvalId, msg.outcome)
           break
         case 'queueEdit':
           await this.editQueuedItem(msg.sessionId, msg.itemId)
@@ -439,22 +462,16 @@ class ChatViewProvider {
 
   async hydrate() {
     const list = this.dsh.statusValue === 'ready' ? await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions) : []
-    // hydrate 的列表也要带插件视图字段（提升标记），否则抽屉层级与后续 sessions 帧不一致。
-    for (const item of list) {
-      // 提升只对子代理会话有意义（分支会话本来就按普通会话顶层显示）。
-      item.promotedLocally = isSubagentSession(item) && this.promotedLocally.has(item.sessionId)
-      item.restoredLocally = this.unarchivedLocally.has(item.sessionId)
-      // 会话模式（抽屉行右侧标签）：与 doRefreshSessions 同规则，首帧就能显示。
-      const preset = sessionPresetOf(item) || this.agentPresetBySession.get(item.sessionId)
-      if (preset) item.agentPreset = preset
-    }
+    // hydrate 的列表也要带插件视图字段（本地恢复标记、行状态点），
+    // 否则抽屉层级与行状态会和后续 sessions 帧不一致。
+    this.lastSessionList = list
     // listSessions 返回的投影同样需要入缓存，供 statsSnapshot/permissions 读取。
     this.seedProjectionsFromList(list)
     this.post({
       type: 'hydrate',
       status: this.dsh.statusValue,
       workspace: this.workspaceView,
-      sessions: applySessionActivity(list, this.activityTimeBySession),
+      sessions: applySessionActivity(this.decorateSessionRows(list), this.activityTimeBySession),
       selectedSessionId: this.selectedSessionId,
       conversation: this.conversationSnapshot(),
       running: this.isSessionRunning(this.selectedSessionId),
@@ -673,6 +690,8 @@ class ChatViewProvider {
     if (!sessionId) return
     this.clearConversationPost()
     this.selectedSessionId = sessionId
+    // 打开会话即"看过"：清掉 completed 绿点（与 dsh Web UI 的语义一致）。
+    this.completedBySession.delete(sessionId)
     this.ensureStreams()
     this.openSessionFollow(sessionId)
     await this.refreshSessions()
@@ -826,23 +845,6 @@ class ChatViewProvider {
     await this.refreshSessions()
   }
 
-  /**
-   * 插件视图内的"提升为普通会话 / 恢复层级"。
-   *
-   * dsh 侧没有对应能力：会话谱系写在创建时的 header（`parentSession`）里且不可修改，
-   * RPC 面只有 create/rename/fork/prompt/…（没有 detach/promote 之类）。所以这里
-   * 只改插件抽屉的层级显示（被提升的会话作为顶层行渲染），dsh Web UI 里仍是嵌套的。
-   * @param sessionId - 目标会话。
-   * @param promoted - true=提升为顶层行；false=恢复层级显示。
-   */
-  async setSessionPromoted(sessionId, promoted) {
-    if (!sessionId) return
-    if (promoted) this.promotedLocally.add(sessionId)
-    else this.promotedLocally.delete(sessionId)
-    await this.persistPromoted()
-    await this.refreshSessions()
-  }
-
   /** 一次性清空"仅插件内显示"（本地取消归档）集合——批量撤销旧版按钮留下的痕迹。 */
   async clearRestoredSessions() {
     if (this.unarchivedLocally.size === 0) return
@@ -851,14 +853,6 @@ class ChatViewProvider {
     this.sessions.setArchivedIgnored(this.unarchivedLocally)
     await this.refreshSessions()
     this.post({ type: 'notice', text: this.t('notice.restoredCleared') })
-  }
-
-  async persistPromoted() {
-    try {
-      await this.options.persistPromoted?.([...this.promotedLocally])
-    } catch (error) {
-      this.onLog(`保存"提升为普通会话"集合失败: ${error instanceof Error ? error.message : String(error)}`)
-    }
   }
 
   /** `↪` 的反向操作：把"本地恢复显示"的会话重新按已归档处理（仅插件视图）。 */
@@ -927,20 +921,6 @@ class ChatViewProvider {
     }
   }
 
-  isGoalBannerDismissed(sessionId, goal) {
-    const fingerprint = goalBannerFingerprint(goal)
-    if (!fingerprint) return false
-    return this.dismissedGoalBanner.get(sessionId) === fingerprint
-  }
-
-  /** 用户点掉目标横幅：记住当前目标指纹，目标更新后自动重新出现。 */
-  dismissGoalBanner(sessionId) {
-    if (!sessionId) return
-    const fingerprint = goalBannerFingerprint(this.projectionValue(sessionId, 'goal'))
-    if (fingerprint) this.dismissedGoalBanner.set(sessionId, fingerprint)
-    this.postStats(sessionId)
-  }
-
   /**
    * 裁剪"已加载窗口"：初始 follow 快照可能带回远超一屏的事件，
    * 这里按折叠后的条目数只保留最近 LOADED_ITEM_LIMIT 条（详细模式口径），
@@ -969,10 +949,20 @@ class ChatViewProvider {
     }
     try {
       const result = await this.sessions.searchSessions(text)
+      // 内容搜索可能命中子代理会话（也不该列出已归档会话）：插件不再显示子代理，
+      // 这里按会话列表把它们过滤掉，避免点击后"跳到列表里不存在的会话"。
+      const subagents = new Set(
+        (this.lastSessionList || []).filter((item) => isSubagentSession(item)).map((item) => item.sessionId),
+      )
+      const items = (result?.items || []).filter((hit) => {
+        const sessionId = hit && hit.sessionId
+        if (!sessionId || subagents.has(sessionId)) return false
+        return !this.sessions.isArchived(sessionId)
+      })
       this.post({
         type: 'sessionSearch',
         query: text,
-        items: result?.items || [],
+        items,
         hasMore: result?.hasMore === true,
       })
     } catch (error) {
@@ -1407,6 +1397,17 @@ class ChatViewProvider {
     }
   }
 
+  /**
+   * 别的窗口改动了本工作区的暂存文件（extension.js 的文件监听回调）：
+   * 更新内存副本并推给 webview。**不回写磁盘**——避免与刚写完的那个窗口来回打架。
+   */
+  applyExternalPromptStash(items) {
+    const next = normalizePromptStashEntries(items || [])
+    if (samePromptStash(this.promptStashItems, next)) return
+    this.promptStashItems = next
+    this.post({ type: 'promptStash', enabled: this.promptStashEnabled, items: next })
+  }
+
   async setShowArchivedSessions(value) {
     const next = value === true
     this.showArchivedSessions = next
@@ -1568,6 +1569,7 @@ class ChatViewProvider {
     this.projectionsBySession.delete(sessionId)
     this.hasMoreBySession.delete(sessionId)
     this.sessionRunning.delete(sessionId)
+    this.completedBySession.delete(sessionId)
     this.closeSessionFollow(sessionId)
     if (this.selectedSessionId === sessionId) this.selectedSessionId = null
     await this.refreshSessions()
@@ -1754,7 +1756,22 @@ class ChatViewProvider {
     }
     const list = await this.sessions.listSessions(this.selectedSessionId, this.showArchivedSessions)
     this.seedProjectionsFromList(list)
-    for (const item of list) {
+    this.lastSessionList = list
+    this.postSessionsFrame()
+    this.postStats(this.selectedSessionId)
+  }
+
+  /**
+   * 给会话行补上"插件视图"字段（hydrate 与 sessions 帧共用，避免两处口径漂移）：
+   * 运行状态、归档、显示名、工作模式、本地恢复标记，以及行状态字段
+   * （`pendingKind` / `completed`，见 dsh Web UI 的会话行状态口径）。
+   *
+   * **子代理会话在这里被过滤掉**：插件的会话抽屉不再显示子代理（用户要求删除该功能）；
+   * 唯一例外是"当前选中的恰好是子代理会话"（例如从网页端选中），保留它以免列表与顶栏标题对不上。
+   */
+  decorateSessionRows(list) {
+    const rows = list.filter((item) => !isSubagentSession(item) || item.sessionId === this.selectedSessionId)
+    for (const item of rows) {
       const running = this.sessionRunning.get(item.sessionId)
       if (running !== undefined) item.running = item.running || running
       item.archived = this.sessions.isArchived(item.sessionId)
@@ -1767,18 +1784,35 @@ class ChatViewProvider {
       // 与 dsh Web 端一致的显示名（title → cwd 目录名 → sessionId），
       // 避免插件列表出现"会话 1a2b3c4d"而网页显示目录名的不一致。
       item.displayTitle = sessionDisplayTitleOf(item)
-      item.promotedLocally = isSubagentSession(item) && this.promotedLocally.has(item.sessionId)
       item.restoredLocally = this.unarchivedLocally.has(item.sessionId)
+      // 行状态（琥珀点 > 绿点 > 运行中，见 webview makeSessionRow）。
+      // 注意：提问表里存的是 `{eventId,questions}` 条目，要摊平成问题对象再判种类。
+      const pendingEntries = this.pendingQuestionsBySession.get(item.sessionId) || []
+      const pendingQuestions = []
+      for (const entry of pendingEntries) {
+        for (const question of entry?.questions || []) pendingQuestions.push(question)
+      }
+      item.pendingKind = pendingKindOf(pendingQuestions, this.pendingApprovalsBySession.get(item.sessionId))
+      item.completed = this.completedBySession.has(item.sessionId)
     }
+    return rows
+  }
+
+  /**
+   * 只重算行装饰、**不发 RPC** 地重发一次 sessions 帧：待处理交互 / 完成状态变化时
+   * 用它立刻刷新抽屉（走 refreshSessions 会多打一次 `session/list`）。
+   */
+  postSessionsFrame() {
+    const list = this.lastSessionList
+    if (!Array.isArray(list) || list.length === 0) return
     this.post({
       type: 'sessions',
       // 按"最近修改时间"（dsh 的 updatedAt + 插件观察到的活动时间）降序重排。
-      sessions: applySessionActivity(list, this.activityTimeBySession),
+      sessions: applySessionActivity(this.decorateSessionRows(list), this.activityTimeBySession),
       selectedSessionId: this.selectedSessionId,
       archivedAvailable: this.sessions.archivedCountInWorkspace(),
       restoredCount: this.unarchivedLocally.size,
     })
-    this.postStats(this.selectedSessionId)
   }
 
   /**
@@ -1810,6 +1844,13 @@ class ChatViewProvider {
       this.onLog(`刷新失败: ${message}`)
       this.post({ type: 'notice', text: this.t('notice.refreshFailed', { message }) })
     } finally {
+      // 顶栏 ⟳ 顺带重发待回答的提问/审批：选择器万一没出来，刷新一次就能拉回来
+      //（放在 finally：其它刷新步骤失败也要让选择器回来）。
+      const pendingSessionId = this.selectedSessionId
+      if (pendingSessionId) {
+        this.postQuestion(pendingSessionId)
+        this.postApproval(pendingSessionId)
+      }
       this.post({ type: 'refreshing', value: false })
     }
   }
@@ -1881,10 +1922,9 @@ class ChatViewProvider {
       todos: get('todos'),
       permissions: get('permissions'),
       jobs: this.jobsBySession.get(sessionId) || [],
-      // 0.1.5 投影：目标与计划模式横幅（goalDismissed 由用户点 × 后置位）。
+      // 0.1.5 投影：计划模式横幅（用户要求删掉此前的"目标"横幅）。
       goal: get('goal') ?? null,
       plan: get('plan') ?? null,
-      goalDismissed: this.isGoalBannerDismissed(sessionId, get('goal')),
     }
   }
 
@@ -1942,13 +1982,38 @@ class ChatViewProvider {
 
   ingestQuestionRequested(sessionId, eventId, request) {
     if (!sessionId || !eventId) return
-    const list = this.pendingQuestionsBySession.get(sessionId) || []
-    const exists = list.some((item) => item.eventId === eventId)
-    if (!exists) {
-      list.push({ eventId, questions: (request && request.questions) || [] })
-      this.pendingQuestionsBySession.set(sessionId, list)
+    const questions = (request && request.questions) || []
+    // 一个会话同一时刻只可能有一个待回答提问（dsh 的提问工具会阻塞该回合）：
+    // 收到新提问就说明旧的已经结算/作废——必须丢掉旧的，否则 questionSnapshot()
+    // 会一直返回那个永远答不掉的旧条目，把后续提问全部挡住
+    //（表现就是"一个会话只能调出一次选择器"）。
+    const next = nextPendingRequests(this.pendingQuestionsBySession.get(sessionId), { eventId, questions }, eventId)
+    if (!next.changed) return
+    if (next.stale.length) {
+      this.onLog(`丢弃已失效的提问 ${next.stale.map((item) => item.eventId).join(',')}（会话 ${sessionId} 收到新提问 ${eventId}）`)
     }
+    this.pendingQuestionsBySession.set(sessionId, next.list)
+    this.onLog(`[waterfall] user-questions/request ← ${sessionId} ${eventId}（${questions.length} 个问题）`)
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
+    else this.notifyPendingElsewhere('question', sessionId)
+    // 抽屉行上的"等待回答"琥珀点（非当前会话尤其需要）。
+    this.postSessionsFrame()
+  }
+
+  /**
+   * 提问/审批落在**非当前会话**时提醒一句：否则用户只看到那个会话"卡在运行中"，
+   * 不知道有个选择器正在别的会话里等他回答。
+   */
+  notifyPendingElsewhere(kind, sessionId) {
+    const now = Date.now()
+    const last = this.pendingNoticeAt.get(sessionId) || 0
+    if (now - last < 30_000) return
+    this.pendingNoticeAt.set(sessionId, now)
+    const session = (this.lastSessionList || []).find((item) => item.sessionId === sessionId)
+    const title = sessionDisplayTitleOf(session || { sessionId }) || sessionId
+    const key = kind === 'approval' ? 'notice.approvalElsewhere' : 'notice.questionElsewhere'
+    this.onLog(`${kind} 落在非当前会话 ${sessionId}，已提示用户切换`)
+    this.post({ type: 'notice', text: this.t(key, { title }) })
   }
 
   ingestQuestionResolved(sessionId, eventId) {
@@ -1958,32 +2023,52 @@ class ChatViewProvider {
     const next = list.filter((item) => item.eventId !== eventId)
     this.pendingQuestionsBySession.set(sessionId, next)
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
+    this.postSessionsFrame()
   }
 
   async answerQuestion(sessionId, eventId, answers) {
-    if (!sessionId || !eventId || !Array.isArray(answers)) return
+    if (!sessionId) return false
+    if (!eventId || !Array.isArray(answers)) return this.rejectMissingEvent('question', { eventId, answers })
     if (!this.remoteClientId) throw new Error(this.t('notice.eventsNotReady'))
     const client = this.sessions.requireClient()
     // 0.1.5：waterfall 返回值就是 AskUserQuestionAnswer（`{answers:[{id,selected,custom?}]}`），
     // 不能再包一层 {sessionId, answer}，否则宿主拿到的回答结构不合法。
-    await client.callArgs('$events/result', {
-      clientId: this.remoteClientId,
-      eventId,
-      outcome: buildQuestionOutcome(answers),
-    })
+    try {
+      await client.callArgs('$events/result', {
+        clientId: this.remoteClientId,
+        eventId,
+        outcome: buildQuestionOutcome(answers),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.onLog(`提问应答失败: ${message}`)
+      // 事件已结算/流已更换（如重连）时本地必须清掉，否则这个条目会挡住后续提问；
+      // 其它（可能是瞬时）失败保留条目，用户还能重试。
+      if (isEventGoneError(message)) this.ingestQuestionResolved(sessionId, eventId)
+      this.post({ type: 'notice', text: this.t('notice.answerFailed', { message }), level: 'error' })
+      return false
+    }
     this.ingestQuestionResolved(sessionId, eventId)
+    return true
   }
 
   async cancelQuestion(sessionId, eventId) {
-    if (!sessionId || !eventId) return
+    if (!sessionId) return
+    if (!eventId) { this.rejectMissingEvent('question-cancel', { eventId }); return }
+    // 用户关掉选择器 = 不打算回答这个提问：本地先清掉，避免它挡住后续提问；
+    // 再尽力把拒绝发给宿主（事件已结算/流已更换时失败也没关系）。
+    this.ingestQuestionResolved(sessionId, eventId)
     if (!this.remoteClientId) throw new Error(this.t('notice.eventsNotReady'))
     const client = this.sessions.requireClient()
-    await client.callArgs('$events/result', {
-      clientId: this.remoteClientId,
-      eventId,
-      outcome: buildEventRejection('user cancelled the question', 'cancelled'),
-    })
-    this.ingestQuestionResolved(sessionId, eventId)
+    try {
+      await client.callArgs('$events/result', {
+        clientId: this.remoteClientId,
+        eventId,
+        outcome: buildEventRejection('user cancelled the question', 'cancelled'),
+      })
+    } catch (error) {
+      this.onLog(`取消提问失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   approvalSnapshot(sessionId) {
@@ -1998,19 +2083,25 @@ class ChatViewProvider {
 
   ingestApprovalRequested(sessionId, eventId, request) {
     if (!sessionId || !eventId) return
-    const list = this.pendingApprovalsBySession.get(sessionId) || []
-    const exists = list.some((item) => item.eventId === eventId)
-    if (!exists) {
-      list.push({
-        eventId,
-        approvalId: request?.approvalId || request?.callId,
-        toolName: request?.toolName,
-        callId: request?.callId,
-        reason: request?.reason,
-      })
-      this.pendingApprovalsBySession.set(sessionId, list)
+    // 与提问同理：新审批取代同会话的旧条目（旧事件已结算，留着只会挡住后续审批）。
+    const entry = {
+      eventId,
+      approvalId: request?.approvalId || request?.callId,
+      toolName: request?.toolName,
+      callId: request?.callId,
+      reason: request?.reason,
     }
+    const next = nextPendingRequests(this.pendingApprovalsBySession.get(sessionId), entry, eventId)
+    if (!next.changed) return
+    if (next.stale.length) {
+      this.onLog(`丢弃已失效的审批 ${next.stale.map((item) => item.eventId).join(',')}（会话 ${sessionId} 收到新审批 ${eventId}）`)
+    }
+    this.pendingApprovalsBySession.set(sessionId, next.list)
+    this.onLog(`[waterfall] approval/request ← ${sessionId} ${eventId}（${request?.toolName || '?'}）`)
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
+    else this.notifyPendingElsewhere('approval', sessionId)
+    // 抽屉行上的"等待审批"琥珀点。
+    this.postSessionsFrame()
   }
 
   ingestApprovalResolved(sessionId, eventId) {
@@ -2020,11 +2111,14 @@ class ChatViewProvider {
     const next = list.filter((item) => item.eventId !== eventId)
     this.pendingApprovalsBySession.set(sessionId, next)
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
+    this.postSessionsFrame()
   }
 
   async answerApproval(sessionId, eventId, approvalId, outcome) {
-    if (!sessionId || !eventId || !approvalId) return
-    if (outcome !== 'allowed-once' && outcome !== 'rejected') return
+    if (!sessionId) return false
+    if (!eventId || !approvalId || (outcome !== 'allowed-once' && outcome !== 'rejected')) {
+      return this.rejectMissingEvent('approval', { eventId, approvalId, outcome })
+    }
     if (!this.remoteClientId) throw new Error(this.t('notice.eventsNotReady'))
     const client = this.sessions.requireClient()
     // 0.1.5：waterfall 返回值就是 ApprovalOutcome 字面量（allowed-once/rejected/...）。
@@ -2403,12 +2497,22 @@ class ChatViewProvider {
     if (frame.type !== 'emit') return
     const args = Array.isArray(frame.args) ? frame.args : []
     switch (frame.event) {
-      case 'api-session/status':
-        this.sessionRunning.set(args[0], Boolean(args[1]))
+      case 'api-session/status': {
+        const statusSessionId = args[0]
+        const statusRunning = Boolean(args[1])
+        const wasRunning = this.sessionRunning.get(statusSessionId) === true
+        if (statusRunning) this.completedBySession.delete(statusSessionId)
+        // "跑完了但没被打开过"才能点绿点（与 dsh Web UI 同语义）：只认 真→假 的边沿，
+        // 且该会话不是当前选中会话（选中即视为"看过了"）。
+        else if (wasRunning && statusSessionId !== this.selectedSessionId) this.completedBySession.add(statusSessionId)
+        this.sessionRunning.set(statusSessionId, statusRunning)
         // 开始/结束一轮工作本身就是"会话被修改"（模型输出、工具调用都在这一轮里）。
-        this.noteSessionActivity(args[0], Date.now())
+        this.noteSessionActivity(statusSessionId, Date.now())
+        // 行的状态点（运行中/已完成）立刻跟着变，不必等下面那次防抖全量刷新。
+        this.postSessionsFrame()
         this.scheduleRefreshSessions()
         break
+      }
       case 'api-session/activity':
         // 参数是 [sessionId, event.time]（用户提示词时间）。
         this.noteSessionActivity(args[0], args[1])
@@ -2552,7 +2656,7 @@ const {
   buildQuestionOutcome,
   buildApprovalOutcome,
   buildEventRejection,
-  goalBannerFingerprint,
+  pendingKindOf,
 } = require('./protocol.js')
 
 module.exports = { ChatViewProvider, foldEvents }

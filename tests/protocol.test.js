@@ -3,7 +3,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
 const {
-  goalBannerFingerprint,
   workspaceTitleOf,
   sessionDisplayTitleOf,
   buildQuestionOutcome,
@@ -13,6 +12,10 @@ const {
   normalizePromptStashEntries,
   mergePromptStashTexts,
   applySessionActivity,
+  nextPendingRequests,
+  isEventGoneError,
+  isPlanReviewQuestion,
+  pendingKindOf,
 } = require('../src/protocol.js')
 
 test('workspaceTitleOf takes the last segment for both separators', () => {
@@ -51,13 +54,28 @@ test('isSubagentSession detects subagent rows', () => {
   assert.equal(isSubagentSession(null), false)
 })
 
-test('goalBannerFingerprint changes when the goal updates and is null without a goal', () => {
-  const base = { goal: { objective: 'ship it', phase: 'active' }, roundsStarted: 2 }
-  assert.equal(goalBannerFingerprint(base), goalBannerFingerprint({ goal: { objective: 'ship it', phase: 'active' }, roundsStarted: 2 }))
-  assert.notEqual(goalBannerFingerprint(base), goalBannerFingerprint({ goal: { objective: 'ship it', phase: 'complete' }, roundsStarted: 3 }))
-  assert.notEqual(goalBannerFingerprint(base), goalBannerFingerprint({ goal: { objective: 'other', phase: 'active' }, roundsStarted: 2 }))
-  assert.equal(goalBannerFingerprint(null), null)
-  assert.equal(goalBannerFingerprint({}), null)
+test('pendingKindOf ranks approvals over plan reviews over plain questions', () => {
+  const question = { id: 'q1', question: 'q', options: [{ label: 'a' }] }
+  const planReview = {
+    id: 'p1',
+    question: 'Approve the plan?',
+    detail: '# Plan',
+    options: [{ label: 'Approve' }, { label: 'Keep planning' }],
+    intent: { kind: 'plan-review', approve: 'Approve' },
+  }
+  assert.equal(pendingKindOf([], []), null)
+  assert.equal(pendingKindOf(undefined, undefined), null)
+  assert.equal(pendingKindOf([question], []), 'question')
+  assert.equal(pendingKindOf([planReview], []), 'plan-review')
+  assert.equal(pendingKindOf([question], [{ eventId: 'e1' }]), 'approval')
+  assert.equal(pendingKindOf([question, planReview], [{ eventId: 'e1' }]), 'approval')
+  // 计划评审判定的边界：多选 / 缺 detail / 选项不是一个批准+一个其它 → 都算普通提问。
+  assert.equal(isPlanReviewQuestion({ ...planReview, multiSelect: true }), false)
+  assert.equal(isPlanReviewQuestion({ ...planReview, detail: '' }), false)
+  assert.equal(isPlanReviewQuestion({ ...planReview, options: [{ label: 'Approve' }] }), false)
+  assert.equal(isPlanReviewQuestion({ ...planReview, options: [{ label: 'Approve' }, { label: 'x' }, { label: 'y' }] }), false)
+  assert.equal(isPlanReviewQuestion(null), false)
+  assert.equal(pendingKindOf([{ ...planReview, multiSelect: true }], []), 'question')
 })
 
 test('normalizePromptStashEntries upgrades legacy strings, keeps empty slots, no count limit', () => {
@@ -129,4 +147,33 @@ test('applySessionActivity merges plugin-observed activity and sorts by last mod
   assert.equal(applySessionActivity(items, { A: 999 })[0].sessionId, 'A')
   assert.equal(JSON.stringify(items), before)
   assert.deepEqual(applySessionActivity(null, new Map()), [])
+})
+
+test('nextPendingRequests keeps only the newest request (stale ones must not mask it)', () => {
+  const first = { eventId: 'e1' }
+  const start = nextPendingRequests(undefined, first, 'e1')
+  assert.deepEqual(start, { list: [first], stale: [], changed: true })
+
+  // 重复上报同一事件：原样返回，不重复推送。
+  const repeated = nextPendingRequests(start.list, first, 'e1')
+  assert.equal(repeated.changed, false)
+  assert.equal(repeated.list, start.list)
+
+  // 新事件取代旧事件（旧事件已结算/作废）——这就是"一个会话只能调出一次选择器"的根因。
+  const second = { eventId: 'e2' }
+  const replaced = nextPendingRequests(start.list, second, 'e2')
+  assert.deepEqual(replaced, { list: [second], stale: [first], changed: true })
+
+  // 空/异常输入也安全。
+  assert.deepEqual(nextPendingRequests(null, second, 'e2').list, [second])
+  assert.deepEqual(nextPendingRequests([], second, 'e2').stale, [])
+})
+
+test('isEventGoneError distinguishes "event no longer answerable" from transient failures', () => {
+  assert.equal(isEventGoneError('typert gateway: Remote event result identifies no active event stream'), true)
+  assert.equal(isEventGoneError('session/not-found: session "x" not found'), true)
+  assert.equal(isEventGoneError('the question was already settled'), true)
+  assert.equal(isEventGoneError('fetch failed'), false)
+  assert.equal(isEventGoneError('dsh web respond 超时（60000ms）'), false)
+  assert.equal(isEventGoneError(undefined), false)
 })

@@ -48,23 +48,41 @@ function buildEventRejection(message, code) {
 }
 
 /**
- * 目标横幅指纹：目标内容/阶段/轮次/阻塞原因任一变化都算"更新"，
- * 用于"用户点 × 关闭后，目标更新时自动重新显示"。
- * @param goal - `goal` 投影（`{goal:{objective,phase,blockedReason?},roundsStarted}`）。
- * @returns 指纹字符串；没有目标时返回 null。
+ * 计划评审提问的判定（与 webview 的 `isPlanReviewQuestion()` 同一套条件）：
+ * `intent.kind === 'plan-review'`、单选、带 detail，且选项里恰好一个批准项 + 一个其它项。
+ * @param question - waterfall `user-questions/request` 里的单个问题。
  */
-function goalBannerFingerprint(goal) {
-  const snapshot = goal && typeof goal === 'object' ? goal.goal : null
-  if (!snapshot) return null
-  return [
-    String(snapshot.objective || ''),
-    String(snapshot.phase || ''),
-    String(goal.roundsStarted ?? ''),
-    snapshot.blockedReason ? JSON.stringify(snapshot.blockedReason) : '',
-  ].join('|')
+function isPlanReviewQuestion(question) {
+  if (!question || typeof question !== 'object') return false
+  const intent = question.intent
+  if (!intent || intent.kind !== 'plan-review') return false
+  if (question.multiSelect) return false
+  if (!question.detail || !Array.isArray(question.options)) return false
+  const approve = intent.approve
+  let hasApprove = false
+  let others = 0
+  for (const option of question.options) {
+    if (option && option.label === approve) hasApprove = true
+    else others += 1
+  }
+  return hasApprove && others === 1
 }
 
-/** 子代理会话（列表默认过滤，0.1.5 起可嵌套展示）。 */
+/**
+ * 会话行要显示的"待处理交互"种类（**与 dsh Web UI 同一口径**）：
+ * 审批 > 计划待审 > 等待回答；没有待处理项时返回 null。
+ * 这三种都是"Agent 正等你动手、那一轮不会自己结束"的状态，列表里必须能一眼看到。
+ */
+function pendingKindOf(questions, approvals) {
+  if (Array.isArray(approvals) && approvals.length > 0) return 'approval'
+  if (Array.isArray(questions) && questions.length > 0) {
+    return questions.some(isPlanReviewQuestion) ? 'plan-review' : 'question'
+  }
+  return null
+}
+
+/** 子代理会话（`origin:'subagent'`）：插件不显示这类会话（用户要求删除子代理显示功能），
+ * 这里仅用于把它们从会话列表里过滤掉。 */
 function isSubagentSession(session) {
   return Boolean(session) && session.origin === 'subagent'
 }
@@ -161,6 +179,34 @@ function applySessionActivity(items, activityBySession) {
     .map((entry) => entry.item)
 }
 
+/**
+ * 一个会话的"待回答请求"列表的更新规则（提问与审批共用）。
+ *
+ * dsh 的提问/审批工具会阻塞该回合，所以同一会话同一时刻只可能有一个待回答请求：
+ * 收到新请求就说明旧的已经结算/作废。必须**丢掉旧的**——否则快照永远返回那个
+ * 答不掉的旧条目，把后续请求全部挡住（用户看到的现象是"一个会话只能调出一次选择器"）。
+ *
+ * @param current - 现有的待回答条目（可空）。
+ * @param entry - 新收到的条目。
+ * @param eventId - 新条目的事件 id（与 entry 里的一致；重复上报同一事件时原样返回）。
+ * @returns 只含最新条目的新数组；重复上报同一事件时返回 `current` 本身。
+ */
+function nextPendingRequests(current, entry, eventId) {
+  const list = Array.isArray(current) ? current : []
+  if (list.length === 1 && list[0] && list[0].eventId === eventId) {
+    return { list, stale: [], changed: false }
+  }
+  return { list: [entry], stale: list.filter((item) => item && item.eventId !== eventId), changed: true }
+}
+
+/**
+ * 应答失败是否属于"事件已经不在了"（已结算/事件流已更换）。
+ * 这类失败本地必须清掉条目，否则它会挡住后续请求；其它失败（可能是瞬时的）保留以便重试。
+ */
+function isEventGoneError(message) {
+  return /no active event stream|unknown|not found|already|settled|expired|取消|已结束/i.test(String(message || ''))
+}
+
 module.exports = {
   workspaceTitleOf,
   sessionDisplayTitleOf,
@@ -168,10 +214,13 @@ module.exports = {
   buildApprovalOutcome,
   buildEventRejection,
   isSubagentSession,
-  goalBannerFingerprint,
+  isPlanReviewQuestion,
+  pendingKindOf,
   PROMPT_STASH_TEXT_LIMIT,
   normalizePromptStashEntries,
   normalizePromptStashImages,
   mergePromptStashTexts,
   applySessionActivity,
+  nextPendingRequests,
+  isEventGoneError,
 }
