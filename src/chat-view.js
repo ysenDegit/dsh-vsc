@@ -36,9 +36,35 @@ const COALESCED_MESSAGE_TYPES = new Set([
 
 function toPosix(p) { return p.split('\\').join('/') }
 
+/** 待处理交互通知的模式（`dsh-vsc.notifyPending`）：非法值一律退回默认的 `unfocused`。 */
+function normalizeNotifyPendingMode(value) {
+  return value === 'off' || value === 'always' ? value : 'unfocused'
+}
+
 /** waterfall 事件 id：新 webview 发 `eventId`，旧版发 `rpcId`（两者都接受）。 */
 function eventIdOf(msg) {
   return msg?.eventId ?? msg?.rpcId ?? null
+}
+
+/**
+ * dsh `schedule` 投影的 wire view（`dsh-schedule/schedule/src/projection.ts` 的
+ * `wire: { viewSchema: scheduleRecords, view: state => state.active }`）= 该会话**当前活动**的
+ * 定时提醒数组，元素形如 `{ id, kind:'after'|'at'|'every', prompt, scheduledAt, afterSeconds?/everySeconds? }`。
+ * 非数组/非法值一律按"没有定时任务"处理（旧版 dsh 没有这个投影）。
+ */
+function scheduleRecordsOf(value) {
+  if (!Array.isArray(value)) return []
+  return value.filter((record) => record !== null && typeof record === 'object')
+}
+
+/** 活动定时任务里最早的一次触发时间（RFC 3339 → ISO 字符串）；解析不出来就返回 null。 */
+function nextScheduleAtOf(records) {
+  let earliest = Number.POSITIVE_INFINITY
+  for (const record of records) {
+    const at = Date.parse(record?.scheduledAt)
+    if (Number.isFinite(at) && at < earliest) earliest = at
+  }
+  return Number.isFinite(earliest) ? new Date(earliest).toISOString() : null
 }
 
 
@@ -74,6 +100,10 @@ class ChatViewProvider {
     this.contextBarColor = options.contextBarColor ?? 'var(--accent)'
     this.contextBarOpacity = options.contextBarOpacity ?? 30
     this.autoStart = options.autoStart ?? true
+    // 状态栏入口（`dsh-vsc.statusBarEntry`）：与面板顶栏状态点同一口径，但任何窗口状态都在
+    // （没有打开文件夹、没有打开的编辑器时也在），见 syncStatusBar()。
+    this.statusBarEnabled = options.statusBarEntry ?? true
+    this.statusBarItem = null
     this.webviews = new Set()
     this.queue = []
     this.selectedSessionId = null
@@ -134,6 +164,12 @@ class ChatViewProvider {
     // sessionId -> 插件侧观察到的"最近修改时间"（提示词时间 / 运行状态变化 / 已加载的最后一条事件）。
     // dsh 的列表只给"最近提示词时间"，这里补上活动信息后列表按"最近修改时间"排序与显示。
     this.activityTimeBySession = new Map()
+    // 待处理交互（提问/计划待审/审批）的 VS Code 通知：模式 off/unfocused/always（dsh-vsc.notifyPending）。
+    this.notifyPendingMode = normalizeNotifyPendingMode(options.notifyPending)
+    // 已提醒过的事件 id：同一个 waterfall 事件只打扰一次（官方 UX 要求"别重复打扰"）。
+    this.notifiedPendingEvents = new Set()
+    // 用户点过"不再提醒"的会话（内存态：重载窗口后恢复；待处理交互本来就是一次性的）。
+    this.mutedPendingSessions = new Set()
     // sessionId -> "跑完了但用户还没打开过"（completed 绿点，与 dsh Web UI 同语义）。
     // 只在 running 真→假的边沿、且该会话不是当前选中会话时置位；切过去看就清掉。
     this.completedBySession = new Set()
@@ -143,6 +179,8 @@ class ChatViewProvider {
     this.pendingNoticeAt = new Map()
     // 最近一次会话列表快照：用于把 sessionId 换成标题做提示。
     this.lastSessionList = []
+    // 状态栏入口在构造时就位（扩展 `onStartupFinished` 激活，空窗口也能看到）。
+    this.syncStatusBar()
   }
 
   static get viewType() { return viewType }
@@ -381,6 +419,9 @@ class ChatViewProvider {
         case 'setEnterToSend':
           await this.setEnterToSend(msg.value)
           break
+        case 'setNotifyPending':
+          await this.setNotifyPending(msg.value)
+          break
         case 'setMaxWidth':
           await this.setMaxWidth(msg.value)
           break
@@ -395,6 +436,9 @@ class ChatViewProvider {
           break
         case 'setAutoStart':
           await this.setAutoStart(msg.value)
+          break
+        case 'setStatusBarEntry':
+          await this.setStatusBarEntry(msg.value)
           break
         case 'retryConnect':
           await this.retryConnect()
@@ -484,6 +528,7 @@ class ChatViewProvider {
       contextBarColor: this.contextBarColor,
       contextBarOpacity: this.contextBarOpacity,
       autoStart: this.autoStart,
+      statusBarEntry: this.statusBarEnabled,
       showArchivedSessions: this.showArchivedSessions,
       archivedAvailable: this.sessions.archivedCountInWorkspace(),
       restoredCount: this.unarchivedLocally.size,
@@ -958,6 +1003,11 @@ class ChatViewProvider {
         const sessionId = hit && hit.sessionId
         if (!sessionId || subagents.has(sessionId)) return false
         return !this.sessions.isArchived(sessionId)
+      }).map((hit) => {
+        // 内容搜索命中里也带行装饰（定时任务徽标），与抽屉行同一口径；
+        // 命中来自 `session/search`，装饰要从最近一次会话列表快照里补。
+        const known = (this.lastSessionList || []).find((item) => item.sessionId === hit.sessionId)
+        return known ? { ...hit, scheduleCount: known.scheduleCount || 0, nextScheduleAt: known.nextScheduleAt || null } : hit
       })
       this.post({
         type: 'sessionSearch',
@@ -1135,12 +1185,13 @@ class ChatViewProvider {
           maxWidth: this.maxWidth,
           language: this.language,
           enterToSend: this.enterToSend,
+          notifyPending: this.notifyPendingMode,
           showContextUsage: this.showContextUsage,
           contextBarColor: this.contextBarColor,
           contextBarOpacity: this.contextBarOpacity,
           autoStart: this.autoStart,
+          statusBarEntry: this.statusBarEnabled,
           promptStashEnabled: this.promptStashEnabled,
-          baseUrl: null,
           workspaces: [],
           currentWorkspaceId: null,
           currentFolderPath: folder ? folder.uri.fsPath : null,
@@ -1195,12 +1246,13 @@ class ChatViewProvider {
         maxWidth: this.maxWidth,
         language: this.language,
         enterToSend: this.enterToSend,
+        notifyPending: this.notifyPendingMode,
         showContextUsage: this.showContextUsage,
         contextBarColor: this.contextBarColor,
         contextBarOpacity: this.contextBarOpacity,
         autoStart: this.autoStart,
+        statusBarEntry: this.statusBarEnabled,
         promptStashEnabled: this.promptStashEnabled,
-        baseUrl: this.dsh.baseUrl || null,
         // 设置页超链接 href 直接用带 token 的地址，点击/复制都不会落进 401 页。
         webUrl: this.dsh.webUrl || null,
         workspaces,
@@ -1369,6 +1421,15 @@ class ChatViewProvider {
     await this.updateConfig('autoStart', next)
   }
 
+  /** 状态栏入口开关：先让界面/状态栏生效，再落配置（写配置失败只记日志）。 */
+  async setStatusBarEntry(value) {
+    const next = value !== false
+    this.statusBarEnabled = next
+    this.post({ type: 'statusBarEntry', value: next })
+    this.syncStatusBar()
+    await this.updateConfig('statusBarEntry', next)
+  }
+
   async setPromptStash(value) {
     const next = value !== false
     this.promptStashEnabled = next
@@ -1503,6 +1564,66 @@ class ChatViewProvider {
     }
   }
 
+  /**
+   * 状态栏入口（`dsh-vsc.statusBarEntry`，默认开）。
+   *
+   * 为什么需要它：VS Code 的"空编辑器水印"（Open Chat / Show All Commands / Go to File 那三条）
+   * 没有任何扩展贡献点，欢迎页只在启动时出现一次，所以想在"没有打开任何编辑器"的窗口里
+   * 一键进插件，只能用状态栏这种常驻入口。文案与点击行为按状态走：
+   *   - 没有打开文件夹：dsh 以工作目录为单位，点击直接打开文件夹选择框；
+   *   - 就绪：点击打开 dsh 面板（`dsh-vsc.focus`）；
+   *   - 发现中/启动中/重连中：转圈图标，点击打开面板看状态；
+   *   - 已停止/错误：点击直接重新检测 dsh web 实例（`dsh-vsc.retryConnect`）。
+   */
+  syncStatusBar() {
+    if (this.statusBarEnabled === false) {
+      // 关闭开关只隐藏入口，不销毁：重新打开时立刻可用。
+      if (this.statusBarItem) this.statusBarItem.hide()
+      // 这条日志只说一次，同时是"装完新版本到底有没有跑起来"的诊断线索。
+      if (!this.statusBarDisabledLogged) {
+        this.statusBarDisabledLogged = true
+        this.onLog('状态栏入口：已按 dsh-vsc.statusBarEntry=false 隐藏')
+      }
+      return
+    }
+    if (!this.statusBarItem) {
+      this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10)
+      this.onLog('状态栏入口：已创建')
+    }
+    const item = this.statusBarItem
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    const status = this.dsh.statusValue
+    if (!folder) {
+      item.text = `$(comment-discussion) ${this.t('statusBar.noFolder')}`
+      item.tooltip = this.t('statusBar.noFolderTip')
+      item.command = 'workbench.action.files.openFolder'
+    } else if (status === 'ready') {
+      item.text = `$(comment-discussion) ${this.t('statusBar.ready')}`
+      item.tooltip = this.t('statusBar.readyTip')
+      // 点状态栏 = 在**工作区（编辑器列）**打开 dsh 面板，而不是聚焦侧边栏视图
+      // （用户要求）；与顶栏那个 `dsh` 按钮走同一个命令，已有面板则直接 reveal。
+      item.command = 'dsh-vsc.openChatFromTitle'
+    } else if (status === 'stopped' || status === 'error') {
+      const down = status === 'error'
+      item.text = `$(comment-discussion) ${this.t(down ? 'statusBar.error' : 'statusBar.stopped')}`
+      item.tooltip = this.t(down ? 'statusBar.errorTip' : 'statusBar.retryTip')
+      item.command = 'dsh-vsc.retryConnect'
+    } else {
+      const busy = status === 'discovering' || status === 'reconnecting' ? status : 'starting'
+      item.text = `$(sync~spin) ${this.t('statusBar.' + busy)}`
+      item.tooltip = this.t('statusBar.busyTip')
+      item.command = 'dsh-vsc.openChatFromTitle'
+    }
+    item.show()
+  }
+
+  dispose() {
+    if (this.statusBarItem) {
+      this.statusBarItem.dispose()
+      this.statusBarItem = null
+    }
+  }
+
   // 配置被外部修改（VS Code 设置 UI、settings.json 等）时同步 provider 状态与 webview。
   updatePreferences(prefs) {
     if (prefs.sessionDisplay !== undefined && prefs.sessionDisplay !== this.sessionDisplay) {
@@ -1533,6 +1654,20 @@ class ChatViewProvider {
     if (prefs.language !== undefined && prefs.language !== this.language) {
       this.language = prefs.language
       this.post({ type: 'language', value: prefs.language })
+      // 状态栏入口的文案也是按语言取的，换语言后要跟着换。
+      this.syncStatusBar()
+    }
+    if (prefs.statusBarEntry !== undefined && (prefs.statusBarEntry !== false) !== this.statusBarEnabled) {
+      this.statusBarEnabled = prefs.statusBarEntry !== false
+      this.post({ type: 'statusBarEntry', value: this.statusBarEnabled })
+      this.syncStatusBar()
+    }
+    if (prefs.notifyPending !== undefined) {
+      const next = normalizeNotifyPendingMode(prefs.notifyPending)
+      if (next !== this.notifyPendingMode) {
+        this.notifyPendingMode = next
+        this.post({ type: 'notifyPending', value: next })
+      }
     }
     if (prefs.enterToSend !== undefined && prefs.enterToSend !== this.enterToSend) {
       this.enterToSend = prefs.enterToSend
@@ -1794,6 +1929,13 @@ class ChatViewProvider {
       }
       item.pendingKind = pendingKindOf(pendingQuestions, this.pendingApprovalsBySession.get(item.sessionId))
       item.completed = this.completedBySession.has(item.sessionId)
+      // 活动定时任务（dsh `schedule` 投影的 wire view 就是"当前活动提醒"数组，
+      // 判定与 dsh Web UI 一致：length > 0 就在行上显示闹钟标记）。
+      // 优先用实时投影帧（`session/projection`），其次用会话列表条目里的快照。
+      const liveSchedules = this.projectionValue(item.sessionId, 'schedule')
+      const schedules = scheduleRecordsOf(liveSchedules === undefined ? item.projections?.values?.schedule : liveSchedules)
+      item.scheduleCount = schedules.length
+      item.nextScheduleAt = nextScheduleAtOf(schedules)
     }
     return rows
   }
@@ -1996,6 +2138,7 @@ class ChatViewProvider {
     this.onLog(`[waterfall] user-questions/request ← ${sessionId} ${eventId}（${questions.length} 个问题）`)
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
     else this.notifyPendingElsewhere('question', sessionId)
+    void this.notifyPending('question', sessionId, { count: questions.length })
     // 抽屉行上的"等待回答"琥珀点（非当前会话尤其需要）。
     this.postSessionsFrame()
   }
@@ -2010,10 +2153,87 @@ class ChatViewProvider {
     if (now - last < 30_000) return
     this.pendingNoticeAt.set(sessionId, now)
     const session = (this.lastSessionList || []).find((item) => item.sessionId === sessionId)
-    const title = sessionDisplayTitleOf(session || { sessionId }) || sessionId
+    const title = session?.displayTitle || sessionDisplayTitleOf(session || { sessionId }) || sessionId
     const key = kind === 'approval' ? 'notice.approvalElsewhere' : 'notice.questionElsewhere'
     this.onLog(`${kind} 落在非当前会话 ${sessionId}，已提示用户切换`)
     this.post({ type: 'notice', text: this.t(key, { title }) })
+  }
+
+  /**
+   * 待处理交互的 **VS Code 通知**（右下角通知；窗口不在前台时由系统通知中心展示）。
+   *
+   * 触发规则（`dsh-vsc.notifyPending`）：
+   * - `off`：从不发；
+   * - `unfocused`（默认）：只在**窗口不在前台**时发（此时你在别的应用里，通知才有意义）；
+   * - `always`：只要不是"你正看着那个会话"就发。
+   * 同一个 waterfall 事件只提醒一次（`notifiedPendingEvents`）；用户点过"不再提醒"的会话直接跳过。
+   * 通知带两个按钮：**打开并回答**（切到该会话 + 聚焦插件面板，选择器随即出现）与 **不再提醒**。
+   * 注意 VS Code 没有"程序化关闭通知"的 API，所以这里刻意保守：能不发就不发。
+   */
+  async notifyPending(kind, sessionId, detail = {}) {
+    if (sessionId === this.selectedSessionId && vscode.window.state?.focused !== false) return
+    if (this.notifyPendingMode === 'off') return
+    if (this.notifyPendingMode === 'unfocused' && vscode.window.state?.focused !== false) return
+    if (this.mutedPendingSessions.has(sessionId)) return
+
+    const pending = kind === 'approval'
+      ? (this.approvalSnapshot(sessionId) || {})
+      : (this.questionSnapshot(sessionId) || {})
+    const eventId = pending.eventId
+    if (!eventId || this.notifiedPendingEvents.has(eventId)) return
+    this.notifiedPendingEvents.add(eventId)
+
+    const session = (this.lastSessionList || []).find((item) => item.sessionId === sessionId)
+    const title = session?.displayTitle || sessionDisplayTitleOf(session || { sessionId }) || sessionId
+    const planReview = kind === 'question'
+      && (pending.questions || []).some((question) => isPlanReviewQuestion(question))
+    const key = kind === 'approval'
+      ? 'notify.pendingApproval'
+      : (planReview ? 'notify.pendingPlanReview' : 'notify.pendingQuestion')
+    const text = this.t(key, {
+      title,
+      count: detail.count ?? (pending.questions || []).length,
+      tool: detail.tool || pending.toolName || '?',
+    })
+    const open = this.t('notify.pendingOpen')
+    const mute = this.t('notify.pendingMute')
+    this.onLog(`[notify] ${kind} ← ${sessionId}：${text}`)
+
+    let picked = null
+    try {
+      picked = await vscode.window.showWarningMessage(text, open, mute)
+    } catch (error) {
+      this.onLog(`发送通知失败: ${error instanceof Error ? error.message : String(error)}`)
+      return
+    }
+    if (picked === mute) {
+      this.mutedPendingSessions.add(sessionId)
+      this.onLog(`用户选择"不再提醒"：会话 ${sessionId}（本次窗口内）`)
+      return
+    }
+    if (picked === open) await this.openSessionFromNotification(sessionId)
+  }
+
+  /** 通知里的"打开并回答"：切到该会话并把插件面板带到前台（选择器会随 pending 帧出现）。 */
+  async openSessionFromNotification(sessionId) {
+    try {
+      await vscode.commands.executeCommand('dsh-vsc.chat.focus')
+    } catch (error) {
+      this.onLog(`聚焦插件面板失败: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    if (sessionId !== this.selectedSessionId) await this.selectSession(sessionId)
+    else {
+      this.postQuestion(sessionId)
+      this.postApproval(sessionId)
+    }
+  }
+
+  /** `dsh-vsc.notifyPending`（off / unfocused / always）：先让设置生效，再落配置。 */
+  async setNotifyPending(value) {
+    const next = normalizeNotifyPendingMode(value)
+    this.notifyPendingMode = next
+    this.post({ type: 'notifyPending', value: next })
+    await this.updateConfig('notifyPending', next)
   }
 
   ingestQuestionResolved(sessionId, eventId) {
@@ -2022,6 +2242,7 @@ class ChatViewProvider {
     if (!list) return
     const next = list.filter((item) => item.eventId !== eventId)
     this.pendingQuestionsBySession.set(sessionId, next)
+    this.notifiedPendingEvents.delete(eventId)
     if (sessionId === this.selectedSessionId) this.postQuestion(sessionId)
     this.postSessionsFrame()
   }
@@ -2100,6 +2321,7 @@ class ChatViewProvider {
     this.onLog(`[waterfall] approval/request ← ${sessionId} ${eventId}（${request?.toolName || '?'}）`)
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
     else this.notifyPendingElsewhere('approval', sessionId)
+    void this.notifyPending('approval', sessionId, { tool: request?.toolName || '?' })
     // 抽屉行上的"等待审批"琥珀点。
     this.postSessionsFrame()
   }
@@ -2110,6 +2332,7 @@ class ChatViewProvider {
     if (!list) return
     const next = list.filter((item) => item.eventId !== eventId)
     this.pendingApprovalsBySession.set(sessionId, next)
+    this.notifiedPendingEvents.delete(eventId)
     if (sessionId === this.selectedSessionId) this.postApproval(sessionId)
     this.postSessionsFrame()
   }
@@ -2576,6 +2799,8 @@ class ChatViewProvider {
           this.scheduleRefreshSessions()
         }
       }
+      // 定时任务徽标：不管是不是当前会话都要跟着投影帧立刻刷新（`postSessionsFrame` 不发 RPC）。
+      if (frame.key === 'schedule') this.postSessionsFrame()
       return
     }
   }
@@ -2657,6 +2882,7 @@ const {
   buildApprovalOutcome,
   buildEventRejection,
   pendingKindOf,
+  isPlanReviewQuestion,
 } = require('./protocol.js')
 
 module.exports = { ChatViewProvider, foldEvents }

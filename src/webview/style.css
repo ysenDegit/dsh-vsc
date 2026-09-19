@@ -160,6 +160,20 @@
     @media (max-width: 480px) {
       .drawer-item .drawer-mode { display: none; }
     }
+    /* 会话列表的"展开其余 N 个会话 / 收起"按钮（普通会话超过 5 条时出现）。 */
+    .drawer-more {
+      display: block; width: calc(100% - 16px); margin: 4px 8px 6px;
+      padding: 4px 8px; background: transparent; border: 1px dashed var(--border-soft);
+      border-radius: 6px; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer;
+    }
+    .drawer-more:hover { color: var(--fg); border-color: var(--accent); }
+    /* 活动定时任务标记（dsh `schedule` 投影非空时出现）：不可点，只做悬停说明，
+       位置与 dsh Web UI 一致——标题之后、时间/操作之前。 */
+    .drawer-item .drawer-schedule {
+      flex: 0 0 auto; margin-left: 5px; font-size: 11px; line-height: 1.4;
+      opacity: .9; cursor: default;
+    }
+    .drawer-item.selected .drawer-schedule { opacity: 1; }
     /* 行首"主状态点"（与 dsh Web UI 同一优先级）：运行中=强调色、已完成=绿、
        待处理交互（等待回答/计划待审/等待审批）=琥珀并带一圈光晕。
        顺序要紧：pending 写在最后，保证"既在跑又在等你回答"时显示琥珀。 */
@@ -410,11 +424,16 @@
     }
     .prompt-stash .stash-input:focus { outline: 1px solid var(--accent); }
     .prompt-stash .stash-send,
+    .prompt-stash .stash-take-back,
     .prompt-stash .stash-remove {
       flex: 0 0 auto; height: 24px; min-width: 24px; padding: 0 6px;
       font-size: 11px; line-height: 1;
     }
-    .prompt-stash .stash-send:disabled { opacity: 0.45; }
+    .prompt-stash .stash-send:disabled,
+    .prompt-stash .stash-take-back:disabled { opacity: 0.45; }
+    /* 放回（↩）：次要动作，静默颜色，悬停用强调色。 */
+    .prompt-stash .stash-take-back { color: var(--muted); }
+    .prompt-stash .stash-take-back:hover:not(:disabled) { color: var(--accent); }
     .prompt-stash .stash-remove { color: var(--muted); }
     .prompt-stash .stash-remove:hover { color: var(--error); }
     /* 暂存框 ＋ 位于 composer 行右侧（发送/权限/停止之后），与左侧按钮组留一点间距。 */
@@ -471,12 +490,37 @@
       max-height: min(55vh, 520px);
       min-height: min(220px, 35vh);
     }
-    .question-panel .q-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    /* 多问题提问：一页一题（与 dsh Web UI 的多层提问一致）。 */
+    .question-panel .q-section { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+    .question-panel .q-options { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
     .question-panel .q-option {
-      border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
+      display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left;
+      border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;
       font-size: 12px; cursor: pointer; background: transparent; color: var(--fg);
     }
     .question-panel .q-option.selected { border-color: var(--accent); background: var(--hover); }
+    .question-panel .q-option-idx {
+      flex: 0 0 auto; min-width: 18px; height: 18px; border-radius: 4px; line-height: 17px;
+      text-align: center; font-size: 11px; color: var(--muted);
+      background: var(--chip-bg); border: 1px solid var(--chip-border);
+    }
+    .question-panel .q-option-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
+    .question-panel .q-option-label { font-weight: 600; }
+    .question-panel .q-option-badge {
+      border: 1px solid var(--chip-border); background: var(--chip-bg); color: var(--accent);
+      border-radius: 999px; padding: 0 6px; font-size: 10px; line-height: 16px;
+    }
+    /* 选项说明单独一行（网页端也是两行排布）：长说明才读得下去。 */
+    .question-panel .q-option-desc { flex: 1 1 100%; color: var(--muted); font-size: 11px; line-height: 1.5; white-space: pre-wrap; }
+    .question-panel .q-nav { align-items: center; }
+    .question-panel .q-nav .spacer { flex: 1; }
+    .question-panel .q-pager { display: inline-flex; align-items: center; gap: 2px; }
+    .question-panel .q-page { min-width: 34px; text-align: center; color: var(--muted); font-size: 11px; }
+    .question-panel .q-pager-btn {
+      border: none; background: transparent; color: var(--muted);
+      padding: 0 6px; font-size: 15px; line-height: 1;
+    }
+    .question-panel .q-pager-btn:hover:not(:disabled) { color: var(--accent); }
     .question-panel .q-custom-input {
       width: 100%; background: var(--bg); color: var(--input-fg);
       border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px;

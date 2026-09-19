@@ -92,6 +92,9 @@ function makeElement(tag, id) {
   el.dispatchEvent = (event) => {
     const type = (event && event.type) || ''
     if (event && event.target === undefined) event.target = el
+    // 真实 DOM 的事件对象总有这两个方法；webview 的键盘处理会调用它们。
+    if (event && typeof event.preventDefault !== 'function') event.preventDefault = () => {}
+    if (event && typeof event.stopPropagation !== 'function') event.stopPropagation = () => {}
     let node = el
     while (node) {
       const list = node._listeners[type]

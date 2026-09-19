@@ -32,11 +32,13 @@
           state.maxWidth = Number.isFinite(maxWidthVal) && maxWidthVal >= 0 ? maxWidthVal : 1000;
           state.language = msg.language === 'en' ? 'en' : 'zh';
           state.enterToSend = msg.enterToSend === true;
+          state.notifyPending = normalizeNotifyPendingMode(msg.notifyPending);
           state.showContextUsage = msg.showContextUsage !== false;
           state.contextBarColor = msg.contextBarColor || 'var(--accent)';
           var opacityVal = Number(msg.contextBarOpacity);
           state.contextBarOpacity = Number.isFinite(opacityVal) && opacityVal >= 0 && opacityVal <= 100 ? opacityVal : 30;
           state.autoStart = msg.autoStart !== false;
+          state.statusBarEntry = msg.statusBarEntry !== false;
           state.showArchivedSessions = msg.showArchivedSessions === true;
           if (msg.archivedAvailable !== undefined) state.archivedAvailable = Number(msg.archivedAvailable) || 0;
           if (msg.restoredCount !== undefined) state.restoredCount = Number(msg.restoredCount) || 0;
@@ -166,12 +168,18 @@
           state.language = msg.value === 'en' ? 'en' : 'zh';
           applyLanguage();
           break;
+        case 'notifyPending':
+          state.notifyPending = normalizeNotifyPendingMode(msg.value);
+          break;
         case 'enterToSend':
           state.enterToSend = msg.value === true;
           updateComposerPlaceholder();
           break;
         case 'autoStart':
           state.autoStart = msg.value !== false;
+          break
+        case 'statusBarEntry':
+          state.statusBarEntry = msg.value !== false;
           break;
         case 'showArchivedSessions':
           state.showArchivedSessions = msg.value === true;
@@ -269,10 +277,10 @@
           if (msg.text) showToast(msg.text, msg.level === 'error' ? 'error' : '', false);
           break;
         case 'forkDone':
-          showToast('fork 完成：' + (msg.title || '新会话'), 'ok', false);
+          showToast(t('forkDoneToast', { title: msg.title || t('blankTitle') }), 'ok', false);
           break;
         case 'forkError':
-          showToast(msg.message || 'fork 失败', 'error', false);
+          showToast(msg.message || t('forkFailedToast'), 'error', false);
           break;
         case 'ungroupedSessions':
           state.ungroupedItems = msg.items || [];

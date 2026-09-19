@@ -2,7 +2,7 @@
   "name": "dsh-vsc-weblike",
   "displayName": "DeepSeek Harness Chat",
   "description": "DeepSeek Harness (dsh) chat for VS Code, with a Claude Code-style sidebar interface.",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "publisher": "ysen",
   "license": "MIT",
   "engines": {
@@ -38,7 +38,7 @@
         {
           "id": "dsh-vsc",
           "title": "DeepSeek Harness",
-          "icon": "$(comment-discussion)"
+          "icon": "assets/whale.png"
         }
       ]
     },
@@ -62,6 +62,10 @@
         "title": "dsh: New Session"
       },
       {
+        "command": "dsh-vsc.retryConnect",
+        "title": "dsh: Reconnect to dsh"
+      },
+      {
         "command": "dsh-vsc.refreshSessions",
         "title": "dsh: Refresh Sessions and Catalogs"
       },
@@ -73,7 +77,7 @@
         "command": "dsh-vsc.openChatFromTitle",
         "title": "dsh: Open Chat Panel",
         "shortTitle": "dsh",
-        "icon": "$(comment-discussion)"
+        "icon": "assets/whale.png"
       }
     ],
     "configuration": {
@@ -171,6 +175,26 @@
           "type": "boolean",
           "default": false,
           "description": "Enter 键行为：true = Enter 发送、Shift+Enter 换行；false = Shift+Enter 发送、Enter 换行（默认）。"
+        },
+        "dsh-vsc.notifyPending": {
+          "type": "string",
+          "enum": [
+            "off",
+            "unfocused",
+            "always"
+          ],
+          "enumDescriptions": [
+            "从不发送通知",
+            "只在 VS Code 窗口不在前台时发送（默认）：你在别的应用里也能收到系统通知",
+            "只要不是「你正看着那个会话」就发送"
+          ],
+          "default": "unfocused",
+          "description": "dsh 里有工具批准 / 计划待审 / 提问等需要你操作的请求时，是否发 VS Code 通知（窗口不在前台时由系统通知中心展示）。通知带「打开并回答」与「不再提醒」两个按钮；同一个请求只提醒一次。"
+        },
+        "dsh-vsc.statusBarEntry": {
+          "type": "boolean",
+          "default": true,
+          "description": "在 VS Code 状态栏显示 dsh 入口。状态栏入口在任何窗口状态下都在（没有打开文件夹、没有打开的编辑器时也在）：未打开文件夹时点击打开文件夹、未连接时点击重新检测 dsh web 实例、就绪时点击打开 dsh 面板。"
         },
         "dsh-vsc.promptStash": {
           "type": "boolean",

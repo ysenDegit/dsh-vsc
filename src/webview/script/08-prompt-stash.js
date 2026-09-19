@@ -78,6 +78,7 @@
         row.input.title = t('promptStashInputTitle');
         row.send.textContent = t('send');
         row.send.title = t('promptStashSendTitle');
+        row.takeBack.title = t('promptStashTakeBackTitle');
         row.remove.title = t('promptStashRemoveTitle');
         renderStashRowImages(row, entry, i);
       }
@@ -153,6 +154,13 @@
           send.className = 'stash-send';
           send.textContent = t('send');
           send.addEventListener('click', function () { sendPromptStashItem(index); });
+          // 放回/互换：把这条提示词与主输入框的内容**对调**（输入框为空时就是"放回"），
+          // 位置在"发送"和"删除"之间。图标用双向箭头表示"循环互换"——
+          // 原来的 ↩ 读起来像"撤销/返回"，和实际的双向语义不符（用户建议）。
+          var takeBack = document.createElement('button');
+          takeBack.className = 'stash-take-back';
+          takeBack.textContent = '⇄';
+          takeBack.addEventListener('click', function () { takeBackPromptStashItem(index); });
           var remove = document.createElement('button');
           remove.className = 'stash-remove';
           remove.textContent = '×';
@@ -160,19 +168,23 @@
           row.appendChild(images);
           row.appendChild(input);
           row.appendChild(send);
+          row.appendChild(takeBack);
           row.appendChild(remove);
           stashEl.appendChild(row);
-          stashRows.push({ input: input, send: send, remove: remove, images: images });
+          stashRows.push({ input: input, send: send, takeBack: takeBack, remove: remove, images: images });
         })(i);
       }
     }
 
     function updatePromptStashButtons() {
+      var composerHasContent = String(inputEl.value || '').trim() !== '' || pendingImages.length > 0;
       for (var i = 0; i < stashRows.length; i++) {
         var entry = stashEntryAt(i) || { text: '', images: [] };
         var hasContent = String(entry.text || '').trim() !== '' || (entry.images || []).length > 0;
         // 空槽 / dsh 未就绪时不可发送（与 composer 发送按钮同样的前置条件）。
         stashRows[i].send.disabled = state.status !== 'ready' || !hasContent;
+        // 放回：两边都空时无事可做；其余情况都可点（有内容就搬、输入框有内容就互换）。
+        if (stashRows[i].takeBack) stashRows[i].takeBack.disabled = !hasContent && !composerHasContent;
       }
     }
 
@@ -223,6 +235,36 @@
       // 键盘流程是"存下当前这条、接着写吓一条"：焦点留在输入框（＋ 按钮则聚焦新框）。
       if (inputEl.focus) inputEl.focus();
       return true;
+    }
+
+    /**
+     * 放回主输入框（"↩"按钮）：把暂存框里的提示词（文字 + 待发送图片）搬回 composer。
+     *
+     * composer 里已经有草稿时**互换**——旧草稿连同它的待发送图片一起进这个暂存框，
+     * 于是"两条提示词来回换着改"不用手动复制粘贴，且不会丢内容。
+     * 发送/删除语义不变：这条不会消失（除非它本来就是空的）。
+     */
+    function takeBackPromptStashItem(index) {
+      var entry = stashEntryAt(index);
+      if (!entry) return;
+      var stashedText = String(entry.text || '');
+      var stashedImages = (entry.images || []).slice();
+      var draftText = String(inputEl.value || '');
+      var draftImages = pendingImages.slice();
+      if (stashedText.trim() === '' && stashedImages.length === 0 && draftText.trim() === '' && draftImages.length === 0) return;
+      // 互换（两边同形状：{text, images}）。
+      entry.text = draftText;
+      entry.images = draftImages;
+      inputEl.value = stashedText;
+      pendingImages = stashedImages;
+      // 与"用户自己敲进去"完全一致的收尾：清掉 + 菜单、重算高度、刷新图片栏/按钮态。
+      closePicker();
+      autoResize();
+      renderPendingImages();
+      updateStashAddButton();
+      renderPromptStash(true);
+      persistPromptStash(true);
+      if (inputEl.focus) inputEl.focus();
     }
 
     function removePromptStashItem(index) {

@@ -55,6 +55,8 @@ class PromptStashStore {
     this.watcher = null
     this.timer = null
     this.onChange = null
+    /** watch() 失败过（目录还不存在等）：写入成功后自动补挂。 */
+    this.watchWanted = false
     this.closed = false
     this.reload()
   }
@@ -116,6 +118,11 @@ class PromptStashStore {
       const temp = `${this.filePath}.tmp-${process.pid}`
       this.fs.writeFileSync(temp, text, { encoding: 'utf8', mode: 0o600 })
       this.fs.renameSync(temp, this.filePath)
+      // 激活时目录还不存在、监听没挂上（watchWanted）：现在目录一定在了，补挂一次实现自愈。
+      if (this.watchWanted && !this.watcher && !this.closed) {
+        const onChange = this.onChange
+        if (this.watch(onChange)) this.onLog('提示词暂存框：目录已就绪，跨窗口同步已补挂监听')
+      }
     } catch (error) {
       this.onLog(`写入提示词暂存框失败：${messageOf(error)}`)
     }
@@ -132,6 +139,15 @@ class PromptStashStore {
     if (typeof this.fs.watch !== 'function') return false
     const dir = path.dirname(this.filePath)
     const base = path.basename(this.filePath)
+    // VS Code 的工作区存储目录是**按需创建**的：插件刚激活时它往往还不存在，
+    // 直接 `fs.watch(dir)` 会 ENOENT 并让"跨窗口实时同步"整个失效（真实日志里出现过：
+    // `监听提示词暂存框失败…watch '<workspaceStorage>/<hash>/ysen.dsh-vsc-weblike'`）。
+    // 先把它建出来，再挂监听。
+    try {
+      this.fs.mkdirSync(dir, { recursive: true })
+    } catch (error) {
+      this.onLog(`创建提示词暂存框目录失败：${messageOf(error)}`)
+    }
     try {
       // 监听目录而不是文件：rename 替换后文件句柄会变，直接盯文件在部分平台会失效。
       this.watcher = this.fs.watch(dir, { persistent: this.holdEventLoop }, (_event, filename) => {
@@ -142,9 +158,12 @@ class PromptStashStore {
       })
     } catch (error) {
       this.watcher = null
-      this.onLog(`监听提示词暂存框失败（跨窗口同步不可用）：${messageOf(error)}`)
+      // 记住"想监听"：写入成功时目录一定已存在，那时自动补挂一次（自愈，不必等重载窗口）。
+      this.watchWanted = true
+      this.onLog(`监听提示词暂存框失败（跨窗口同步暂不可用，写入后会自动重试）：${messageOf(error)}`)
       return false
     }
+    this.watchWanted = false
     if (typeof this.watcher?.on === 'function') {
       this.watcher.on('error', (error) => this.onLog(`提示词暂存框监听出错：${messageOf(error)}`))
     }

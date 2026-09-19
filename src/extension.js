@@ -43,10 +43,12 @@ function activate(context) {
   const language = config.get('language', 'zh')
   const showArchivedSessions = config.get('showArchivedSessions', false)
   const enterToSend = config.get('enterToSend', false)
+  const notifyPending = config.get('notifyPending', 'unfocused')
   const showContextUsage = config.get('showContextUsage', true)
   const contextBarColor = config.get('contextBarColor', 'var(--accent)')
   const contextBarOpacity = config.get('contextBarOpacity', 30)
   const promptStash = config.get('promptStash', true)
+  const statusBarEntry = config.get('statusBarEntry', true)
 
   const dsh = new DshService({
     minimumVersion,
@@ -101,12 +103,14 @@ function activate(context) {
     maxWidth,
     language,
     enterToSend,
+    notifyPending,
     showContextUsage,
     contextBarColor,
     contextBarOpacity,
     autoStart,
     showArchivedSessions,
     promptStashEnabled: promptStash,
+    statusBarEntry,
     // 本地取消归档：持久化在 VS Code globalState（跨窗口/跨重启保留）。
     loadUnarchived: () => context.globalState.get(UNARCHIVED_KEY, []),
     persistUnarchived: (ids) => context.globalState.update(UNARCHIVED_KEY, ids),
@@ -119,6 +123,8 @@ function activate(context) {
   // 别的窗口改了暂存文件 → 更新本窗口界面（同一工作区的多窗口实时一致，且不再互相覆盖）。
   promptStashStore.watch((items) => provider.applyExternalPromptStash(items))
   context.subscriptions.push({ dispose: () => promptStashStore.dispose() })
+
+  context.subscriptions.push({ dispose: () => provider.dispose() })
 
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(ChatViewProvider.viewType, provider, {
@@ -163,6 +169,10 @@ function activate(context) {
     vscode.commands.registerCommand('dsh-vsc.newSession', async () => {
       await provider.handleMessage({ type: 'newSession' })
     }),
+    vscode.commands.registerCommand('dsh-vsc.retryConnect', async () => {
+      // 状态栏入口在"未连接/连接失败"时点击直接走到这里（等价于点面板顶栏的状态点）。
+      await provider.retryConnect()
+    }),
     vscode.commands.registerCommand('dsh-vsc.refreshSessions', async () => {
       // 与顶栏刷新按钮一致：会话列表 + 模型/命令目录 + 工作模式 + 设置快照。
       await provider.refreshAll()
@@ -173,6 +183,8 @@ function activate(context) {
   dsh.on('muxClose', () => provider.onMuxClose())
 
   dsh.on('status', (status) => {
+    // 状态栏入口跟随状态换文案与点击行为（就绪=打开面板；未连接=重新检测）。
+    provider.syncStatusBar()
     if (status === 'ready') {
       // rc.1：先建立 $events / session.control / workspace.follow 长流。
       provider.ensureStreams()
@@ -185,6 +197,7 @@ function activate(context) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       sessions.reset()
+      provider.syncStatusBar()
       if (dsh.statusValue === 'ready') void provider.ensureWorkspaceAndSession()
     }),
   )
@@ -201,12 +214,14 @@ function activate(context) {
         maxWidth: config.get('maxWidth', 1000),
         language: config.get('language', 'zh'),
         enterToSend: config.get('enterToSend', false),
+        notifyPending: config.get('notifyPending', 'unfocused'),
         showContextUsage: config.get('showContextUsage', true),
         contextBarColor: config.get('contextBarColor', 'var(--accent)'),
         contextBarOpacity: config.get('contextBarOpacity', 30),
         autoStart: config.get('autoStart', true),
         showArchivedSessions: config.get('showArchivedSessions', false),
         promptStashEnabled: config.get('promptStash', true),
+        statusBarEntry: config.get('statusBarEntry', true),
       })
     }),
   )

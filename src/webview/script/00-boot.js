@@ -23,12 +23,17 @@
       contextBarColor: 'var(--accent)',
       contextBarOpacity: 30,
       autoStart: true,
+      // 状态栏入口开关（宿主按配置下发；设置面板「通用」页可改）。
+      statusBarEntry: true,
+      // 会话抽屉是否展开「其余」普通会话（超过 5 条时的本地开关，见 03-render）。
+      sessionsExpanded: false,
       showArchivedSessions: false,
       // 当前工作区里仍归档的会话数（宿主下发），用于按钮上的"显示已归档（N）"。
       archivedAvailable: 0,
       // 被"本地恢复显示"（仅插件内显示）的会话数：按钮无事可做时用来解释原因。
       restoredCount: 0,
       promptStashEnabled: true,
+      notifyPending: 'unfocused',
       promptStashItems: [],
       queueItems: [],
       hasMoreEarlier: false,
@@ -41,6 +46,12 @@
       todos: [],
       permissions: null,
       questionSelections: {},
+      /** 每题是否被显式"跳过"（与 web 端一致：跳过的题提交时给 selected: []）。 */
+      questionSkipped: {},
+      /** 多问题提问分页：当前页下标（0 起）与所属请求（事件 id，换请求即重置）。 */
+      questionIndex: 0,
+      questionKey: null,
+      questionError: null,
       questionCustom: {}
     };
 

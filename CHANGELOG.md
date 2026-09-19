@@ -2,29 +2,99 @@
 
 本文件记录 dsh-vsc-weblike 的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [1.1.4]
+## [1.1.5]
 
-（未发布：1.1.3 已于 2026-09-11 由用户发布。后续改动记录在本节。）
+（未发布：1.1.4 已于 2026-09-15 由用户发布。后续改动记录在本节。）
 
 ### Added
 
-- **会话行状态点（pending 徽标 / 已完成 / 子代理计数）**——与 dsh Web UI 同一套优先级，抽屉里一眼看出"哪个会话在等你"：
-  - **琥珀点 = 待处理交互**：等待回答 / 计划待审 / 等待审批，**优先级高于运行指示**；点的 tooltip 说明是哪一种，行内文案同步显示该状态。宿主新增纯函数 `protocol.pendingKindOf()` + `isPlanReviewQuestion()`（与 webview 的计划评审判定同款条件；注意提问表里存的是 `{eventId,questions}` 条目，先摊平成问题对象再判），随 hydrate/sessions 帧下发 `pendingKind`。
-  - **绿点 = 已完成**：`running` 真→假的边沿、且该会话不是当前选中会话时置位（`completedBySession`），切过去看即清除——"跑完了但没被打开过"。
-  - **蓝点 = 运行中**，其中包括**"N 个子代理运行中"**：新增纯函数 `protocol.runningSubagentCounts()`（与网页端 subagent lineage 同口径：只有运行中的 `origin:'subagent'` 会话向上计数，沿途给每个祖先 +1，遇到第一个非子代理祖先计完即停，环状引用用 seen 兜底）。
-  - 宿主新增 `decorateSessionRows()`（hydrate 与 sessions 帧共用的行装饰，避免两处口径漂移）与 `postSessionsFrame()`（**不发 RPC** 地重发一次 sessions 帧）：待处理交互变化、运行状态变化、显示子代理开关变化时立即刷新抽屉，不必等防抖的全量刷新。
-  - 测试：`tests/protocol.test.js` 新增 2 例（pendingKindOf 优先级与计划评审判定边界；runningSubagentCounts 的聚合/普通 fork 停止点/孤儿父会话/环状引用），`tests/chat-view.test.js` 新增 1 例（completed 边沿与"选中即看过"、三种 pendingKind、计数随帧下发），`tests/webview-runtime.test.js` 新增 1 例（`data-state` 逐个断言 + pending 类不得与 running 点色共存 + 父行计数文案；**已实测把 pending 判定挪到 running 之后该用例即失败**），测试 115 → 121。
+- **多问题提问改成一页一题（与 dsh Web UI 的多层提问界面一致）**：此前一个问题集里的所有问题会一次性堆在面板里（多个长说明挤在一起、每题一个自定义输入框、底部一个"提交回答"）。现在按网页端的做法**分页呈现**：
+  - 一页只渲染当前这一题；底部是 `‹ 1/5 ›` 翻页器 + **跳过本题** + **下一题**（最后一页按钮变成**提交回答**）。
+  - **每题独立草稿**：选择/自定义回答/是否跳过都按题保存，翻页来回不丢（与网页端 `QuestionDraftAnswer{selected,custom,skipped}` 同构，新增 `state.questionSkipped/questionIndex/questionKey/questionError`）；换一个提问请求（事件 id 变化）自动重置到第 1 页。
+  - **跳过本题 = 显式空回答**：提交时该题发 `{id, selected: []}`（与网页端一致，不是省略该题）；在最后一题点跳过会**直接提交**。
+  - **校验与网页端同口径**：`answered = 选了选项或写了自定义回答`、`completed = answered || skipped`。当前页没处理就点"下一题/提交回答" → 停在本题并提示；若从最后一页提交时发现**前面**有未处理的题 → 自动跳回那一页并在提示里点名"第 N 题"。
+  - **选项行重排成网页端的样子**：编号徽标 + 标签 + 说明单独一行（长说明终于读得下去）；标签末尾的 `（推荐）`/`(recommended)` 拆成"推荐"徽标（`parseRecommendedLabel`，与网页端同一条正则），**提交仍用原始 label**；分组标签（`q.header`，如"数据集目录"）改为问句上方的小字（新 `.q-section`）。
+  - 交互细节：单选点选后**自动翻到下一题**（多选留在本页继续勾）；自定义输入框里按 **Enter** 等于"下一题/提交"（兼容中文输入法组字）；单题提问（以及计划评审）保持原来的面板不变。
+  - 测试：`tests/webview-runtime.test.js` 新增 2 例（三题分页：只渲染当前题 + `1/3` 进度 + 编号/推荐徽标/说明行 + 未处理被拦 + 单选自动翻页 + 草稿跨页保留 + 最后一题"提交回答" + 跳过即提交的空回答载荷 + 换请求重置页码；用翻页箭头跳过第 1 题后在末页提交会被拉回并点名"第 1 题"，跳过后再提交的完整载荷）；`tests/helpers/fake-dom.js` 的 `dispatchEvent` 补 `preventDefault/stopPropagation` 空实现；既有的选项点击用例改为按 `data-label` 定位。**已实测把分页分支关掉后对应用例即失败**，测试 121 → 123。
 
-- ~~**"显示子代理"勾选框 + 子代理列表**~~ **已在同一版本内删除**（见下方 Changed）：用户反馈该勾选框"完全无反应"，并指出子代理是**链式**派生的、且**子代理不是插件的必要项**，因此把子代理显示功能整体移除——勾选框（抽屉 + 设置 → 工作区 + 配置项 `dsh-vsc.showSubagents`）、子代理行渲染与缩进、"子代理会话"标记、"提升为普通会话 / 恢复层级"（⇧/⇩）与 `dsh-vsc.promotedSessions` 集合、`protocol.runningSubagentCounts()` 与"N 个子代理运行中"、内容搜索里的子代理命中，全部删除。
+- **待处理交互的 VS Code 通知**（工具批准 / 计划待审 / 提问）——此前只有一个 30 秒节流、会自动消失的**面板内 toast**，你切到别的应用就完全不知道 dsh 正卡在等你动手。现在会用 `vscode.window.showWarningMessage` 发一条**真正的通知**（窗口不在前台时由系统通知中心展示），带两个按钮：
+  - **打开并回答** → `dsh-vsc.chat.focus` 聚焦插件面板 + 切到该会话，选择器随 pending 帧自动出现；
+  - **不再提醒** → 该会话在本次窗口内保持安静（内存态，重载窗口后恢复）。
+  - **触发规则**（新配置 `dsh-vsc.notifyPending`，设置 → 通用 → 等待操作提醒）：`unfocused`（默认，只在窗口不在前台时发）、`always`（只要不是"你正看着那个会话"就发）、`off`（从不发）。当前会话且窗口在前台时不打扰。
+  - **文案分三种**：普通提问（含问题数）、计划待审、工具批准（含工具名）。
+  - **去重**：同一个 waterfall 事件只提醒一次（`notifiedPendingEvents`，事件结算后清除，因此同一会话的下一次请求会重新提醒）；点过"不再提醒"的会话直接跳过。
+  - VS Code 没有"程序化关闭通知"的 API，所以实现刻意保守：能不发就不发，且没有采用"直接在通知里选择答案"的第三个按钮（用户要求去掉）——通知只负责把你带到会话。
+  - 测试：`tests/chat-view.test.js` 新增 2 例（unfocused 模式的触发/不重复打扰/三种文案/不再提醒/结算后重新提醒；always 模式尊重"当前会话"、按钮切会话并聚焦面板、off 静音），`tests/webview-runtime.test.js` 新增 1 例（设置里三个模式的下拉、hydrate 下发值反映到界面、改选后发 `setNotifyPending`）；`tests/helpers/vscode-stub.js` 补 `window.state.focused`、`commands.executeCommand` 与可变的 `warningPick`。**已实测删掉 unfocused 判定后对应用例即失败**，测试 118 → 121。
+
+- **状态栏入口**（新配置 `dsh-vsc.statusBarEntry`，默认开；设置 → 通用 → 状态栏入口）——起因是用户问"VS Code 关掉所有编辑器后主工作区那屏（空编辑器水印）能不能放一个打开 dsh 的按钮"，结论是**不能**：水印里那三条（`Open Chat` / `Show All Commands` / `Go to File`）由 VS Code 内置硬编码（`EditorGroupWatermark.render()` 里的固定数组 + `when` 过滤），水印右上角工具条用的菜单 id `EditorGroupWatermarkToolbar` 也不在"扩展可贡献的 96 个菜单 id"里（本机 1.137 稳定版构建实测），官方贡献点清单里同样没有空编辑器水印这一项；欢迎页（Welcome 页签）又只在启动时出现一次。于是改用**任何窗口状态都在**的状态栏入口：
+  - `ChatViewProvider.syncStatusBar()`：状态栏左侧（`StatusBarAlignment.Left`, priority 10）常驻，文案与**点击行为随状态走**——就绪 = `$(comment-discussion) dsh`，点击走 `dsh-vsc.focus` 打开面板；发现中/启动中/重连中 = `$(sync~spin) dsh: …`，点击打开面板看状态；已停止/连接失败 = 点击直接 `dsh-vsc.retryConnect` 重新检测 dsh web 实例（等价于点面板顶栏的状态点）；**没有打开文件夹** = `dsh: 未打开文件夹`，点击直接 `workbench.action.files.openFolder`（dsh 以工作目录为单位，先有文件夹才能开会话）。
+  - 同步时机：provider 构造、dsh 状态变化（`onStatus`）、工作区文件夹变化、语言切换、配置变化；关掉开关只 `hide()` 不销毁，`provider.dispose()` 时销毁（`deactivate` 已把 provider 加进 subscriptions）。
+  - 新增命令 `dsh-vsc.retryConnect`（`dsh: Reconnect to dsh`，命令面板也能用）+ 设置 → 通用新增"状态栏入口"开关（hydrate 字段 `statusBarEntry` / 消息 `setStatusBarEntry`），宿主文案在 `src/i18n.js`（`statusBar.*` 中英各 12 键）。
+  - 测试：`tests/chat-view.test.js` 新增 1 例（就绪/未连接/出错/启动/重连中五种文案与点击目标、英文界面切换、无文件夹时改为打开文件夹、开关关闭只隐藏不销毁且落配置、外部配置变化同步、dispose 销毁）；`tests/helpers/vscode-stub.js` 补 `window.createStatusBarItem` 与 `StatusBarAlignment`；`tests/webview-runtime.test.js` 新增 1 例（通用页勾选框、hydrate `statusBarEntry:false` 反映到勾选状态、改选后发 `setStatusBarEntry`）。**已实测把"未连接 → retryConnect"那一支改回"打开面板"后对应用例即失败**，测试 124 → 126。
+
+- **会话行的活动定时任务徽标**（补齐 dsh Web UI 工作区差距清单里最后一项：`schedule` 投影）：dsh `schedule` 投影的 wire view 就是该会话**当前活动**的提醒数组（`dsh-schedule/schedule/src/projection.ts` 的 `wire.view = state => state.active`，元素 `{id, kind:'after'|'at'|'every', prompt, scheduledAt, afterSeconds?/everySeconds?}`），网页端据此在行上显示闹钟图标（`hasActiveSchedule = projectionValues.schedule.length > 0`，标签「有活动定时任务」/「Has active scheduled task」，**不可点**，位置在标题之后、时间之前）。
+  - 宿主（`chat-view.js`）：新增纯函数 `scheduleRecordsOf()`/`nextScheduleAtOf()`；`decorateSessionRows()` 给每行补 `scheduleCount` 与 `nextScheduleAt`（**优先用实时投影帧**，其次用会话列表条目里的快照；非数组/旧版 dsh 一律按 0 处理）；收到 `session/control` 的 `session/projection` 且 `key === 'schedule'` 时**立刻 `postSessionsFrame()`**（不发 RPC），因此别的会话里新建/触发/结束定时任务时徽标马上跟着变；内容搜索命中也会带上这两个字段（从最近一次会话列表快照合并）。
+  - webview（`03-render.js` + `style.css`）：行上渲染 `⏰`（`.drawer-schedule`，不可点，`role="img"` + `aria-label`），悬停给出「有活动定时任务 · N 个 · 下一条 HH:mm」（`formatScheduleTime()`：今天只显示时刻，其它日期显示 `MM-DD HH:mm`，解析失败则省略"下一条"）；搜索命中行同样显示。i18n 中英各 +3 键（`scheduleActive`/`scheduleCount`/`scheduleNext`）。
+  - 测试：`tests/chat-view.test.js` 新增 1 例（列表快照里的 schedule 投影 → `scheduleCount`/最早一条 `nextScheduleAt`；实时投影帧**即使不是当前会话**也要立刻重发 sessions 帧；清空/非法值按 0 处理且解析不出时间时不出"下一条"），`tests/webview-runtime.test.js` 新增 1 例（标记存在与文案/aria/中英切换/清空后消失）。**已实测删掉「schedule 帧即时重发」那一行后对应用例即失败**，测试 126 → 128。
+
+- **会话抽屉默认折叠到 5 条**（补齐 dsh Web UI 工作区差距清单第 4 项"展开其余"）：普通会话超过 5 条时只显示前 5 条，其余藏在列表底部「**展开其余 N 个会话**」按钮后面（点开变「收起」）。
+  - 口径照抄网页端 `collapsedSessionRows()`（`WorkspaceBrowser.tsx` 的 `COLLAPSED_SESSION_LIMIT = 5`）：**空白「新会话」占位不占额度、始终显示**；按钮文案与网页端同一句（`sessions.expand` = 「展开其余 {n} 个会话」/「Show {n} more sessions」、`sessions.collapse` = 「收起」/「Show less」）。
+  - 展开状态是**本地界面状态**（`state.sessionsExpanded`，不写配置；网页端 `expandedSessionGroups` 也只是组件态、不持久化，故"折叠持久化"两边都没有）。分组/单列表切换**不做**：插件只服务当前 VS Code 工作目录，单列表已与之等价。
+  - 插件额外加了两处保护：**标题过滤期间不折叠**（我们的标题过滤和列表是同一个视图，而网页端搜索是另一个视图——藏起来正好藏错，此时也不显示按钮）；**当前选中的会话被折叠掉时自动展开**（从通知/内容搜索命中切过来的会话不会"看不见"，对应网页端 reveal 链路的一环）。
+  - 实现：`03-render.js` 新增 `SESSION_ROW_LIMIT`/`collapseSessionRows()`、渲染时算 `hiddenCount` 并插入 `.drawer-more` 按钮（`aria-expanded`），点击只重绘抽屉不发消息；`style.css` 加 `.drawer-more`；i18n 中英各 +2 键（`sessionsExpand`/`sessionsCollapse`）。
+  - 测试：`tests/webview-runtime.test.js` 新增 1 例（7 条普通会话 + 1 条空白：默认 6 行、按钮文案「展开其余 2 个会话」、展开后 8 行、再点收起、过滤时 7 行且无按钮、选中被折叠的会话后自动展开）。**已实测把 `visibleActive` 强制成全部会话后该用例即失败**，测试 128 → 129。
+
+- **提示词暂存框新增「互换」按钮**（用户要求：放在「发送」与「删除」之间；用户随后建议图标用「循环」语义，故最终为 **⇄** 而不是单向的 ↩）：把暂存框里的提示词（**文字 + 待发送图片**）搬回主输入框；**输入框里已经有草稿时两者互换**——旧草稿连图片一起进这个暂存框，于是两条提示词可以来回换着改，不用手动复制粘贴，也不会丢内容。两边都空时按钮禁用；放回**不会删除**暂存框（框本身保留，内容变成互换过来的草稿）。收尾与"用户自己敲进输入框"完全一致：关闭 `@`/`/` 选择器、按内容重算输入框高度（`autoResize()`）、刷新待发送图片栏与 ＋ 按钮文案、整棵重绘暂存层并落盘，最后把焦点交回输入框。实现：`08-prompt-stash.js` 的 `takeBackPromptStashItem()` + 行内 **⇄** 按钮（`.stash-take-back`，双向箭头表示「循环互换」；原来的 ↩ 读起来像「撤销/返回」，与双向语义不符），i18n 中英各 +1 键（`promptStashTakeBackTitle`）。测试：`tests/webview-runtime.test.js` 新增 1 例（按钮顺序 = 发送/放回/删除、两边状态下的禁用逻辑、空输入框时搬进去且框不消失、双方都有草稿时互换、再点一次换回来）。**已实测把互换改成"单向搬走"后该用例即失败**，测试 131 → 132。
+
+### Fixed
+
+- **活动栏与编辑器标题按钮的图标换回文件图标（鲸鱼 PNG）**：用户确认 VS Code 已修好"远程窗口渲染不了第三方扩展自带图标（SVG/PNG）"这个 bug，于是把 1.1.3 起为绕开它而改用的内置 codicon（`$(comment-discussion)`）换回图片——新增 `assets/whale.png`（由**工作区根目录 `icon.png`（3162×2577 鲸鱼原图）**缩放居中生成的 256×256 透明底方图，40 KB），`package.json` 的 `viewsContainers.activitybar[0].icon` 与命令 `dsh-vsc.openChatFromTitle` 的 `icon` 都指向它。回退成本一行（改回 `"$(comment-discussion)"`）；扩展本体的 `"icon"`（市场图标，仍是 `assets/icon.png` 那条小鱼）本次未动，需要一起换说一声。
+### Fixed
+
+- **英文界面里的中文残留**（用户要求"完整检查一下代码与 README 是否有不一致"时逐处核对发现，共 22 处用户可见文案）：
+  - `body.html` 里静态写死的 tooltip / 分组标题从来不随语言变化：📷「选择图片」、📎「添加文件」、菜单里的「选择模型」「选择推理等级」、动作弹层的「权限/模式」分组标题、设置弹窗与归档弹窗的 ×「关闭」——现在统一由 `applyLanguage()` 设置（复用 `imagePick`/`attachFile`/`permissionGroup`/`closePanel`，新增 `modelSelectTitle`/`effortSelectTitle`），并删掉 `imageBtn.title` 原来"点一次才本地化"的写法。
+  - 代码里直接写死中文、绕过字典的文案改为字典键：会话抽屉相对时间（`timeJustNow`/`timeMinutes`/`timeHours`/`timeDays`）、工具结果折叠摘要前缀（`resultPrefix`）、fork 提示（`forkingSession`/`forkDoneToast`/`forkFailedToast`）、preset 名为空时的占位（`presetSelect`）、计划条标题与统计（`todoTitle`/`todoDone`/`todoActive`/`todoPending`）、模型下拉占位与路由提示（`modelsLoading`/`modelsEmpty`/`modelRouteUnavailable`）。
+  - `currentPermissionLabel()` 不再拿中文字符串 `'权限'` 当"没有权限信息"的哨兵：改为返回空串（调用方 `if (perm)`），英文界面不会再把中文当权限名显示，判断也不会因本地化而失效。
+  - 工具调用折叠摘要里原本有个局部变量叫 `t`（遮蔽 i18n 的 `t()`，这正是当初写死中文的原因），已改名并补注释。
+  - 换语言时补渲染计划条与模型下拉（此前它们会停在上一种语言，直到下一帧 stats/models 才更新）。
+  - 测试：`tests/webview-runtime.test.js` 新增 1 例（切到英文后抽屉相对时间=「5 min ago」、计划条=「Plan / 1 done」、模型下拉=「No models」、7 处 tooltip/分组标题全英文，且这些文本不得含 CJK；切回中文全部复原）；**已实测删掉 `fileBtn.title = t('attachFile')` 一行该用例即失败**，测试 123 → 124。
+
+- **提示词暂存框的"跨窗口实时同步"在首次激活时其实是失效的**（从用户真实扩展宿主日志里发现：`监听提示词暂存框失败（跨窗口同步不可用）：ENOENT: no such file or directory, watch '<workspaceStorage>/<hash>/ysen.dsh-vsc-weblike'`）：VS Code 的工作区存储目录是**按需创建**的——插件刚激活时它还不存在，`fs.watch(dir)` 直接 ENOENT，而且失败后不会重试，于是 README 承诺的"同一工作区的多个窗口实时同步"在第一次运行的那个窗口里等于没生效。
+  - `watch()` 现在先 `mkdirSync(dir, { recursive: true })` 再挂监听；万一仍然失败，记下 `watchWanted` 并在**首次写入成功**（此时目录一定存在）后自动补挂一次并记日志（`提示词暂存框：目录已就绪，跨窗口同步已补挂监听`）——自愈，不必重载窗口。失败日志也改成"跨窗口同步暂不可用，写入后会自动重试"，不再让人以为彻底坏了。
+  - 测试：`tests/prompt-stash-store.test.js` 新增 2 例（目录不存在（模拟 `<root>/workspaceStorage/<hash>/<publisher>.<name>`）时也能挂上监听并收到别的窗口的写入；`fs.watch` 第一次抛 ENOENT 时写入后自愈补挂、之后外部改动仍能同步）。**已实测删掉那行 `mkdirSync` 后对应用例即失败**，测试 129 → 131。
+- **状态栏入口的可诊断性**：创建/被配置关闭时各记一条输出日志（`状态栏入口：已创建` / `状态栏入口：已按 dsh-vsc.statusBarEntry=false 隐藏`）——下次"状态栏里没看到入口"时，可以直接从"DeepSeek Harness"输出面板判断当前跑的是不是含该功能的构建（用户本次报的就是安装了新包但扩展宿主仍在跑旧代码）。
 
 ### Changed
 
-- **删除子代理显示功能**（用户要求："显示子代理选项完全无反应；子代理是链式的；子代理不是插件的必要项，请删除此功能及其相关代码"）。`origin: 'subagent'` 的会话现在**一律不出现在插件里**：
+- **README 与代码对齐**（同一次检查的产物，中英各修 11 处；只改文档）：
+  - 删掉早已不存在的功能描述：「目标横幅可用 × 关闭，目标更新后自动重现」（1.1.4 已删该横幅）、英文版遗留的"子代理会话嵌套显示 / ⇧ 提升为普通会话（globalState 持久化）"（1.1.4 已整体删除）、英文版"暂存框存在 VS Code globalState、最多 5 个槽位"（实为**按工作区**存 `prompt-stash.json`、数量不限、跨窗口同步）。
+  - 修正与代码不符的事实：`dsh-vsc.minDshVersion` 默认值 `0.1.5` → `0.1.5-rc.1`；命令名 `dsh: Refresh Sessions` → `dsh: Refresh Sessions and Catalogs`；1.1.5 版本行的"暂无改动"→ 实际改动（一页一题提问 + 待处理通知）；活动栏入口改为"统一使用内置 codicon"（远程窗口渲染不了扩展图标，`assets/hahawhale.svg` 已不被引用）。
+  - 补齐缺项：英文配置表补上 `dsh-vsc.notifyPending` 一行（中文表已有）；设置面板结构说明补「等待操作提醒」（中英）；中文版补上归档分区「已归档（N）」标题与打开开关自动滚动到该分区（英文版已有）。
+- **状态栏入口的点击目标改为"在工作区（编辑器列）打开 dsh 面板"**（用户要求：不要聚焦侧边栏 chat 视图）：`syncStatusBar()` 在**就绪**与**发现中/启动中/重连中**两种情况下把 `item.command` 从 `dsh-vsc.focus`（聚焦侧边栏 webview 视图）换成 **`dsh-vsc.openChatFromTitle`**——与工作区右上角那个 `dsh` 按钮同一个命令（`ViewColumn.Active` 里新建 `dsh-vsc.chatPanel`，已存在则 `refreshPanel()` + `reveal()`）。未打开文件夹（点击打开文件夹选择框）与未连接/出错（点击重新检测）两支不变；侧边栏活动栏入口也不受现在这个改动影响（仍是聚焦视图）。两条 tooltip 同步改成"在工作区打开 dsh 面板"（`statusBar.readyTip` / `statusBar.busyTip`，中英各 2 条），测试里 `item.command` 与英文 tooltip 断言随之更新。
+- **删除设置 →「关于」里的"dsh 服务地址"分区**（用户要求）：该分区原本在关于页显示当前连接地址（超链接，点击打开 dsh Web UI），与「通用 → dsh 服务器」里的"当前服务地址（含 token，只读 + 复制按钮）"重复——关于页现在只保留版本号、离线/只读提示与"LLM 模型设置请移步 web 端"。打开 dsh Web UI 的入口不变（顶栏 `⋯` → **🌐 打开 dsh Web**，地址自带 launch token）。顺带清掉随之无用的 i18n 键 `dshServiceUrlSection`/`dshServiceUrlNone`/`dshWebOpenTitle`（中英各 3 个，共 6 行）以及宿主 settingsData 里已无消费者的 `baseUrl` 字段（webview 侧只认 `webUrl`）。
+- **webview 词典清理**：删除 19 个已随旧界面（可搜索动作弹层、子代理行、权限独立弹层、旧元信息标签）移除、任何 `t()` 都不再引用的键——`sessions`/`expand`/`meta.assistant`/`meta.tool`/`meta.note`/`meta.context`/`meta.command`/`reasoningTitle`/`generating`/`permissionTitle`/`permissionRunning`/`actions`/`filterActions`/`modeTitle`/`modelGroup`/`contextGroup`/`accountUsage`/`mentionFile`/`attachImage`（中英各一条，共 38 行）；其中 `permissionGroup` 转正为动作弹层分组标题（`permissionGroupTitle`）。清理 + 新增后中英各 **240** 键、无死键、无缺失键（宿主侧 64 键无死键）。
+
+## [1.1.4]
+
+（2026-09-15 由用户发布。首次尝试时 `vsce publish` 报 `ERROR Request timeout: /_apis/gallery`（Marketplace 侧约 3 分钟无响应），
+版本号一度回退到 1.1.4 后重试成功。）
+
+### Added
+
+- **会话行状态点（pending 徽标 / 已完成）**——与 dsh Web UI 同一套优先级，抽屉里一眼看出"哪个会话在等你"：
+  - **琥珀点 = 待处理交互**：等待回答 / 计划待审 / 等待审批，**优先级高于运行指示**；点的 tooltip 说明是哪一种，行内文案同步显示该状态。宿主新增纯函数 `protocol.pendingKindOf()` + `isPlanReviewQuestion()`（与 webview 的计划评审判定同款条件；注意提问表里存的是 `{eventId,questions}` 条目，先摊平成问题对象再判），随 hydrate/sessions 帧下发 `pendingKind`。
+  - **绿点 = 已完成**：`running` 真→假的边沿、且该会话不是当前选中会话时置位（`completedBySession`），切过去看即清除——"跑完了但没被打开过"。
+  - **蓝点 = 运行中**；灰点 = 空闲。
+  - 宿主新增 `decorateSessionRows()`（hydrate 与 sessions 帧共用的行装饰，避免两处口径漂移）与 `postSessionsFrame()`（**不发 RPC** 地重发一次 sessions 帧）：待处理交互变化、运行状态变化、显示子代理开关变化时立即刷新抽屉，不必等防抖的全量刷新。
+  - 测试：`tests/protocol.test.js` 新增 1 例（pendingKindOf 三种待处理交互的优先级 + 计划评审判定的边界条件），`tests/chat-view.test.js` 新增 1 例（completed 边沿与"选中即看过"、三种 pendingKind、计数随帧下发），`tests/webview-runtime.test.js` 新增 1 例（`data-state` 逐个断言 + pending 类不得与 running 点色共存 + 父行计数文案；**已实测把 pending 判定挪到 running 之后该用例即失败**），测试 115 → 118。
+
+### Changed
+
+- **不显示子代理会话**（用户要求："显示子代理选项完全无反应；子代理是链式的；子代理不是插件的必要项，请删除此功能及其相关代码"）。`origin: 'subagent'` 的会话现在**一律不出现在插件里**（本版开发期间曾加入"显示子代理"勾选框、父行"N 个子代理运行中"计数与 ⇧/⇩ 提升层级，发布前整块移除——勾选框看不到效果的原因是子代理会话本来就不在插件列表里，而它们属于 dsh 的内部执行细节）：
   - 宿主 `decorateSessionRows()` 把子代理行从 hydrate/sessions 帧里过滤掉（唯一例外：当前选中的恰好是子代理会话时保留，避免列表与顶栏标题对不上）；内容搜索的命中里属于子代理的结果也一并过滤，避免"点开一个列表里不存在的会话"。
   - webview 删除子代理专属渲染：会话谱系展平 `buildSessionLineage()`、缩进（`drawer-child`/`drawer-subagent` 类与 `paddingLeft`）、"子代理会话"标记、"提升为普通会话 / 恢复层级"按钮（**注**：该功能只对子代理行生效，删除后已无目标）以及 `sessionPrimaryState()` 里的"N 个子代理运行中"分支；抽屉现在是**完全平铺**的列表（仍按最近修改时间倒序，渲染前再兜一次底排序），fork 出来的会话依旧与普通会话一模一样。
   - 一并删除：配置项 `dsh-vsc.showSubagents`、`dsh-vsc.promotedSessions`（globalState）、宿主 `setShowSubagents()`/`setSessionPromoted()` 与两条 webview 消息、`protocol.runningSubagentCounts()`、i18n 十个键（`subagentsToggle`/`subagentsToggleTitle`/`subagentsRunning`/`subagentSession`/`promoteSession`/`demoteSession`/`promotedSession` 中英）、CSS 的 `.drawer-child`/`.drawer-subagent`。
-  - 测试：删除 `runningSubagentCounts` 用例、"显示子代理"勾选用例、"子代理提升为顶层行"用例；把谱系用例改写成「抽屉完全平铺、无缩进、无提升操作、抽屉头部没有该勾选框」，新增 `tests/chat-view.test.js` 一例（子代理行不下发 + 选中子代理时保留 + 搜索命中过滤），测试 121 → 118。
-  - 说明：该勾选框"无反应"的直接原因正是**子代理会话平时并不出现在插件列表里**（dsh 只把记账到工作区的会话列出来），所以勾上也没有任何行可显示；既然不是必要项，这次直接按用户要求整体删掉。
+  - 说明：那个勾选框"无反应"的直接原因正是**子代理会话平时并不出现在插件列表里**（dsh 只列出记账到工作区的会话），所以勾上也没有任何行可显示——既然不是必要项，就按用户要求整体删掉。
 
 - **删掉聊天区的"目标"横幅**（用户要求，附截图）：`renderSessionBanner()` 现在只渲染**计划模式**横幅，不再显示 `goal` 投影，也没有了那个 × 关闭按钮；随之删除宿主侧的 `dismissGoalBanner` 消息/`dismissedGoalBanner`/`isGoalBannerDismissed`、`stats.goalDismissed` 字段、`protocol.goalBannerFingerprint()` 及其用例、i18n `goalTitle` 与 `.session-banner-close` 样式。运行时用例断言"只有 goal 时横幅不出现、有计划模式时出现且没有关闭按钮"。
 
@@ -98,8 +168,6 @@
   - **离线时的设置弹窗**：新增顶部离线横幅 `#settingsOffline`（说明哪些能用/不能用 + "重新检测 dsh" 按钮，`retryConnect`），"新建会话"按钮在 `status !== 'ready'` 时禁用并给出原因 tooltip。
   - 纯本地能力（显示偏好、语言、提示词暂存框及图片、归档视图开关）离线完全可用；会话/模型/命令/发送等在后端恢复后自动可用，无需重载窗口。
   - 新增运行时用例「offline: settings banner, in-panel notices and the disabled New Session button」与两轮 vscode-stub 冒烟（只读 settings.json 下 11 个设置操作全部仍回发且 0 个模态框；`newSession`/`send`/菜单项/重连失败均只发 notice），测试 83 → 84。
-
-（未发布：1.1.2 已于 2026-09-11 由用户发布。后续改动记录在本节。）
 
 ## [1.1.2]
 

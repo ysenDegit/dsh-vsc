@@ -1034,6 +1034,9 @@ test('answering posts the waterfall eventId (the rpcId-only payload used to be d
   const panel = context.document.getElementById('questionPanel')
   const approvalPanel = context.document.getElementById('approvalPanel')
   const button = (root, text) => walk(root).find((node) => node.tagName === 'BUTTON' && node.textContent === text)
+  // 选项行现在带编号/说明（与网页端一致），按 data-label（原始 label，提交时用的就是它）点选。
+  const option = (root, label) => walk(root).find((node) => node.tagName === 'BUTTON'
+    && typeof node.getAttribute === 'function' && node.getAttribute('data-label') === label)
   const answers = () => posted.filter((message) => message.type === 'questionAnswer')
   const approvals = () => posted.filter((message) => message.type === 'approvalAnswer')
 
@@ -1044,7 +1047,7 @@ test('answering posts the waterfall eventId (the rpcId-only payload used to be d
     type: 'question', sessionId: 'S-1',
     pending: { eventId: 'e-1', questions: [{ id: 'q1', question: 'Q?', options: [{ label: '甲' }, { label: '乙' }] }] },
   })
-  button(panel, '甲').click()
+  option(panel, '甲').click()
   button(panel, '提交回答').click()
   assert.equal(answers().length, 1)
   assert.equal(answers()[0].eventId, 'e-1', '必须带 eventId（宿主只认这个字段）')
@@ -1213,6 +1216,429 @@ test('the goal banner is gone (plan banner stays)', async () => {
   assert.ok(walk(banner).some((node) => node.textContent === '计划模式'))
   assert.equal(walk(banner).some((node) => String(node.className).includes('session-banner-close')), false)
   assert.equal(walk(banner).some((node) => String(node.textContent).includes('目标')), false)
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('settings: the pending-notification mode lives in General and posts the chosen mode', async () => {
+  const script = getBundleScript('notify-pending-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: null, conversation: [], notifyPending: 'always' })
+  dispatch({
+    type: 'settingsData',
+    data: { writable: true, hasDocument: true, connected: true, workspaces: [], version: '1.1.5', notifyPending: 'always' },
+  })
+
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+  const settings = context.document.getElementById('settingsContent')
+  const texts = walk(settings).map((node) => node.textContent)
+  assert.ok(texts.includes('等待操作提醒'), 'General 里要有"等待操作提醒"分区')
+  const select = walk(settings).find((node) => node.tagName === 'SELECT' && (node.childNodes || []).length === 3)
+  assert.ok(select, '要有三个模式的下来选单')
+  assert.deepEqual(select.childNodes.map((option) => option.value), ['unfocused', 'always', 'off'])
+  assert.deepEqual(
+    select.childNodes.map((option) => option.textContent),
+    ['窗口不在前台时提醒（推荐）', '总是提醒', '从不提醒'],
+  )
+  assert.equal(select.value, 'always', 'hydrate 下发的模式要反映到界面上')
+
+  select.value = 'off'
+  select.dispatchEvent({ type: 'change' })
+  assert.deepEqual(
+    posted.filter((message) => message.type === 'setNotifyPending').pop(),
+    { type: 'setNotifyPending', value: 'off' },
+  )
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('settings: the status bar entry toggle lives in General and posts the chosen value', async () => {
+  const script = getBundleScript('status-bar-entry-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: null, conversation: [] })
+  dispatch({
+    type: 'settingsData',
+    data: { writable: true, hasDocument: true, connected: true, workspaces: [], version: '1.1.5', statusBarEntry: false },
+  })
+
+  const walk = (node, out = []) => {
+    for (const child of node.childNodes || []) { out.push(child); walk(child, out) }
+    return out
+  }
+  const settings = context.document.getElementById('settingsContent')
+  const texts = walk(settings).map((node) => node.textContent)
+  assert.ok(texts.includes('状态栏入口'), '通用里要有"状态栏入口"分区')
+  assert.ok(texts.includes('在状态栏显示 dsh 入口'))
+
+  // hydrate 下发的值要反映到勾选框上（默认开，显式 false 才是关）。
+  const label = walk(settings).find((node) => node.tagName === 'LABEL' && walk(node).some((child) => child.textContent === '在状态栏显示 dsh 入口'))
+  assert.ok(label, '要有"在状态栏显示 dsh 入口"勾选框')
+  const check = walk(label).find((node) => node.tagName === 'INPUT')
+  assert.equal(check.type, 'checkbox')
+  assert.equal(check.checked, false, 'statusBarEntry=false 时勾选框不应被勾上')
+  check.checked = true
+  check.dispatchEvent({ type: 'change' })
+  assert.deepEqual(
+    posted.filter((message) => message.type === 'setStatusBarEntry').pop(),
+    { type: 'setStatusBarEntry', value: true },
+  )
+
+  // 外部（VS Code 设置 UI）改动下发时不报错（界面状态在下次打开设置弹窗时按 settingsData 重建）。
+  dispatch({ type: 'statusBarEntry', value: false })
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('multi-question pending: one question per page with pager, skip and per-question drafts', async () => {
+  const script = getBundleScript('multi-question-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+  const panel = context.document.getElementById('questionPanel')
+  const texts = (root) => walk(root).map((node) => node.textContent).join('|')
+  const button = (root, text) => walk(root).find((node) => node.tagName === 'BUTTON' && node.textContent === text)
+  const option = (root, label) => walk(root).find((node) => node.tagName === 'BUTTON'
+    && typeof node.getAttribute === 'function' && node.getAttribute('data-label') === label)
+  // 页码在 <span class="q-page"> 里（不是按钮）。
+  const hasText = (root, text) => walk(root).some((node) => node.textContent === text)
+  const answers = () => posted.filter((message) => message.type === 'questionAnswer')
+
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: 'S-1', conversation: [] })
+  dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: {
+      eventId: 'e-multi',
+      questions: [
+        { id: 'q1', header: '数据集目录', question: '“数据集目录”具体指哪一层？', options: [{ label: 'A. 真建数据集层' }, { label: 'B. 输入不动', description: '树结构不变' }, { label: 'D. 其他（推荐）' }] },
+        { id: 'q2', question: '参数表落在哪一层？', options: [{ label: '两级' }, { label: '单级' }] },
+        { id: 'q3', question: '并发模型怎么定？', options: [{ label: '进程池' }, { label: '多线程' }, { label: '先不做（推荐）' }] },
+      ],
+    },
+  })
+
+  // 一页只呈现一题（web 端那种多层提问），底部是 1/3 + 跳过本题 + 下一题。
+  assert.equal(texts(panel).includes('数据集目录'), true, '分组标签要显示')
+  assert.equal(texts(panel).includes('“数据集目录”具体指哪一层？'), true)
+  assert.equal(texts(panel).includes('参数表落在哪一层？'), false, '第 2 题不该同时出现')
+  assert.ok(hasText(panel, '1/3'), '要显示进度 1/3')
+  assert.ok(button(panel, '跳过本题'))
+  assert.ok(button(panel, '下一题'), '非最后一页是"下一题"')
+  // 选项行：编号 + 标签 +（推荐）徽标拆出来，说明单独一行；data-label 保留原始 label。
+  assert.equal(walk(panel).some((node) => node.textContent === '1'), true, '选项要有编号')
+  assert.equal(walk(panel).some((node) => node.className === 'q-option-badge' && node.textContent === '推荐'), true)
+  assert.equal(walk(panel).some((node) => node.className === 'q-option-desc' && node.textContent === '树结构不变'), true)
+  assert.equal(option(panel, 'D. 其他（推荐）') !== undefined, true, '提交用的仍是原始 label')
+
+  // 未处理就点"下一题"会被拦住（停在本题并提示）。
+  button(panel, '下一题').click()
+  assert.ok(hasText(panel, '1/3'), '仍在第 1 题')
+  assert.equal(answers().length, 0)
+  assert.ok(walk(panel).some((node) => node.className === 'q-error' && String(node.textContent).includes('跳过本题')))
+
+  // 单选后自动翻页（web 端行为）。
+  option(panel, 'B. 输入不动').click()
+  assert.ok(hasText(panel, '2/3'), '选完单选自动到第 2 题')
+
+  // 第 2 题填自定义回答，回车 → 第 3 题；再翻回去草稿还在。
+  const custom = walk(panel).find((node) => node.className === 'q-custom-input')
+  custom.value = '两级：全局默认 + 数据集表'
+  custom.dispatchEvent({ type: 'input' })
+  custom.dispatchEvent({ type: 'keydown', key: 'Enter' })
+  assert.ok(hasText(panel, '3/3'), '回车翻到第 3 题')
+  button(panel, '‹').click()
+  assert.ok(hasText(panel, '2/3'), '翻回第 2 题')
+  assert.equal(walk(panel).find((node) => node.className === 'q-custom-input').value, '两级：全局默认 + 数据集表', '草稿跨页保留')
+
+  // 最后一页按钮是"提交回答"；当前页没处理会被拦住（停在本题并提示）。
+  button(panel, '›').click()
+  assert.ok(button(panel, '提交回答'), '最后一页是"提交回答"')
+  button(panel, '提交回答').click()
+  assert.equal(answers().length, 0, '当前题没处理就不提交')
+  assert.ok(hasText(panel, '3/3'), '停在未处理的第 3 题')
+  assert.ok(walk(panel).some((node) => node.className === 'q-error' && String(node.textContent).includes('还没处理')))
+
+  // 跳过本题 = 显式空回答，然后提交。
+  button(panel, '跳过本题').click()
+  assert.equal(answers().length, 1, '最后一题跳过即直接提交（与 web 端一致）')
+  assert.deepEqual(answers()[0].answers, [
+    { id: 'q1', selected: ['B. 输入不动'] },
+    { id: 'q2', selected: [], custom: '两级：全局默认 + 数据集表' },
+    { id: 'q3', selected: [] },
+  ])
+
+  // 宿主确认后收起；换一个请求（新 eventId）时草稿与页码重置。
+  dispatch({ type: 'question', sessionId: 'S-1', pending: null })
+  dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: { eventId: 'e-next', questions: [{ id: 'n1', question: '新问题一', options: [{ label: 'x' }] }, { id: 'n2', question: '新问题二', options: [{ label: 'y' }] }] },
+  })
+  assert.ok(hasText(panel, '1/2'), '新请求从第 1 页开始')
+
+  // 用翻页箭头跳过第 1 题、在第 2 题提交 → 会被拉回未处理的那一页并点名题号。
+  button(panel, '›').click()
+  assert.ok(hasText(panel, '2/2'))
+  option(panel, 'y').click()
+  const submitted = answers().length
+  button(panel, '提交回答').click()
+  assert.equal(answers().length, submitted, '还有未处理的题就不提交')
+  assert.ok(hasText(panel, '1/2'), '被拉回未处理的那一页')
+  assert.ok(walk(panel).some((node) => node.className === 'q-error' && String(node.textContent).includes('第 1 题')))
+  button(panel, '跳过本题').click()
+  assert.ok(hasText(panel, '2/2'), '跳过第 1 题后前进到第 2 题')
+  button(panel, '提交回答').click()
+  assert.equal(answers().length, submitted + 1, '全部处理完才提交')
+  assert.deepEqual(answers()[submitted].answers, [{ id: 'n1', selected: [] }, { id: 'n2', selected: ['y'] }])
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('single-question pending keeps the plain panel (no pager)', async () => {
+  const script = getBundleScript('single-question-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+  const panel = context.document.getElementById('questionPanel')
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: 'S-1', conversation: [] })
+  dispatch({
+    type: 'question', sessionId: 'S-1',
+    pending: { eventId: 'e-one', questions: [{ id: 'q1', question: '只有一个问题？', options: [{ label: '是' }, { label: '否' }] }] },
+  })
+  const texts = walk(panel).map((node) => node.textContent)
+  assert.equal(texts.includes('1/1'), false, '单题不显示分页')
+  assert.equal(texts.includes('跳过本题'), false, '单题保持原来的面板')
+  assert.ok(walk(panel).find((node) => node.tagName === 'BUTTON' && node.textContent === '提交回答'))
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('language: switching to English leaves no Chinese in time labels, todo bar, model dropdown or static tooltips', async () => {
+  const script = getBundleScript('i18n-leak-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const doc = context.document
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+  const CJK = /[\u4e00-\u9fff]/
+
+  // 5 分钟前修改过的会话（相对时间走 t('timeMinutes')）+ 一条计划 + 空模型目录。
+  const fiveMinAgo = Date.now() - 5 * 60 * 1000
+  dispatch({
+    type: 'hydrate', status: 'ready', workspace: null, selectedSessionId: 'S-1', conversation: [],
+    sessions: [{ sessionId: 'S-1', displayTitle: 'my-app', running: false, blank: false, updatedAt: fiveMinAgo, archived: false }],
+  })
+  dispatch({ type: 'language', value: 'en' })
+  dispatch({
+    type: 'stats', sessionId: 'S-1',
+    stats: { todos: [{ id: 't1', content: 'x', status: 'completed' }], permissions: { options: [{ value: 'read-only', name: 'read-only' }], currentValue: 'read-only' } },
+  })
+  dispatch({ type: 'models', sessionId: 'S-1', models: { groups: [], current: null } })
+
+  const firstRow = () => doc.getElementById('drawerList').childNodes
+    .find((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const meta = firstRow().childNodes[1].childNodes[1].textContent
+  assert.equal(meta, '5 min ago', '抽屉里的相对时间要跟着语言走')
+  assert.equal(CJK.test(meta), false)
+
+  const todoText = () => walk(doc.getElementById('todoDock')).map((node) => node.textContent).join(' ')
+  assert.ok(todoText().includes('Plan'), '计划条标题要本地化')
+  assert.ok(todoText().includes('1 done'), '计划条统计要本地化')
+  assert.equal(CJK.test(todoText()), false, '计划条不得残留中文：' + todoText())
+
+  const modelOptions = walk(doc.getElementById('modelSelect')).map((node) => node.textContent)
+  assert.ok(modelOptions.includes('No models'))
+  assert.equal(CJK.test(modelOptions.join(' ')), false)
+
+  // body.html 里静态写死的中文 tooltip / 分组标题同样要跟着语言走。
+  assert.equal(doc.getElementById('imageBtn').title, 'Pick image')
+  assert.equal(doc.getElementById('fileBtn').title, 'Attach file')
+  assert.equal(doc.getElementById('modelSelect').title, 'Select model')
+  assert.equal(doc.getElementById('effortSelect').title, 'Select reasoning effort')
+  assert.equal(doc.getElementById('permissionGroupTitle').textContent, 'Permission / Mode')
+  assert.equal(doc.getElementById('settingsClose').title, 'Close')
+  assert.equal(doc.getElementById('archiveClose').title, 'Close')
+
+  // fork 的面板内提示也不再写死中文。
+  dispatch({ type: 'forkDone', title: 'my-app (fork)' })
+  const toastText = walk(doc.getElementById('toast')).map((node) => node.textContent).join('')
+  assert.ok(toastText.includes('Forked: my-app (fork)'), toastText)
+
+  // 切回中文时相对时间/计划条也要复原。
+  dispatch({ type: 'language', value: 'zh' })
+  assert.equal(firstRow().childNodes[1].childNodes[1].textContent, '5 分钟前')
+  assert.ok(todoText().includes('1 已完成'), todoText())
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('drawer rows show an alarm-clock marker when the session has an active scheduled task', async () => {
+  const script = getBundleScript('schedule-badge-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+
+  // "下一条"用今天的某个时刻：同一天只显示 HH:mm。
+  const soon = new Date()
+  soon.setHours(23, 5, 0, 0)
+  const sessions = [
+    { sessionId: 'S-1', displayTitle: '有定时任务', running: false, blank: false, updatedAt: Date.now(), archived: false, scheduleCount: 2, nextScheduleAt: soon.toISOString() },
+    { sessionId: 'S-2', displayTitle: '没有定时任务', running: false, blank: false, updatedAt: Date.now(), archived: false, scheduleCount: 0, nextScheduleAt: null },
+  ]
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-1', conversation: [] })
+
+  const rowsOf = () => context.document.getElementById('drawerList').childNodes
+    .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+  const rowById = (id) => rowsOf().find((row) => row.getAttribute('data-session-id') === id)
+  const indicatorOf = (row) => walk(row).find((node) => String(node.className) === 'drawer-schedule')
+
+  const indicator = indicatorOf(rowById('S-1'))
+  assert.ok(indicator, '有活动定时任务的行要有闹钟标记')
+  assert.equal(indicator.textContent, '⏰')
+  assert.match(indicator.title, /有活动定时任务/)
+  assert.match(indicator.title, /2 个/)
+  assert.match(indicator.title, /下一条 23:05/)
+  assert.equal(indicator.getAttribute('aria-label'), '有活动定时任务')
+  assert.equal(indicatorOf(rowById('S-2')), undefined, '没有定时任务的行不显示标记')
+
+  // 英文界面下说明文案跟着走。
+  dispatch({ type: 'language', value: 'en' })
+  const enIndicator = indicatorOf(rowById('S-1'))
+  assert.match(enIndicator.title, /Has active scheduled task/)
+  assert.match(enIndicator.title, /2 active/)
+  assert.match(enIndicator.title, /next 23:05/)
+
+  // 投影被清空后标记随之消失（宿主会重发 sessions 帧）。
+  dispatch({ type: 'sessions', sessions: [{ ...sessions[0], scheduleCount: 0, nextScheduleAt: null }, sessions[1]], selectedSessionId: 'S-1' })
+  assert.equal(indicatorOf(rowById('S-1')), undefined)
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('drawer: only the first five ordinary sessions show until "show more" is clicked', async () => {
+  const script = getBundleScript('drawer-collapse-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+
+  // 7 个普通会话 + 1 个空白「新会话」占位（空白不计入 5 条额度、始终显示）。
+  const sessions = []
+  for (let i = 1; i <= 7; i++) {
+    sessions.push({ sessionId: `S-${i}`, displayTitle: `sess-${i}`, running: false, blank: false, updatedAt: 1000 - i, archived: false })
+  }
+  sessions.push({ sessionId: 'S-blank', displayTitle: '新会话', running: false, blank: true, updatedAt: 1, archived: false })
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions, selectedSessionId: 'S-1', conversation: [] })
+
+  const drawerList = context.document.getElementById('drawerList')
+  const ids = () => drawerList.childNodes
+    .filter((node) => node && String(node.className || '').startsWith('drawer-item'))
+    .map((row) => row.getAttribute('data-session-id'))
+  const moreBtn = () => drawerList.childNodes.find((node) => node && String(node.className) === 'drawer-more')
+
+  assert.deepEqual(ids(), ['S-1', 'S-2', 'S-3', 'S-4', 'S-5', 'S-blank'], '普通会话只显示前 5 条，空白会话始终在')
+  assert.equal(moreBtn().textContent, '展开其余 2 个会话')
+  assert.equal(moreBtn().getAttribute('aria-expanded'), 'false')
+
+  moreBtn().click()
+  assert.equal(ids().length, 8, '展开后全部显示')
+  assert.equal(ids().includes('S-7'), true)
+  assert.equal(moreBtn().textContent, '收起')
+  assert.equal(moreBtn().getAttribute('aria-expanded'), 'true')
+
+  moreBtn().click()
+  assert.deepEqual(ids(), ['S-1', 'S-2', 'S-3', 'S-4', 'S-5', 'S-blank'], '再点一次收起来')
+
+  // 标题过滤期间不折叠：正在找会话时不该把匹配结果藏起来
+  // （空白会话标题是「新会话」，不匹配 'sess-'，所以这里只剩 7 条匹配）。
+  const search = context.document.getElementById('drawerSearch')
+  search.value = 'sess-'
+  search.dispatchEvent({ type: 'input' })
+  assert.equal(ids().length, 7)
+  assert.equal(ids().includes('S-7'), true, '过滤时要能看到全部匹配')
+  assert.equal(moreBtn(), undefined, '过滤时不显示折叠按钮')
+  search.value = ''
+  search.dispatchEvent({ type: 'input' })
+
+  // 选中的会话正好被折叠掉（例如从通知/搜索切过来）→ 自动展开，不让选中的行看不见。
+  dispatch({ type: 'selectedSession', sessionId: 'S-7' })
+  dispatch({ type: 'sessions', sessions, selectedSessionId: 'S-7' })
+  assert.equal(ids().includes('S-7'), true, '选中被折叠的会话要自动展开')
+  assert.equal(moreBtn().textContent, '收起')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
+
+test('prompt stash: the take-back button swaps the box with the composer draft', async () => {
+  const script = getBundleScript('stash-take-back-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+  const walk = (node, out = []) => { for (const child of node.childNodes || []) { out.push(child); walk(child, out) } return out }
+  const doc = context.document
+  const composer = doc.getElementById('composerInput')
+  const stashRows = () => doc.getElementById('promptStash').childNodes
+    .filter((node) => node && String(node.className) === 'stash-row')
+  const takeBackOf = (row) => walk(row).find((node) => String(node.className) === 'stash-take-back')
+  const inputOf = (row) => walk(row).find((node) => String(node.className) === 'stash-input')
+
+  dispatch({ type: 'hydrate', status: 'ready', workspace: null, sessions: [], selectedSessionId: null, conversation: [] })
+  dispatch({
+    type: 'promptStash',
+    enabled: true,
+    items: [{ id: 'a', text: '暂存里的提示词', images: [] }, { id: 'b', text: '', images: [] }],
+  })
+
+  // 按钮位置：发送 与 删除 之间。
+  const buttons = walk(stashRows()[0]).filter((node) => node.tagName === 'BUTTON').map((node) => String(node.className))
+  assert.deepEqual(buttons, ['stash-send', 'stash-take-back', 'stash-remove'])
+  assert.equal(takeBackOf(stashRows()[0]).textContent, '⇄', '互换图标（不是单向的 ↩）')
+  assert.match(takeBackOf(stashRows()[0]).title, /^与主输入框互换/)
+  // 两边都有内容 / 只有一边有内容时都可点；都空时禁用（第二个框空 + composer 空）。
+  assert.equal(takeBackOf(stashRows()[0]).disabled, false)
+  assert.equal(takeBackOf(stashRows()[1]).disabled, true)
+
+  // 输入框为空：把暂存内容搬进 composer，这个框变空（框本身保留）。
+  takeBackOf(stashRows()[0]).click()
+  assert.equal(composer.value, '暂存里的提示词')
+  assert.equal(inputOf(stashRows()[0]).value, '')
+  // 框空了但输入框里有内容 → 放回按钮仍可点（再点一次就把草稿换回框里）。
+  assert.equal(takeBackOf(stashRows()[0]).disabled, false)
+  assert.equal(stashRows().length, 2, '放回不会删除暂存框')
+
+  // 输入框里已经有草稿：两者互换（旧草稿进暂存框，接着还能改）。
+  composer.value = '正在写的新草稿'
+  dispatch({ type: 'promptStash', enabled: true, items: [{ id: 'a', text: '暂存里的提示词', images: [] }, { id: 'b', text: '', images: [] }] })
+  takeBackOf(stashRows()[0]).click()
+  assert.equal(composer.value, '暂存里的提示词')
+  assert.equal(inputOf(stashRows()[0]).value, '正在写的新草稿')
+  // 换回去也是互换（第二次点击把草稿换回来）。
+  takeBackOf(stashRows()[0]).click()
+  assert.equal(composer.value, '正在写的新草稿')
+  assert.equal(inputOf(stashRows()[0]).value, '暂存里的提示词')
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })

@@ -3,8 +3,8 @@
     // 输入框粘贴图片 → 加入待发送列表（vision 支持）。
     inputEl.addEventListener('paste', onComposerPaste);
     // 📷 选择图片：本地文件对话框（本机/远程都可靠，不依赖剪贴板）。
+    // tooltip 由 applyLanguage() 统一按语言设置。
     imageBtn.addEventListener('click', function () {
-      imageBtn.title = t('imagePick');
       imageFileInput.value = '';
       imageFileInput.click();
     });

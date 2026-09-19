@@ -448,15 +448,15 @@
         else pending++;
       }
       var progressParts = [];
-      if (done) progressParts.push(done + ' 已完成');
-      if (active) progressParts.push(active + ' 进行中');
-      if (pending) progressParts.push(pending + ' 待处理');
+      if (done) progressParts.push(t('todoDone', { n: done }));
+      if (active) progressParts.push(t('todoActive', { n: active }));
+      if (pending) progressParts.push(t('todoPending', { n: pending }));
       todoDockEl.innerHTML = '';
       var header = document.createElement('div');
       header.className = 'todo-header';
       var title = document.createElement('span');
       title.className = 'todo-title';
-      title.textContent = '计划';
+      title.textContent = t('todoTitle');
       var progress = document.createElement('span');
       progress.className = 'todo-progress';
       progress.textContent = progressParts.join(' · ');
@@ -491,15 +491,17 @@
       todoDockEl.appendChild(list);
     }
 
+    /** 当前权限名；未知时返回空串（**不要返回占位文案**：调用方用它判断"有没有权限可显示"，
+     *  返回本地化字符串会让英文界面拿到中文、也让判断失效）。 */
     function currentPermissionLabel() {
       var permissions = state.permissions;
-      if (!permissions) return '权限';
+      if (!permissions || !permissions.options) return '';
       for (var i = 0; i < permissions.options.length; i++) {
         if (permissions.options[i].value === permissions.currentValue) {
-          return permissions.options[i].name || permissions.options[i].value;
+          return permissions.options[i].name || permissions.options[i].value || '';
         }
       }
-      return '权限';
+      return '';
     }
 
     function updatePermissionUi() {
@@ -612,6 +614,93 @@
     function resetQuestionDrafts() {
       state.questionSelections = {};
       state.questionCustom = {};
+      state.questionSkipped = {};
+      state.questionIndex = 0;
+      state.questionError = null;
+    }
+
+    /**
+     * 换了一个提问请求（事件 id 变了）就重置分页与草稿，并从第一题开始。
+     * 这样"同一会话连续提问"不会带着上一次的选择进入新面板。
+     */
+    function syncQuestionDrafts(pending) {
+      if (!pending || !pending.eventId) return;
+      if (state.questionKey === pending.eventId) return;
+      resetQuestionDrafts();
+      state.questionKey = pending.eventId;
+    }
+
+    function questionOnPage(pending) {
+      var questions = (pending && pending.questions) || [];
+      var index = Number(state.questionIndex) || 0;
+      if (index < 0) index = 0;
+      if (index > questions.length - 1) index = questions.length - 1;
+      return questions[index] || null;
+    }
+
+    function goToQuestion(index) {
+      state.questionIndex = index;
+      state.questionError = null;
+      renderQuestion();
+    }
+
+    /** 该题是否已有回答（选了选项或写了自定义回答）——与 web 端 answered() 同口径。 */
+    function questionAnswered(q) {
+      return (state.questionSelections[q.id] || []).length > 0
+        || (state.questionCustom[q.id] || '').trim() !== '';
+    }
+
+    /** 该题是否"已处理"（有回答或被显式跳过）——与 web 端 completed() 同口径。 */
+    function questionCompleted(q) {
+      return questionAnswered(q) || state.questionSkipped[q.id] === true;
+    }
+
+    /** "（推荐）"/"(recommended)" 这类后缀拆成徽标（与 web 端 parseRecommendedLabel 同规则，
+     *  提交时仍用**原始 label**，不改回答值）。 */
+    function parseRecommendedLabel(label) {
+      var text = String(label === null || label === undefined ? '' : label);
+      var suffix = /\s*(?:\((?:recommended|推荐)\)|（(?:recommended|推荐)）)\s*$/i;
+      return suffix.test(text)
+        ? { label: text.replace(suffix, ''), recommended: true }
+        : { label: text, recommended: false };
+    }
+
+    /** "下一题"/"提交回答"：当前题没处理就停在原地提示（与 web 端 error.unanswered 一致）。 */
+    function continueQuestionFlow() {
+      var pending = state.pendingQuestion;
+      if (!pending) return;
+      var questions = pending.questions || [];
+      var q = questionOnPage(pending);
+      if (!q) return;
+      if (!questionCompleted(q)) {
+        state.questionError = t('questionUnanswered');
+        renderQuestion();
+        return;
+      }
+      state.questionError = null;
+      if (state.questionIndex < questions.length - 1) {
+        goToQuestion(state.questionIndex + 1);
+        return;
+      }
+      submitQuestionAnswers();
+    }
+
+    /** "跳过本题"：标记跳过并前进；最后一题跳过 = 直接提交（与 web 端 skipQuestion 一致）。 */
+    function skipCurrentQuestion() {
+      var pending = state.pendingQuestion;
+      if (!pending) return;
+      var questions = pending.questions || [];
+      var q = questionOnPage(pending);
+      if (!q) return;
+      state.questionSkipped[q.id] = true;
+      state.questionSelections[q.id] = [];
+      state.questionCustom[q.id] = '';
+      state.questionError = null;
+      if (state.questionIndex < questions.length - 1) {
+        goToQuestion(state.questionIndex + 1);
+        return;
+      }
+      submitQuestionAnswers();
     }
 
     function isPlanReviewQuestion(q) {
@@ -645,49 +734,53 @@
         else labels = [label];
       }
       state.questionSelections[q.id] = labels;
+      state.questionSkipped[q.id] = false;
       if (!q.multiSelect) {
         // 单选：选择选项后清掉该题已输入的自定义回答（与 web 端互斥语义一致）。
         state.questionCustom[q.id] = '';
       }
+      state.questionError = null;
+      // 单选且不是最后一题：选完自动翻到下一题（与 web 端一致），多选留在本页继续勾。
+      var questions = (state.pendingQuestion && state.pendingQuestion.questions) || [];
+      if (!q.multiSelect && state.questionIndex < questions.length - 1) {
+        goToQuestion(state.questionIndex + 1);
+        return;
+      }
       renderQuestion();
+    }
+
+    /** 单题的回答载荷（跳过的题给显式空回答，与 web 端一致）。 */
+    function questionAnswerOf(q) {
+      var skipped = state.questionSkipped[q.id] === true;
+      var custom = (state.questionCustom[q.id] || '').trim();
+      var selected = state.questionSelections[q.id] || [];
+      if (skipped) return { id: q.id, selected: [] };
+      if (!Array.isArray(q.options) || q.options.length === 0) {
+        return { id: q.id, selected: [], custom: custom };
+      }
+      var answer = { id: q.id };
+      // 单选 + 自定义回答：以自定义内容为准（与 web 端一致）。
+      answer.selected = (!q.multiSelect && custom) ? [] : selected;
+      if (custom) answer.custom = custom;
+      return answer;
     }
 
     function submitQuestionAnswers() {
       var pending = state.pendingQuestion;
       if (!pending) return;
-      var answers = [];
-      for (var i = 0; i < pending.questions.length; i++) {
-        var q = pending.questions[i];
-        var selected = state.questionSelections[q.id] || [];
-        var custom = (state.questionCustom[q.id] || '').trim();
-        if (!Array.isArray(q.options) || q.options.length === 0) {
-          if (!custom) {
-            var err = document.createElement('div');
-            err.className = 'q-error';
-            err.textContent = '请回答问题：' + q.question;
-            questionPanelEl.insertBefore(err, questionPanelEl.querySelector('.q-actions'));
-            return;
-          }
-          answers.push({ id: q.id, selected: [], custom: custom });
-        } else {
-          if (selected.length === 0 && !custom) {
-            var err2 = document.createElement('div');
-            err2.className = 'q-error';
-            err2.textContent = '请选择选项或输入自定义回答：' + q.question;
-            questionPanelEl.insertBefore(err2, questionPanelEl.querySelector('.q-actions'));
-            return;
-          }
-          var answer2 = { id: q.id };
-          if (!q.multiSelect && custom) {
-            // 单选 + 自定义回答：以自定义内容为准（与 web 端一致）。
-            answer2.selected = [];
-          } else {
-            answer2.selected = selected;
-          }
-          if (custom) answer2.custom = custom;
-          answers.push(answer2);
-        }
+      var questions = pending.questions || [];
+      // 逐题校验：哪一题还没处理（既没回答也没跳过）就跳到那一页并提示
+      //（与 web 端 error.incomplete 的表现一致）。
+      for (var i = 0; i < questions.length; i++) {
+        if (questionCompleted(questions[i])) continue;
+        state.questionIndex = i;
+        state.questionError = t('questionIncomplete', { index: i + 1 });
+        renderQuestion();
+        return;
       }
+      state.questionError = null;
+      var answers = [];
+      for (var j = 0; j < questions.length; j++) answers.push(questionAnswerOf(questions[j]));
       // dsh 的 waterfall 事件 id 字段就是 eventId（宿主快照里也是 eventId）：
       // 之前只发 rpcId（快照里没有这个字段 → undefined）导致宿主静默丢弃、面板点了没反应。
       // 保留 rpcId 作为兼容别名；**不在本地清空**，等宿主回发 pending=null 再收起，
@@ -771,8 +864,9 @@
       var block = document.createElement('div');
       block.className = 'q-block';
       if (q.header) {
+        // 分组/主题标签（如"数据集目录"）：小字放在问句上方，与 web 端一致。
         var qh = document.createElement('div');
-        qh.className = 'q-question';
+        qh.className = 'q-section';
         qh.textContent = q.header;
         block.appendChild(qh);
       }
@@ -793,9 +887,35 @@
           (function (index) {
             var label = q.options[index].label;
             var desc = q.options[index].description;
+            var parsed = parseRecommendedLabel(label);
             var btn = document.createElement('button');
             btn.className = 'q-option' + (questionOptionValue(q, index) ? ' selected' : '');
-            btn.textContent = label + (desc ? ' · ' + desc : '');
+            // 提交用的是**原始 label**（推荐后缀只是显示层的事）。
+            btn.setAttribute('data-label', String(label));
+            var idxEl = document.createElement('span');
+            idxEl.className = 'q-option-idx';
+            idxEl.textContent = String(index + 1);
+            var mainEl = document.createElement('span');
+            mainEl.className = 'q-option-main';
+            var labelEl = document.createElement('span');
+            labelEl.className = 'q-option-label';
+            labelEl.textContent = parsed.label;
+            mainEl.appendChild(labelEl);
+            if (parsed.recommended) {
+              var badge = document.createElement('span');
+              badge.className = 'q-option-badge';
+              badge.textContent = t('questionRecommended');
+              mainEl.appendChild(badge);
+            }
+            if (desc) {
+              // 说明单独一行（网页端也是这种两行排布），长说明才读得下去。
+              var descEl = document.createElement('span');
+              descEl.className = 'q-option-desc';
+              descEl.textContent = String(desc);
+              mainEl.appendChild(descEl);
+            }
+            btn.appendChild(idxEl);
+            btn.appendChild(mainEl);
             btn.addEventListener('click', function () { toggleQuestionOption(q, index); });
             opts.appendChild(btn);
           })(i);
@@ -810,11 +930,19 @@
         customInput.value = state.questionCustom[q.id] || '';
         customInput.addEventListener('input', function () {
           state.questionCustom[q.id] = customInput.value;
+          state.questionSkipped[q.id] = false;
           if (!q.multiSelect && customInput.value.trim() !== '') {
             state.questionSelections[q.id] = [];
             var optionBtns = block.querySelectorAll('.q-option');
             for (var bi = 0; bi < optionBtns.length; bi++) optionBtns[bi].classList.remove('selected');
           }
+        });
+        // 回车 = 下一题/提交（与 web 端一致）；中文输入法组字中的回车不算。
+        customInput.addEventListener('keydown', function (event) {
+          if (!event || event.isComposing) return;
+          if (event.key !== 'Enter' || event.shiftKey) return;
+          event.preventDefault();
+          continueQuestionFlow();
         });
         block.appendChild(customInput);
       } else {
@@ -825,10 +953,62 @@
         input.value = state.questionCustom[q.id] || '';
         input.addEventListener('input', function () {
           state.questionCustom[q.id] = input.value;
+          state.questionSkipped[q.id] = false;
+        });
+        input.addEventListener('keydown', function (event) {
+          if (!event || event.isComposing) return;
+          if (event.key !== 'Enter' || event.shiftKey) return;
+          event.preventDefault();
+          continueQuestionFlow();
         });
         block.appendChild(input);
       }
       questionPanelEl.appendChild(block);
+    }
+
+    /** 多问题时的翻页 + 跳过/下一题（最后一题是"提交回答"）。 */
+    function appendQuestionNav(pending) {
+      var questions = pending.questions || [];
+      var total = questions.length;
+      var last = state.questionIndex >= total - 1;
+      var nav = document.createElement('div');
+      nav.className = 'q-actions q-nav';
+      var pager = document.createElement('div');
+      pager.className = 'q-pager';
+      var prev = document.createElement('button');
+      prev.className = 'q-pager-btn q-prev';
+      prev.textContent = '‹';
+      prev.title = t('questionPrev');
+      prev.disabled = state.questionIndex <= 0;
+      prev.addEventListener('click', function () { goToQuestion(state.questionIndex - 1); });
+      var page = document.createElement('span');
+      page.className = 'q-page';
+      page.textContent = t('questionPage', { index: state.questionIndex + 1, total: total });
+      var next = document.createElement('button');
+      next.className = 'q-pager-btn q-next-page';
+      next.textContent = '›';
+      next.title = t('questionNext');
+      next.disabled = last;
+      next.addEventListener('click', function () { goToQuestion(state.questionIndex + 1); });
+      pager.appendChild(prev);
+      pager.appendChild(page);
+      pager.appendChild(next);
+      nav.appendChild(pager);
+      var spacer = document.createElement('span');
+      spacer.className = 'spacer';
+      nav.appendChild(spacer);
+      var skip = document.createElement('button');
+      skip.className = 'q-skip';
+      skip.textContent = t('questionSkip');
+      skip.title = t('questionSkipTitle');
+      skip.addEventListener('click', skipCurrentQuestion);
+      nav.appendChild(skip);
+      var cont = document.createElement('button');
+      cont.className = 'primary q-continue';
+      cont.textContent = last ? t('submitAnswer') : t('questionNext');
+      cont.addEventListener('click', continueQuestionFlow);
+      nav.appendChild(cont);
+      questionPanelEl.appendChild(nav);
     }
 
     function renderQuestion() {
@@ -837,6 +1017,7 @@
       if (!pending || !pending.questions || !pending.questions.length) {
         return;
       }
+      syncQuestionDrafts(pending);
       if (pending.questions.length === 1 && isPlanReviewQuestion(pending.questions[0])) {
         appendPlanReviewPanel(pending, pending.questions[0]);
         return;
@@ -855,9 +1036,20 @@
       close.addEventListener('click', cancelPendingQuestion);
       header.appendChild(close);
       questionPanelEl.appendChild(header);
-      for (var i = 0; i < pending.questions.length; i++) {
-        appendGenericQuestion(pending, pending.questions[i]);
+      if (state.questionError) {
+        var error = document.createElement('div');
+        error.className = 'q-error';
+        error.textContent = state.questionError;
+        questionPanelEl.appendChild(error);
       }
+      if (pending.questions.length > 1) {
+        // **一页一题**（与 dsh Web UI 的多层提问一致）：只渲染当前这一题 + 翻页/跳过/下一题。
+        var current = questionOnPage(pending);
+        if (current) appendGenericQuestion(pending, current);
+        appendQuestionNav(pending);
+        return;
+      }
+      appendGenericQuestion(pending, pending.questions[0]);
       var actions = document.createElement('div');
       actions.className = 'q-actions';
       var submit = document.createElement('button');
@@ -947,7 +1139,7 @@
         parts.push(effort ? name + ' | ' + effort : name);
       }
       var perm = currentPermissionLabel();
-      if (perm && perm !== '权限') parts.push(perm);
+      if (perm) parts.push(perm);
       modelInfoEl.textContent = parts.join(' | ');
       modelInfoEl.title = modelInfoEl.textContent;
     }
@@ -974,7 +1166,7 @@
       if (!models) {
         var empty = document.createElement('option');
         empty.value = '';
-        empty.textContent = models === null ? '加载中…' : '暂无模型';
+        empty.textContent = models === null ? t('modelsLoading') : t('modelsEmpty');
         modelSelectEl.appendChild(empty);
         var emptyEffort = document.createElement('option');
         emptyEffort.value = '';
@@ -1001,7 +1193,7 @@
       if (!groups.length) {
         var empty2 = document.createElement('option');
         empty2.value = '';
-        empty2.textContent = '暂无模型';
+        empty2.textContent = t('modelsEmpty');
         modelSelectEl.appendChild(empty2);
       }
 
@@ -1040,7 +1232,7 @@
       }
 
       if (models.error) modelStatusEl.textContent = models.error;
-      else if (models.routable === false) modelStatusEl.textContent = '当前路由不可用';
+      else if (models.routable === false) modelStatusEl.textContent = t('modelRouteUnavailable');
       else if (models.current) modelStatusEl.textContent = '';
       renderModelButton();
     }

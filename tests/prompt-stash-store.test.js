@@ -176,3 +176,71 @@ test('dispose(): 停掉监听与定时器后不再回调', async (t) => {
   assert.deepEqual(seen, [])
   assert.equal(store.check(), false)
 })
+
+test('watch: 存储目录还不存在时（首次激活）先建目录再监听，跨窗口同步不会静默失效', async (t) => {
+  const root = tempDir(t)
+  // 模拟 VS Code 的 workspaceStorage：`<root>/<hash>/<publisher>.<name>/prompt-stash.json`
+  // 这个目录在插件刚激活时并不存在（真实日志里 fs.watch 因此 ENOENT）。
+  const nested = path.join(root, 'workspaceStorage', 'hash', 'ysen.dsh-vsc-weblike')
+  const file = path.join(nested, STASH_FILE_NAME)
+  const logs = []
+  const store = new PromptStashStore({ filePath: file, onLog: (line) => logs.push(line), holdEventLoop: true })
+  t.after(() => store.dispose())
+
+  const changes = []
+  assert.equal(store.watch((items) => changes.push(items)), true, '目录不存在也要能挂上监听（先 mkdir）')
+  assert.equal(fs.existsSync(nested), true)
+  assert.equal(logs.some((line) => line.includes('监听提示词暂存框失败')), false)
+
+  // 别的窗口写了文件 → 本窗口收到外部改动。
+  const other = new PromptStashStore({ filePath: file, holdEventLoop: true })
+  other.save([{ id: 'x', text: '别的窗口写的', images: [] }])
+  await withTimeout(
+    new Promise((resolve) => {
+      const timer = setInterval(() => { if (changes.length) { clearInterval(timer); resolve() } }, 20)
+      if (typeof timer.unref === 'function') timer.unref()
+    }),
+    3000,
+    '外部写入没有触发同步回调',
+  )
+  assert.equal(changes[0][0].text, '别的窗口写的')
+})
+
+test('watch: 挂监听失败过（自愈路径）时，写入成功后自动补挂', async (t) => {
+  const dir = tempDir(t)
+  const file = path.join(dir, STASH_FILE_NAME)
+  const logs = []
+  let failFirst = true
+  const flakyFs = Object.create(fs)
+  flakyFs.watch = (...args) => {
+    if (failFirst) {
+      failFirst = false
+      const error = new Error(`ENOENT: no such file or directory, watch '${dir}'`)
+      error.code = 'ENOENT'
+      throw error
+    }
+    return fs.watch(...args)
+  }
+  const store = new PromptStashStore({ filePath: file, fsModule: flakyFs, onLog: (line) => logs.push(line), holdEventLoop: true })
+  t.after(() => store.dispose())
+
+  const changes = []
+  assert.equal(store.watch((items) => changes.push(items)), false, '第一次挂监听失败')
+  assert.ok(logs.some((line) => line.includes('写入后会自动重试')))
+
+  store.save([{ id: 'a', text: '自己写的', images: [] }])
+  assert.ok(logs.some((line) => line.includes('跨窗口同步已补挂监听')), '写入成功后要补挂监听')
+
+  // 补挂之后外部改动依然能同步过来。
+  const other = new PromptStashStore({ filePath: file, holdEventLoop: true })
+  other.save([{ id: 'b', text: '外部改动', images: [] }])
+  await withTimeout(
+    new Promise((resolve) => {
+      const timer = setInterval(() => { if (changes.length) { clearInterval(timer); resolve() } }, 20)
+      if (typeof timer.unref === 'function') timer.unref()
+    }),
+    3000,
+    '补挂后外部写入没有触发同步回调',
+  )
+  assert.equal(changes[0][0].text, '外部改动')
+})

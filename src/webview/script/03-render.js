@@ -13,9 +13,10 @@
         } catch (e) { /* keep raw name */ }
       }
       if (item.status === 'result') {
-        var t = item.resultText || '';
-        if (t.length > 120) t = t.slice(0, 120) + '…';
-        s = '结果 ' + s + (t ? ': ' + t : '');
+        // 注意：局部变量不要叫 t —— 会遮蔽 i18n 的 t()（此前这里写死中文就是为了绕开这点）。
+        var resultText = item.resultText || '';
+        if (resultText.length > 120) resultText = resultText.slice(0, 120) + '…';
+        s = t('resultPrefix') + s + (resultText ? ': ' + resultText : '');
       }
       return s;
     }
@@ -563,6 +564,60 @@
       return { kind: 'idle', cls: '', label: '', title: '' };
     }
 
+    /** 折叠后单列表里最多先显示多少条「普通会话」（与 dsh Web UI 的 COLLAPSED_SESSION_LIMIT 一致）。 */
+    var SESSION_ROW_LIMIT = 5;
+
+    /**
+     * 会话抽屉的折叠口径（照抄 dsh Web UI `collapsedSessionRows()`）：
+     * 空白「新会话」占位**不占额度、始终显示**；普通会话只保留前 5 条，其余计入 hiddenCount。
+     */
+    function collapseSessionRows(list) {
+      var rows = [];
+      var ordinary = 0;
+      for (var i = 0; i < list.length; i++) {
+        var session = list[i];
+        if (session.blank) { rows.push(session); continue; }
+        if (ordinary >= SESSION_ROW_LIMIT) continue;
+        ordinary++;
+        rows.push(session);
+      }
+      return { rows: rows, hiddenCount: list.length - rows.length };
+    }
+
+    /**
+     * 活动定时任务的悬停说明（与 dsh Web UI 的"有活动定时任务"同一语义，另外补上数量与下一条时间）。
+     * 标记本身不可点（行整体才是操作目标），所以只做 title。
+     */
+    function scheduleIndicatorTitle(s) {
+      var count = Number(s.scheduleCount) || 0;
+      var parts = [t('scheduleActive'), t('scheduleCount', { count: String(count) })];
+      var next = formatScheduleTime(s.nextScheduleAt);
+      if (next) parts.push(t('scheduleNext', { time: next }));
+      return parts.join(' · ');
+    }
+
+    /** 下一条触发时间：今天只显示 HH:mm，其它日期显示 MM-DD HH:mm（解析失败返回空串）。 */
+    function formatScheduleTime(iso) {
+      var at = Date.parse(String(iso || ''));
+      if (!Number.isFinite(at)) return '';
+      var d = new Date(at);
+      var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      var now = new Date();
+      var sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+      return sameDay ? hm : ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2) + ' ' + hm;
+    }
+
+    /** 行上的活动定时任务标记（dsh `schedule` 投影非空时出现；与状态点/模式标签互不影响）。 */
+    function makeScheduleIndicator(s) {
+      var el = document.createElement('span');
+      el.className = 'drawer-schedule';
+      el.textContent = '⏰';
+      el.title = scheduleIndicatorTitle(s);
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', t('scheduleActive'));
+      return el;
+    }
+
     function makeSessionRow(s, current) {
       var primary = sessionPrimaryState(s);
       var item = document.createElement('div');
@@ -599,6 +654,8 @@
       if (primary.title) meta.title = primary.title;
       main.appendChild(meta);
       item.appendChild(main);
+      // 活动定时任务标记：紧跟在标题区之后（与 dsh Web UI 的"标题 → 闹钟 → 时间"顺序一致）。
+      if (Number(s.scheduleCount) > 0) item.appendChild(makeScheduleIndicator(s));
       // 会话模式标签（如"标准模式""PTC 模式"）：只在面板宽度足够时显示（见 style.css 媒体查询）。
       var modeLabel = sessionModeLabel(sessionModeId(s));
       if (modeLabel) {
@@ -627,7 +684,7 @@
           if (kind === 'restoreSession') {
             post({ type: 'restoreSession', sessionId: sid });
           } else if (kind === 'forkSession') {
-            showToast('正在 fork 会话…', '', true);
+            showToast(t('forkingSession'), '', true);
             post({ type: 'forkSession', sessionId: sid });
           } else if (kind === 'unrestoreSession') {
             post({ type: 'unrestoreSession', sessionId: sid });
@@ -655,12 +712,12 @@
       if (!n) return '';
       var diff = Date.now() - n;
       var min = Math.floor(diff / 60000);
-      if (min < 1) return '刚刚';
-      if (min < 60) return min + ' 分钟前';
+      if (min < 1) return t('timeJustNow');
+      if (min < 60) return t('timeMinutes', { n: min });
       var hr = Math.floor(min / 60);
-      if (hr < 24) return hr + ' 小时前';
+      if (hr < 24) return t('timeHours', { n: hr });
       var day = Math.floor(hr / 24);
-      if (day < 7) return day + ' 天前';
+      if (day < 7) return t('timeDays', { n: day });
       var d = new Date(n);
       return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2);
     }
@@ -702,6 +759,20 @@
         else activeSessions.push(session);
       }
       var shown = 0;
+      // 普通会话超过 SESSION_ROW_LIMIT 条时先只显示前 5 条（与 dsh Web UI 的
+      // `COLLAPSED_SESSION_LIMIT` 同一口径：空白"新会话"占位不计入额度、始终显示），
+      // 其余藏在"展开其余 N 个会话"按钮后面；展开状态是本地界面状态（不写配置）。
+      // 标题过滤（query）期间不折叠：那是"我在找某条会话"，藏起来正好藏错。
+      var collapse = collapseSessionRows(activeSessions);
+      if (collapse.hiddenCount > 0) {
+        for (var ci = 0; ci < collapse.rows.length; ci++) {
+          if (collapse.rows[ci].sessionId === current) break;
+        }
+        // 当前选中的会话正好被折叠掉（从通知/搜索命中切过来）→ 自动展开，别让它"看不见"。
+        if (ci >= collapse.rows.length) state.sessionsExpanded = true;
+      }
+      var expandedRows = state.sessionsExpanded === true || !!query;
+      var visibleActive = expandedRows ? activeSessions : collapse.rows;
       function appendGroup(list) {
         var count = 0;
         for (var i = 0; i < list.length; i++) {
@@ -713,7 +784,22 @@
         }
         return count;
       }
-      shown += appendGroup(activeSessions);
+      shown += appendGroup(visibleActive);
+      // 折叠提示条：只有在真的藏了行时出现；文案随状态变（与网页端同一句）。
+      if (collapse.hiddenCount > 0 && !query) {
+        var moreBtn = document.createElement('button');
+        moreBtn.className = 'drawer-more';
+        moreBtn.setAttribute('data-action', 'toggleSessionsExpanded');
+        moreBtn.setAttribute('aria-expanded', state.sessionsExpanded === true ? 'true' : 'false');
+        moreBtn.textContent = state.sessionsExpanded === true
+          ? t('sessionsCollapse')
+          : t('sessionsExpand', { n: String(collapse.hiddenCount) });
+        moreBtn.addEventListener('click', function () {
+          state.sessionsExpanded = state.sessionsExpanded !== true;
+          renderDrawerList(state.sessions || [], state.selectedSessionId);
+        });
+        drawerList.appendChild(moreBtn);
+      }
       var archivedHeaderEl = null;
       if (archivedShown && archivedSessions.length) {
         archivedHeaderEl = document.createElement('div');
@@ -754,6 +840,12 @@
             snippet.textContent = hit.snippet || '';
             hitMain.appendChild(snippet);
             row.appendChild(hitMain);
+            // 内容搜索命中同样带活动定时任务标记（宿主已把行装饰并进 hit）。
+            if (Number(hit.scheduleCount) > 0 && !(known && Number(known.scheduleCount) > 0)) {
+              row.appendChild(makeScheduleIndicator(hit));
+            } else if (known && Number(known.scheduleCount) > 0) {
+              row.appendChild(makeScheduleIndicator(known));
+            }
             row.addEventListener('click', function () {
               if (hit.sessionId !== state.selectedSessionId) post({ type: 'selectSession', sessionId: hit.sessionId });
               closeSessionDrawer();
@@ -969,7 +1061,7 @@
       for (var i = 0; i < presets.length; i++) {
         if (presets[i].id === id) return presets[i].name || id;
       }
-      return id || '选择…';
+      return id || t('presetSelect');
     }
 
     // 内置工作模式的名称/描述按界面语言本地化（插件自定义 preset 保留宿主返回的文案）。

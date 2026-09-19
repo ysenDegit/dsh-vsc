@@ -314,3 +314,231 @@ test('subagent sessions never reach the drawer (and are filtered out of search h
   const search = posted.filter((message) => message.type === 'sessionSearch').pop()
   assert.deepEqual(search.items.map((hit) => hit.sessionId), ['S-1'])
 })
+
+test('pending notifications: unfocused mode uses the OS notification, never twice per event', async () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+  vscodeState.warnings.length = 0
+  const rows = [
+    { sessionId: 'S-1', title: '当前会话', updatedAt: 1 },
+    { sessionId: 'S-2', title: '后台会话', updatedAt: 2 },
+  ]
+  const { provider } = makeProvider({ sessions: rows, selected: 'S-1' })
+  await provider.refreshSessions()
+  const lastWarning = () => vscodeState.warnings[vscodeState.warnings.length - 1] || null
+
+  // 默认 unfocused + 窗口在前台 → 不打扰（用户正看着 VS Code）。
+  vscodeState.focused = true
+  provider.ingestQuestionRequested('S-2', 'e1', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.equal(lastWarning(), null, '窗口在前台时默认不发通知')
+
+  // 窗口不在前台（你在别的应用里）→ 发通知，带标题与两个按钮。
+  vscodeState.focused = false
+  provider.ingestQuestionRequested('S-2', 'e2', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  const warning = lastWarning()
+  assert.ok(warning, '窗口不在前台时要发通知')
+  assert.match(warning[0], /后台会话/, '通知文案带会话标题')
+  assert.deepEqual(warning[1], ['打开并回答', '不再提醒'])
+
+  // 同一个事件重复上报（或再次读快照）不会重复打扰。
+  const count = vscodeState.warnings.length
+  provider.ingestQuestionRequested('S-2', 'e2', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.equal(vscodeState.warnings.length, count)
+
+  // 计划待审 / 审批用不同文案（审批带工具名）。
+  vscodeState.focused = false
+  const planReview = {
+    id: 'p1', question: 'Approve the plan?', detail: '# Plan',
+    options: [{ label: 'Approve' }, { label: 'Keep planning' }],
+    intent: { kind: 'plan-review', approve: 'Approve' },
+  }
+  provider.ingestQuestionRequested('S-2', 'e3', { questions: [planReview] })
+  await flush()
+  assert.match(lastWarning()[0], /计划待你审批/)
+  provider.ingestApprovalRequested('S-2', 'e4', { toolName: 'bash', callId: 'c-1' })
+  await flush()
+  assert.match(lastWarning()[0], /批准工具调用/)
+  assert.match(lastWarning()[0], /bash/)
+
+  // 去重只针对"同一个事件"：事件结算后，同一会话的下一次请求要重新提醒。
+  const beforeNew = vscodeState.warnings.length
+  provider.ingestApprovalResolved('S-2', 'e4')
+  provider.ingestQuestionRequested('S-2', 'e5', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.ok(vscodeState.warnings.length > beforeNew, '新的请求要重新提醒')
+  provider.ingestQuestionResolved('S-2', 'e5')
+
+  // "不再提醒"：该会话在本次窗口内保持安静（连新事件也不再打扰）。
+  vscodeState.warningPick = '不再提醒'
+  provider.ingestQuestionRequested('S-2', 'e6', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  const muted = vscodeState.warnings.length
+  provider.ingestQuestionResolved('S-2', 'e6')
+  provider.ingestQuestionRequested('S-2', 'e7', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.equal(vscodeState.warnings.length, muted, '点过"不再提醒"的会话保持安静')
+  provider.ingestQuestionResolved('S-2', 'e7')
+})
+
+test('pending notifications: "always" respects the selected session, and the button switches to it', async () => {
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
+  vscodeState.warnings.length = 0
+  vscodeState.warningPick = null
+  const rows = [
+    { sessionId: 'S-1', title: '当前会话', updatedAt: 1 },
+    { sessionId: 'S-2', title: '后台会话', updatedAt: 2 },
+  ]
+  const { provider } = makeProvider({ sessions: rows, selected: 'S-1', provider: { notifyPending: 'always' } })
+  await provider.refreshSessions()
+  vscodeState.focused = true
+
+  // "总是提醒"：窗口在前台、但不是当前会话 → 提醒。
+  provider.ingestQuestionRequested('S-2', 'a1', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.equal(vscodeState.warnings.length, 1)
+
+  // 当前会话的请求不提醒（选择器就在眼前）。
+  provider.ingestQuestionRequested('S-1', 'a2', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  assert.equal(vscodeState.warnings.length, 1, '当前会话不需要通知')
+
+  // "打开并回答" → 聚焦插件面板 + 切到该会话。
+  vscodeState.warningPick = '打开并回答'
+  provider.ingestApprovalRequested('S-2', 'a3', { toolName: 'bash', callId: 'c-1' })
+  await flush()
+  await flush()
+  assert.ok(vscodeState.executedCommands.some(([command]) => command === 'dsh-vsc.chat.focus'))
+  assert.equal(provider.selectedSessionId, 'S-2')
+
+  // off：彻底静音。
+  const off = makeProvider({ sessions: rows, selected: 'S-1', provider: { notifyPending: 'off' } })
+  await off.provider.refreshSessions()
+  provider.ingestQuestionRequested('S-2', 'a4', { questions: [{ id: 'q1', question: 'q', options: [{ label: 'a' }] }] })
+  await flush()
+  const before = vscodeState.warnings.length
+  await off.provider.handleMessage({ type: 'setNotifyPending', value: 'off' })
+  assert.equal(off.provider.notifyPendingMode, 'off')
+  assert.equal(vscodeState.warnings.length, before)
+})
+
+test('status bar entry: text and click target follow the dsh state, and the toggle hides it', async () => {
+  const folder = { uri: { fsPath: '/home/me/proj' } }
+  vscodeState.workspaceFolders.push(folder)
+  try {
+    const { provider } = makeProvider()
+    const item = vscodeState.statusBarItems.at(-1)
+    assert.ok(item, '状态栏入口应在 provider 构造时就位')
+    assert.equal(item.visible, true)
+    assert.equal(item.alignment, 1, '左侧状态栏')
+    assert.equal(item.text, '$(comment-discussion) dsh')
+    assert.equal(item.tooltip, 'dsh 已就绪 · 点击在工作区打开 dsh 面板')
+    // 点状态栏 = 在**工作区（编辑器列）**打开面板，不是聚焦侧边栏视图。
+    assert.equal(item.command, 'dsh-vsc.openChatFromTitle')
+
+    // 未连接/出错：点击直接重新检测 dsh web 实例（不是先打开面板再点状态点）。
+    provider.dsh.statusValue = 'stopped'
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(comment-discussion) dsh: 未连接')
+    assert.equal(item.command, 'dsh-vsc.retryConnect')
+
+    provider.dsh.statusValue = 'error'
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(comment-discussion) dsh: 连接失败')
+    assert.equal(item.command, 'dsh-vsc.retryConnect')
+
+    // 发现/启动/重连中：转圈图标 + 打开面板看状态。
+    provider.dsh.statusValue = 'starting'
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(sync~spin) dsh: 启动中')
+    assert.equal(item.command, 'dsh-vsc.openChatFromTitle')
+    provider.dsh.statusValue = 'reconnecting'
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(sync~spin) dsh: 重连中')
+
+    // 英文界面下文案跟着走（语言切换要重渲染状态栏，否则会停在上一种语言）。
+    provider.updatePreferences({ language: 'en' })
+    provider.dsh.statusValue = 'ready'
+    provider.syncStatusBar()
+    assert.equal(item.tooltip, 'dsh is ready — click to open the dsh panel in the editor area')
+    provider.dsh.statusValue = 'stopped'
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(comment-discussion) dsh: not connected')
+    provider.updatePreferences({ language: 'zh' })
+
+    // 没有打开文件夹：dsh 以工作目录为单位，点击改为打开文件夹。
+    vscodeState.workspaceFolders.length = 0
+    provider.syncStatusBar()
+    assert.equal(item.text, '$(comment-discussion) dsh: 未打开文件夹')
+    assert.equal(item.command, 'workbench.action.files.openFolder')
+    vscodeState.workspaceFolders.push(folder)
+
+    // 开关关闭：只隐藏不销毁；重新打开立刻可用（并落配置）。
+    await provider.handleMessage({ type: 'setStatusBarEntry', value: false })
+    assert.equal(provider.statusBarEnabled, false)
+    assert.equal(item.visible, false)
+    assert.equal(item.disposed, false)
+    assert.deepEqual(vscodeState.configUpdates.at(-1), ['statusBarEntry', false])
+    await provider.handleMessage({ type: 'setStatusBarEntry', value: true })
+    assert.equal(item.visible, true)
+
+    // VS Code 设置 UI 里改掉时也要同步（不依赖插件弹窗）。
+    provider.updatePreferences({ statusBarEntry: false })
+    assert.equal(item.visible, false)
+
+    // 扩展停用：状态栏项随 provider 一起销毁。
+    provider.dispose()
+    assert.equal(item.disposed, true)
+  } finally {
+    vscodeState.workspaceFolders.length = 0
+  }
+})
+
+test('schedule badge: rows carry active-schedule info from the schedule projection', async () => {
+  const rows = [
+    {
+      sessionId: 'S-1', displayTitle: 'a', running: false, updatedAt: 1, archived: false,
+      projections: {
+        values: {
+          schedule: [
+            { id: 'r1', kind: 'every', prompt: 'p', everySeconds: 600, scheduledAt: '2030-01-01T10:30:00.000Z' },
+            { id: 'r2', kind: 'at', prompt: 'q', scheduledAt: '2030-01-01T09:00:00.000Z' },
+          ],
+        },
+      },
+    },
+    { sessionId: 'S-2', displayTitle: 'b', running: false, updatedAt: 2, archived: false },
+  ]
+  const { provider, posted } = makeProvider({ sessions: rows, selected: 'S-1' })
+  await provider.refreshSessions()
+
+  const frames = () => posted.filter((message) => message.type === 'sessions')
+  const rowOf = (sessionId, frame = frames().pop()) => frame.sessions.find((item) => item.sessionId === sessionId)
+  const at = (iso) => new Date(iso).toISOString()
+
+  // 列表条目里的 schedule 投影（wire view = 活动提醒数组）：非空即标记，并取最早一条做"下一条"。
+  assert.equal(rowOf('S-1').scheduleCount, 2)
+  assert.equal(rowOf('S-1').nextScheduleAt, at('2030-01-01T09:00:00.000Z'))
+  assert.equal(rowOf('S-2').scheduleCount, 0)
+  assert.equal(rowOf('S-2').nextScheduleAt, null)
+
+  // 实时投影帧（session/control 的 projection）到货时立刻重发 sessions 帧——即使不是当前会话，
+  // 否则别的会话新建/触发完定时任务后徽标要等到下一次全量刷新才出现。
+  const before = frames().length
+  provider.applyControlFrame({
+    type: 'projection', sessionId: 'S-2', key: 'schedule', seq: 3,
+    value: [{ id: 'r3', kind: 'after', prompt: 'x', afterSeconds: 60, scheduledAt: '2031-05-05T08:00:00.000Z' }],
+  })
+  assert.equal(frames().length, before + 1, '定时任务投影变化要立刻重发 sessions 帧')
+  assert.equal(rowOf('S-2').scheduleCount, 1)
+  assert.equal(rowOf('S-2').nextScheduleAt, at('2031-05-05T08:00:00.000Z'))
+
+  // 清空/非法值都按"没有定时任务"处理（旧版 dsh 没有这个投影，不能炸）。
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'schedule', seq: 4, value: null })
+  assert.equal(rowOf('S-1').scheduleCount, 0)
+  assert.equal(rowOf('S-1').nextScheduleAt, null)
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-2', key: 'schedule', seq: 5, value: [{ scheduledAt: 'not-a-date' }] })
+  assert.equal(rowOf('S-2').scheduleCount, 1)
+  assert.equal(rowOf('S-2').nextScheduleAt, null, '解析不出时间就不显示"下一条"，但标记仍在')
+})

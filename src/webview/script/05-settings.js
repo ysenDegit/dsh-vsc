@@ -1,3 +1,8 @@
+    /** 待处理交互通知模式（dsh-vsc.notifyPending）：非法值退回默认的 unfocused。 */
+    function normalizeNotifyPendingMode(value) {
+      return value === 'off' || value === 'always' ? value : 'unfocused';
+    }
+
     /**
      * 设置弹窗顶部的离线横幅：dsh 未连接时说明"哪些能用、哪些不能用"，并给一个重试入口。
      * 前端本地设置（显示/通用/暂存框等）不依赖后端，离线时照常可用。
@@ -72,35 +77,6 @@
 
       var aboutPane = makeSettingsPane('about', t('tabAbout'));
       aboutPane.appendChild(versionSection);
-
-      // dsh 服务地址：显示当前连接地址，点击在浏览器打开 dsh Web UI。
-      var dshServiceSection = document.createElement('div');
-      dshServiceSection.className = 'settings-section';
-      var dshServiceTitle = document.createElement('h3');
-      dshServiceTitle.textContent = t('dshServiceUrlSection');
-      dshServiceSection.appendChild(dshServiceTitle);
-      var dshServiceField = document.createElement('div');
-      dshServiceField.className = 'settings-field';
-      if (data.baseUrl) {
-        var dshLink = document.createElement('a');
-        // href 用带 token 的完整地址（背景色区别于纯文本）；点击仍走 openDshWeb 事件。
-        dshLink.href = data.webUrl || data.baseUrl;
-        dshLink.textContent = data.baseUrl;
-        dshLink.id = 'dshWebLink';
-        dshLink.title = t('dshWebOpenTitle');
-        dshLink.addEventListener('click', function (event) {
-          event.preventDefault();
-          post({ type: 'openDshWeb' });
-        });
-        dshServiceField.appendChild(dshLink);
-      } else {
-        var dshNone = document.createElement('span');
-        dshNone.className = 'field-status';
-        dshNone.textContent = t('dshServiceUrlNone');
-        dshServiceField.appendChild(dshNone);
-      }
-      dshServiceSection.appendChild(dshServiceField);
-      aboutPane.appendChild(dshServiceSection);
 
       // dsh 未连接/设置提供者只读时仍展示本地显示设置（显示/常规），后端相关部分分别提示。
       if (data.connected === false) {
@@ -379,6 +355,47 @@
       sendModeSection.appendChild(sendModeField);
       generalPane.appendChild(sendModeSection);
 
+      // 等待操作提醒（dsh-vsc.notifyPending）：off / unfocused / always。
+      var notifySection = document.createElement('div');
+      notifySection.className = 'settings-section';
+      var notifyTitle = document.createElement('h3');
+      notifyTitle.textContent = t('notifyPendingSection');
+      notifySection.appendChild(notifyTitle);
+      var notifyField = document.createElement('div');
+      notifyField.className = 'settings-field';
+      var notifyLabel = document.createElement('div');
+      notifyLabel.className = 'field-label';
+      var notifyName = document.createElement('span');
+      notifyName.textContent = t('notifyPendingLabel');
+      notifyLabel.appendChild(notifyName);
+      notifyField.appendChild(notifyLabel);
+      var notifySelect = document.createElement('select');
+      var notifyOptions = [
+        ['unfocused', t('notifyPendingUnfocused')],
+        ['always', t('notifyPendingAlways')],
+        ['off', t('notifyPendingOff')],
+      ];
+      for (var ni = 0; ni < notifyOptions.length; ni++) {
+        var notifyOpt = document.createElement('option');
+        notifyOpt.value = notifyOptions[ni][0];
+        notifyOpt.textContent = notifyOptions[ni][1];
+        notifySelect.appendChild(notifyOpt);
+      }
+      notifySelect.value = normalizeNotifyPendingMode(
+        data.notifyPending !== undefined ? data.notifyPending : state.notifyPending
+      );
+      notifySelect.addEventListener('change', function () {
+        state.notifyPending = normalizeNotifyPendingMode(notifySelect.value);
+        post({ type: 'setNotifyPending', value: state.notifyPending });
+      });
+      notifyField.appendChild(notifySelect);
+      notifySection.appendChild(notifyField);
+      var notifyHint = document.createElement('div');
+      notifyHint.className = 'hint';
+      notifyHint.textContent = t('notifyPendingHint');
+      notifySection.appendChild(notifyHint);
+      generalPane.appendChild(notifySection);
+
       // 悬浮提示词暂存框（dsh-vsc.promptStash）：关闭只隐藏界面，已写内容保留。
       var stashSection = document.createElement('div');
       stashSection.className = 'settings-section';
@@ -444,6 +461,34 @@
       });
 
       generalPane.appendChild(startupSection);
+
+      // 状态栏入口：常驻的状态栏按钮（空窗口/空编辑器里也能一键进插件）。
+      var statusBarSection = document.createElement('div');
+      statusBarSection.className = 'settings-section';
+      var statusBarTitle = document.createElement('h3');
+      statusBarTitle.textContent = t('statusBarSection');
+      statusBarSection.appendChild(statusBarTitle);
+      var statusBarField = document.createElement('div');
+      statusBarField.className = 'settings-field';
+      var statusBarLabel = document.createElement('label');
+      statusBarLabel.className = 'field-label';
+      var statusBarCheck = document.createElement('input');
+      statusBarCheck.type = 'checkbox';
+      statusBarCheck.checked = data.statusBarEntry !== false;
+      var statusBarName = document.createElement('span');
+      statusBarName.textContent = t('statusBarLabel');
+      statusBarLabel.appendChild(statusBarCheck);
+      statusBarLabel.appendChild(statusBarName);
+      statusBarField.appendChild(statusBarLabel);
+      statusBarSection.appendChild(statusBarField);
+      var statusBarHint = document.createElement('div');
+      statusBarHint.className = 'hint';
+      statusBarHint.textContent = t('statusBarHint');
+      statusBarSection.appendChild(statusBarHint);
+      statusBarCheck.addEventListener('change', function () {
+        post({ type: 'setStatusBarEntry', value: statusBarCheck.checked });
+      });
+      generalPane.appendChild(statusBarSection);
 
       // dsh 服务器设置：显示当前完整地址（含 token，只读不可选中，提供复制按钮），
       // 并支持粘贴新的完整 URL 后"重新连接"（宿主校验 → 接入 → 重新初始化）。
