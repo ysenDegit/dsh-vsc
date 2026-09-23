@@ -132,8 +132,22 @@
             if (msg.stats) {
               state.todos = msg.stats.todos || [];
               state.permissions = msg.stats.permissions || null;
+              // 目标条：持久阶段来自 `goal` 投影，续行状态（armed/disarmed）由宿主补读。
+              state.goalProjection = msg.stats.goal || null;
+              state.goalActivation = msg.stats.goalActivation || null;
             }
+            // 新的一帧统计说明目标状态已刷新：在途请求结束，上一轮错误清掉。
+            state.goalPending = false;
+            state.goalError = null;
             renderStats(msg.stats || null);
+          }
+          break;
+        case 'goalActionError':
+          // 目标变更被拒绝（CAS 陈旧、目标已被清除等）：内联显示在目标条上，不弹模态框。
+          if (!msg.sessionId || msg.sessionId === state.selectedSessionId) {
+            state.goalPending = false;
+            state.goalError = msg.message || '';
+            renderGoal();
           }
           break;
         case 'settingsData':

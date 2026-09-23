@@ -134,6 +134,18 @@
         'queueEdit': '编辑排队消息',
         'queueSteer': '转为插话（steer）',
         'queueRemove': '删除排队消息',
+        // 进行中的目标（goal）条：文案与 dsh Web UI 的 composer 目标条一致。
+        'goalPhaseActive': '进行中的目标',
+        'goalPhaseDisarmed': '未运行的目标',
+        'goalPhasePaused': '已暂停的目标',
+        'goalPhaseBlocked': '受阻的目标',
+        'goalActionPause': '暂停目标',
+        'goalActionResume': '恢复目标',
+        'goalActionEdit': '编辑目标',
+        'goalActionClear': '清除目标',
+        'goalActionSave': '保存目标',
+        'goalActionCancel': '取消编辑',
+        'goalObjectivePlaceholder': '目标内容',
         'toolApproval': '工具审批',
         'reject': '拒绝',
         'allowOnce': '允许一次',
@@ -384,6 +396,17 @@
         'queueEdit': 'Edit queued message',
         'queueSteer': 'Steer (interrupt)',
         'queueRemove': 'Remove queued message',
+        'goalPhaseActive': 'Ongoing Goal',
+        'goalPhaseDisarmed': 'Inactive Goal',
+        'goalPhasePaused': 'Paused Goal',
+        'goalPhaseBlocked': 'Blocked Goal',
+        'goalActionPause': 'Pause goal',
+        'goalActionResume': 'Resume goal',
+        'goalActionEdit': 'Edit goal',
+        'goalActionClear': 'Clear goal',
+        'goalActionSave': 'Save goal',
+        'goalActionCancel': 'Cancel edit',
+        'goalObjectivePlaceholder': 'Goal objective',
         'toolApproval': 'Tool Approval',
         'reject': 'Reject',
         'allowOnce': 'Allow Once',
@@ -570,6 +593,7 @@
       // 计划条统计与模型下拉的占位文案也是本地化的：换语言后必须重渲染，
       // 否则会停在上一种语言（此前就是漏了这两处）。
       renderTodos();
+      renderGoal();
       renderModels();
       // 占位符/按钮文案随语言变化，暂存框需要整棵重建。
       renderPromptStash(true);

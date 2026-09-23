@@ -11,7 +11,10 @@ const { ChatViewProvider } = require('../src/chat-view.js')
 function makeClient(options = {}) {
   return {
     results: [],
+    /** 所有 RPC 调用（method + 参数），供断言 wire 形状。 */
+    calls: [],
     async callArgs(method, args) {
+      this.calls.push({ method, args })
       if (method === '$events/result') {
         this.results.push(args)
         if (options.failNext) {
@@ -19,6 +22,11 @@ function makeClient(options = {}) {
           options.failNext = null
           throw new Error(message)
         }
+      }
+      if (options.reply && Object.prototype.hasOwnProperty.call(options.reply, method)) {
+        const reply = options.reply[method]
+        if (reply instanceof Error) throw reply
+        return reply
       }
       return {}
     },
@@ -39,6 +47,9 @@ function makeProvider(options = {}) {
     whenWorkspaceReady: async () => {},
     reset() {},
     requireClient: () => client,
+    // `goals/get`：目标条用它读进程内的续行状态（armed/disarmed 不在投影里）。
+    // 走真实客户端替身，便于断言 wire 形状（`{ agentId }`）。
+    getGoal: async (sessionId) => await client.callArgs('goals/get', { agentId: sessionId }),
   }
   const dsh = {
     statusValue: 'ready', client, baseUrl: 'http://127.0.0.1:3080', webUrl: 'http://127.0.0.1:3080/?token=t',
@@ -541,4 +552,182 @@ test('schedule badge: rows carry active-schedule info from the schedule projecti
   provider.applyControlFrame({ type: 'projection', sessionId: 'S-2', key: 'schedule', seq: 5, value: [{ scheduledAt: 'not-a-date' }] })
   assert.equal(rowOf('S-2').scheduleCount, 1)
   assert.equal(rowOf('S-2').nextScheduleAt, null, '解析不出时间就不显示"下一条"，但标记仍在')
+})
+
+// ---- 进行中的目标（goal）：投影 + goals/get 的进程内续行状态 + 四个变更 RPC ----
+
+const goalProjection = (overrides = {}) => ({
+  goal: { id: 'G-1', revision: 3, objective: '让 Bosch16 全量重下', phase: 'active', maxGoalRounds: 10, ...overrides },
+  roundsStarted: 1,
+  createdAt: 1,
+  updatedAt: 2,
+})
+
+const lastStats = (posted) => posted.filter((message) => message.type === 'stats').pop()
+
+test('goal bar: activation comes from goals/get, and only an active goal triggers the read', async () => {
+  const view = { id: 'G-1', revision: 3, objective: '让 Bosch16 全量重下', phase: 'active', activation: 'armed' }
+  const { provider, posted, client } = makeProvider({ selected: 'S-1', client: { reply: { 'goals/get': view } } })
+
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+  await provider.goalActivationReads.get('S-1')
+
+  // wire 形状：agent 作用域参数是 `agentId`（与 commands/list 同一约定）。
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/get').pop().args, { agentId: 'S-1' })
+  assert.equal(lastStats(posted).stats.goal.goal.objective, '让 Bosch16 全量重下')
+  assert.equal(lastStats(posted).stats.goalActivation, 'armed')
+
+  // 同一 id+revision 不重复读（投影帧会反复到达）。
+  const reads = client.calls.filter((call) => call.method === 'goals/get').length
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 2, value: goalProjection() })
+  await Promise.resolve()
+  assert.equal(client.calls.filter((call) => call.method === 'goals/get').length, reads, '同版本不重复读 activation')
+
+  // 暂停/受阻的目标没有"是否自动续行"可言：不读、也不下发 activation。
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 3, value: goalProjection({ phase: 'paused' }) })
+  await Promise.resolve()
+  assert.equal(client.calls.filter((call) => call.method === 'goals/get').length, reads)
+  assert.equal(lastStats(posted).stats.goalActivation, null)
+})
+
+test('goal bar: the goal projection carried by the session list also triggers the activation read', async () => {
+  const view = { id: 'G-1', revision: 3, phase: 'active', activation: 'armed' }
+  const rows = [{
+    sessionId: 'S-1', displayTitle: 'a', running: true, updatedAt: 1, archived: false,
+    projections: { asOfSeq: 1, values: { goal: goalProjection() } },
+  }]
+  const { provider, posted, client } = makeProvider({ sessions: rows, selected: 'S-1', client: { reply: { 'goals/get': view } } })
+  await provider.refreshSessions()
+
+  // 启动/刷新后列表里就带 goal 投影：不必等目标下一次变化，条上立刻有暂停/恢复按钮。
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/get').pop().args, { agentId: 'S-1' })
+  assert.equal(lastStats(posted).stats.goalActivation, 'armed')
+})
+
+test('goal bar: activation is dropped when the projection revision moves on (CAS identity)', async () => {
+  const view = { id: 'G-1', revision: 3, phase: 'active', activation: 'armed' }
+  const { provider, posted } = makeProvider({ selected: 'S-1', client: { reply: { 'goals/get': view } } })
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+  await provider.goalActivationReads.get('S-1')
+  assert.equal(lastStats(posted).stats.goalActivation, 'armed')
+
+  // 目标被改写：revision 变了，旧读数必须作废（否则会显示错误的暂停/恢复按钮）。
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 2, value: goalProjection({ revision: 4 }) })
+  assert.equal(lastStats(posted).stats.goalActivation, null, 'revision 对不上时不下发 activation')
+})
+
+test('goal bar: goal/activation-changed updates the strip, mismatching ids are ignored', async () => {
+  const { provider, posted } = makeProvider({ selected: 'S-1' })
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+
+  // 事件载荷是单个对象 `{ sessionId, goal: { id, revision, activation } }`。
+  provider.applyRemoteEventFrame({
+    type: 'emit', event: 'goal/activation-changed',
+    args: [{ sessionId: 'S-1', goal: { id: 'G-1', revision: 3, activation: 'disarmed' } }],
+  })
+  assert.equal(lastStats(posted).stats.goalActivation, 'disarmed')
+
+  // 别的目标（id 不同）的边沿不能影响当前目标。
+  provider.applyRemoteEventFrame({
+    type: 'emit', event: 'goal/activation-changed',
+    args: [{ sessionId: 'S-1', goal: { id: 'G-old', revision: 3, activation: 'armed' } }],
+  })
+  assert.equal(lastStats(posted).stats.goalActivation, null)
+
+  // 清除（载荷不带 goal）→ 没有 activation。
+  provider.applyRemoteEventFrame({
+    type: 'emit', event: 'goal/activation-changed',
+    args: [{ sessionId: 'S-1', goal: { id: 'G-1', revision: 3, activation: 'armed' } }],
+  })
+  assert.equal(lastStats(posted).stats.goalActivation, 'armed')
+  provider.applyRemoteEventFrame({ type: 'emit', event: 'goal/activation-changed', args: [{ sessionId: 'S-1' }] })
+  assert.equal(lastStats(posted).stats.goalActivation, null)
+
+  // 事件是全局流：别的会话的边沿不能写进当前会话。
+  provider.applyRemoteEventFrame({
+    type: 'emit', event: 'goal/activation-changed',
+    args: [{ sessionId: 'S-other', goal: { id: 'G-9', revision: 1, activation: 'armed' } }],
+  })
+  assert.equal(lastStats(posted).stats.goalActivation, null)
+})
+
+test('goal bar: pause/resume/edit/clear carry the projected CAS ref', async () => {
+  const { provider, client } = makeProvider({
+    selected: 'S-1',
+    client: { reply: { 'goals/pause': { id: 'G-1', revision: 4, phase: 'paused', activation: 'disarmed' } } },
+  })
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+
+  await provider.handleMessage({ type: 'goalPause', sessionId: 'S-1' })
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/pause').pop().args,
+    { agentId: 'S-1', ref: { id: 'G-1', revision: 3 } })
+
+  await provider.handleMessage({ type: 'goalResume', sessionId: 'S-1' })
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/resume').pop().args,
+    { agentId: 'S-1', ref: { id: 'G-1', revision: 3 } })
+
+  await provider.handleMessage({ type: 'goalEdit', sessionId: 'S-1', objective: '  改后的目标  ' })
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/edit').pop().args,
+    { agentId: 'S-1', ref: { id: 'G-1', revision: 3 }, request: { objective: '改后的目标' } })
+
+  await provider.handleMessage({ type: 'goalClear', sessionId: 'S-1' })
+  assert.deepEqual(client.calls.filter((call) => call.method === 'goals/clear').pop().args,
+    { agentId: 'S-1', ref: { id: 'G-1', revision: 3 } })
+})
+
+test('goal bar: clear hides the goal at once, a failed mutation reports inline, empty edits are dropped', async () => {
+  const { provider, posted, client } = makeProvider({ selected: 'S-1' })
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+  provider.postStats('S-1')
+  assert.equal(lastStats(posted).stats.goal.goal.id, 'G-1')
+
+  // 空白目标：直接丢弃（web 端也在输入为空时禁用保存），不发 RPC、不留 pending。
+  await provider.handleMessage({ type: 'goalEdit', sessionId: 'S-1', objective: '   ' })
+  assert.equal(client.calls.filter((call) => call.method === 'goals/edit').length, 0)
+
+  // 清除成功后：本地立刻藏起该目标（不等投影帧），且不再下发 activation。
+  await provider.handleMessage({ type: 'goalClear', sessionId: 'S-1' })
+  assert.equal(lastStats(posted).stats.goal, null)
+  assert.equal(lastStats(posted).stats.goalActivation, null)
+
+  // 没有目标时再点暂停：给出内联错误而不是静默无反应。
+  const before = posted.filter((message) => message.type === 'goalActionError').length
+  await provider.handleMessage({ type: 'goalPause', sessionId: 'S-1' })
+  const errors = posted.filter((message) => message.type === 'goalActionError')
+  assert.equal(errors.length, before + 1)
+  assert.match(errors.at(-1).message, /没有进行中的目标/)
+  assert.equal(errors.at(-1).sessionId, 'S-1')
+})
+
+test('goal bar: a rejected mutation surfaces the dsh error code inline', async () => {
+  const conflict = Object.assign(new Error('stale revision'), { code: 'stale-revision' })
+  const { provider, posted } = makeProvider({ selected: 'S-1', client: { reply: { 'goals/pause': conflict } } })
+  provider.applyControlFrame({ type: 'projection', sessionId: 'S-1', key: 'goal', seq: 1, value: goalProjection() })
+
+  await provider.handleMessage({ type: 'goalPause', sessionId: 'S-1' })
+  const error = posted.filter((message) => message.type === 'goalActionError').pop()
+  assert.equal(error.message, 'stale revision (stale-revision)')
+  assert.equal(error.level, 'error')
+  // CAS 失败不改动本地目标：条还在，引用仍是投影里的那一版。
+  assert.equal(lastStats(posted).stats.goal.goal.revision, 3)
+})
+
+test('error-code 兼容：dsh 0.1.5 的带前缀错误码也要能识别（gateway/internal、session/fork-unavailable）', () => {
+  const { provider } = makeProvider()
+  const { DshRpcError } = require('../src/wire.js')
+
+  // 未注册的端点：rc.1~rc.3 的网关返回 `gateway/internal` + invocation-unavailable（旧构建是裸 `internal`）。
+  for (const code of ['gateway/internal', 'internal']) {
+    assert.equal(provider.isUnsupportedCommandRpc(new DshRpcError({ code, message: 'gateway: invocation-unavailable' })), true, code)
+  }
+  // 老 host 的 HTTP /api 路由：404 载体错误（没有 code）。
+  assert.equal(provider.isUnsupportedCommandRpc(new Error('dsh web RPC commands/nope 载体错误: HTTP 404')), true)
+  assert.equal(provider.isUnsupportedCommandRpc(new DshRpcError({ code: 'gateway/bad-request', message: 'nope' })), false)
+
+  // fork：dsh 返回 `session/fork-unavailable`（旧构建是裸 `fork-unavailable`），消息里带 "no completed turn"。
+  for (const code of ['session/fork-unavailable', 'fork-unavailable']) {
+    assert.equal(provider.isForkUnavailable(new DshRpcError({ code, message: 'x' })), true, code)
+  }
+  assert.equal(provider.isForkUnavailable(new Error('session "x" has no completed turn to fork from')), true)
+  assert.equal(provider.isForkUnavailable(new DshRpcError({ code: 'gateway/internal', message: 'other' })), false)
 })

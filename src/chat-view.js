@@ -147,10 +147,19 @@ class ChatViewProvider {
     // sessionId -> LiveAssistantStream：dsh 0.1.5 进程内 assistant-stream 帧
     // （durable 日志不再有 assistant/chunk，运行中的增量必须从这里来）。
     this.liveStreams = new Map()
-    // 0.1.5 agentPresets/list 的 modeSelectionEnabled（旧版缺失时按 true 处理）。
+    // `agentPresets/list` 的 modeSelectionEnabled：**dsh 0.1.6 起**才有（0.1.5 系列、
+    // 含 rc.1~rc.3 的 roster 只有 {presets, authorable}），缺失时按 true 处理
+    // ——即 0.1.5 后端上始终显示模式卡片，与同版本 Web UI 的行为一致。
     this.modeSelectionEnabled = true
     // sessionId -> 后台 jobs（session/control baseline/jobs 帧），用于统计行提示。
     this.jobsBySession = new Map()
+    // sessionId -> { id, revision, activation }：goal 的进程内续行状态。
+    // dsh 的 `goal` 投影只含持久阶段（active/paused/blocked/complete），"是否真的在
+    // 自动续行"（armed/disarmed）是**进程本地**状态，只能由 `goals/get` 读取、
+    // 由 `goal/activation-changed` 事件更新（与 dsh Web UI 同一口径：ID + revision 必须对上）。
+    this.goalActivationBySession = new Map()
+    // 同一会话同一时刻只发一次 goals/get（投影帧 + 运行边沿可能同时触发）。
+    this.goalActivationReads = new Map()
     // 只在首次遇到"内容搜索未启用"时记一条日志，避免每次输入都刷屏。
     this.searchDisabledLogged = false
     // 本地"取消归档/隐藏归档"集合（dsh 无 unarchive API，只影响插件视图）。
@@ -491,6 +500,22 @@ class ChatViewProvider {
         case 'permissionSelect':
           await this.selectPermission(msg.sessionId || this.selectedSessionId, msg.preset)
           break
+        case 'goalPause':
+          await this.mutateGoal(msg.sessionId || this.selectedSessionId, 'pause')
+          break
+        case 'goalResume':
+          await this.mutateGoal(msg.sessionId || this.selectedSessionId, 'resume')
+          break
+        case 'goalClear':
+          await this.mutateGoal(msg.sessionId || this.selectedSessionId, 'clear')
+          break
+        case 'goalEdit': {
+          // 空白目标没有意义（web 端同样在输入为空时禁用保存）。
+          const objective = typeof msg.objective === 'string' ? msg.objective.trim() : ''
+          if (!objective) break
+          await this.mutateGoal(msg.sessionId || this.selectedSessionId, 'edit', { objective })
+          break
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -834,8 +859,11 @@ class ChatViewProvider {
   isUnsupportedCommandRpc(error) {
     const message = String(error && error.message || '')
     if (error instanceof DshRpcError) {
-      // Typert gateway 对未注册端点返回 internal + invocation-unavailable。
-      return error.code === 'internal' && /invocation-unavailable|no active Remote method/u.test(message)
+      // Typert gateway 对未注册端点返回 `gateway/internal` + invocation-unavailable
+      // （旧构建用裸 `internal`）；两种拼写都接受。
+      const code = String(error.code || '')
+      const internal = code === 'gateway/internal' || code === 'internal'
+      return internal && /invocation-unavailable|no active Remote method/u.test(message)
     }
     // 旧版 host 的 HTTP /api 路由对未注册方法返回 404（载体错误）。
     return /HTTP 404|not found|载体错误/u.test(message)
@@ -868,7 +896,9 @@ class ChatViewProvider {
       }
     })
     this.presets = presets
-    // modeSelectionEnabled：0.1.5-rc.2 起后端可关闭"未命名新会话的模式选择"。
+    // modeSelectionEnabled：**dsh 0.1.6 起**后端可关闭"未命名新会话的模式选择"；
+    // 0.1.5 系列（rc.1~rc.3）的 roster 没有这个字段 → 恒为 true，卡片照常显示
+    // （与 0.1.5 Web UI 一致：它同样不看这个字段）。
     this.modeSelectionEnabled = result.modeSelectionEnabled !== false
     this.post({
       type: 'presets',
@@ -1772,7 +1802,8 @@ class ChatViewProvider {
 
   isForkUnavailable(error) {
     const message = String(error && error.message || '')
-    if (error instanceof DshRpcError && error.code === 'fork-unavailable') return true
+    // dsh 0.1.5 的错误码是 `session/fork-unavailable`（旧构建用裸 `fork-unavailable`）。
+    if (error instanceof DshRpcError && (error.code === 'session/fork-unavailable' || error.code === 'fork-unavailable')) return true
     return /fork-unavailable|no completed turn/u.test(message)
   }
 
@@ -2016,6 +2047,9 @@ class ChatViewProvider {
         }
       }
     }
+    // 会话列表里就带 `goal` 投影：启动/刷新后立刻补读当前会话的续行状态，
+    // 否则要等到目标下一次变化，目标条才有暂停/恢复按钮。
+    if (this.selectedSessionId) void this.refreshGoalActivation(this.selectedSessionId)
   }
 
   ensureProjectionStore(sessionId) {
@@ -2051,6 +2085,135 @@ class ChatViewProvider {
     return store?.get(key)?.value
   }
 
+  // ---- 进行中的目标（goal，与 dsh Web UI 的 composer 目标条同口径）----
+
+  /** 当前持久目标（`goal` 投影里的快照）；没有目标时为 null。 */
+  goalSnapshotOf(sessionId) {
+    const projection = this.projectionValue(sessionId, 'goal')
+    const goal = projection && projection.goal
+    return goal && typeof goal === 'object' ? goal : null
+  }
+
+  /** 变更目标所需的 CAS 引用：web 端用投影里的精确 `{ id, revision }`。 */
+  goalRefOf(sessionId) {
+    const goal = this.goalSnapshotOf(sessionId)
+    return goal ? { id: goal.id, revision: goal.revision } : null
+  }
+
+  /**
+   * 只有 ID 与 revision 都对上时才认这份 activation：
+   * 目标被改写/清除后旧读数必须作废（与 dsh Web UI 的 `id+revision` 匹配一致）。
+   */
+  goalActivationOf(sessionId) {
+    const entry = this.goalActivationBySession.get(sessionId)
+    if (!entry) return null
+    const goal = this.goalSnapshotOf(sessionId)
+    if (!goal || goal.id !== entry.id || goal.revision !== entry.revision) return null
+    return entry.activation || null
+  }
+
+  ingestGoalActivation(sessionId, entry) {
+    if (!sessionId) return
+    if (!entry || typeof entry !== 'object' || !entry.id) {
+      this.goalActivationBySession.delete(sessionId)
+    } else {
+      this.goalActivationBySession.set(sessionId, {
+        id: entry.id,
+        revision: entry.revision,
+        activation: entry.activation,
+      })
+    }
+    if (sessionId === this.selectedSessionId) this.postStats(sessionId)
+  }
+
+  /**
+   * 读取目标的进程内续行状态（`goals/get`）。
+   * 只在目标处于 active 时才需要：暂停/受阻/已完成的目标没有"是否自动续行"可言。
+   * @param sessionId - 目标所属会话。
+   * @param force - true 时忽略缓存强制重读（运行开始/重连后用）。
+   */
+  async refreshGoalActivation(sessionId, force = false) {
+    if (!sessionId || !this.dsh.client) return
+    const goal = this.goalSnapshotOf(sessionId)
+    if (!goal || goal.phase !== 'active') {
+      // 非 active：清掉缓存，避免恢复 active 时读到上一版的陈旧 activation。
+      if (this.goalActivationBySession.delete(sessionId)) {
+        if (sessionId === this.selectedSessionId) this.postStats(sessionId)
+      }
+      return
+    }
+    const cached = this.goalActivationBySession.get(sessionId)
+    if (!force && cached && cached.id === goal.id && cached.revision === goal.revision) return
+    if (this.goalActivationReads.has(sessionId)) return
+    const sessions = this.sessions
+    const read = (async () => {
+      try {
+        const view = await sessions.getGoal(sessionId)
+        if (!view) return
+        // 读期间目标可能已被改写/清除：写入前再核对一次投影。
+        const latest = this.goalSnapshotOf(sessionId)
+        if (!latest || latest.id !== view.id || latest.revision !== view.revision) return
+        this.goalActivationBySession.set(sessionId, {
+          id: view.id,
+          revision: view.revision,
+          activation: view.activation,
+        })
+        if (sessionId === this.selectedSessionId) this.postStats(sessionId)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.onLog(`读取目标状态失败（goals/get）: ${message}`)
+      } finally {
+        this.goalActivationReads.delete(sessionId)
+      }
+    })()
+    this.goalActivationReads.set(sessionId, read)
+    await read
+  }
+
+  /**
+   * 目标变更：pause / resume / edit / clear。
+   * 引用取自当次投影（RPC 自身的 CAS 才是防陈旧护栏，失败会带 code 回来）。
+   * @param sessionId - 目标所属会话。
+   * @param method - goals 命名空间下的方法名。
+   * @param request - edit 的 `{ objective }`；其它方法省略。
+   */
+  async mutateGoal(sessionId, method, request) {
+    const id = sessionId || this.selectedSessionId
+    if (!id) return false
+    const ref = this.goalRefOf(id)
+    if (!ref) {
+      this.post({ type: 'goalActionError', sessionId: id, message: this.t('notice.goalMissing'), level: 'error' })
+      return false
+    }
+    const client = this.sessions.requireClient()
+    const args = { agentId: id, ref }
+    if (request !== undefined) args.request = request
+    try {
+      const result = await client.callArgs(`goals/${method}`, args)
+      // pause/resume/edit 返回最新的 GoalView（含 activation）；clear 只回 GoalRef。
+      if (result && result.id && result.activation) {
+        this.goalActivationBySession.set(id, {
+          id: result.id,
+          revision: result.revision,
+          activation: result.activation,
+        })
+      }
+      if (method === 'clear') {
+        // 投影帧到达前先把本条目标藏起来（web 端同样会抑制已清除的目标）。
+        this.goalActivationBySession.delete(id)
+        this.projectionsBySession.get(id)?.delete('goal')
+      }
+      if (id === this.selectedSessionId) this.postStats(id)
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const code = error && error.code ? ` (${error.code})` : ''
+      this.onLog(`目标操作失败（goals/${method}）: ${message}`)
+      this.post({ type: 'goalActionError', sessionId: id, message: `${message}${code}`, level: 'error' })
+      return false
+    }
+  }
+
   statsSnapshot(sessionId) {
     if (!sessionId) return null
     const store = this.projectionsBySession.get(sessionId)
@@ -2064,8 +2227,9 @@ class ChatViewProvider {
       todos: get('todos'),
       permissions: get('permissions'),
       jobs: this.jobsBySession.get(sessionId) || [],
-      // 0.1.5 投影：计划模式横幅（用户要求删掉此前的"目标"横幅）。
+      // 目标：持久阶段来自 `goal` 投影（0.1.5），"是否正在自动续行"来自 goals/get。
       goal: get('goal') ?? null,
+      goalActivation: this.goalActivationOf(sessionId),
       plan: get('plan') ?? null,
     }
   }
@@ -2734,6 +2898,18 @@ class ChatViewProvider {
         // 行的状态点（运行中/已完成）立刻跟着变，不必等下面那次防抖全量刷新。
         this.postSessionsFrame()
         this.scheduleRefreshSessions()
+        // 运行边沿可能改变目标的续行状态（续行轮次开始/结束），与 dsh Web UI 一样补读一次。
+        if (statusSessionId === this.selectedSessionId && statusRunning !== wasRunning) {
+          void this.refreshGoalActivation(statusSessionId, true)
+        }
+        break
+      }
+      case 'goal/activation-changed': {
+        // 载荷是单个对象 `{ sessionId, goal? }`（清除后不带 goal）。
+        const payload = args[0]
+        const goalSessionId = payload && payload.sessionId
+        if (!goalSessionId) break
+        this.ingestGoalActivation(goalSessionId, payload.goal || null)
         break
       }
       case 'api-session/activity':
@@ -2801,6 +2977,8 @@ class ChatViewProvider {
       }
       // 定时任务徽标：不管是不是当前会话都要跟着投影帧立刻刷新（`postSessionsFrame` 不发 RPC）。
       if (frame.key === 'schedule') this.postSessionsFrame()
+      // 目标：阶段变化后补读进程内的续行状态（armed/disarmed 不在投影里）。
+      if (frame.key === 'goal') void this.refreshGoalActivation(frame.sessionId)
       return
     }
   }
@@ -2831,6 +3009,8 @@ class ChatViewProvider {
       this.hasMoreBySession.set(sessionId, Boolean(frame.hasMore) || (this.hasMoreBySession.get(sessionId) ?? false))
       this.cursorBySession.set(sessionId, frame.cursor)
       if (frame.projections) this.seedProjectionsFromBlock(sessionId, frame.projections)
+      // 目标条：切会话/重连后的首帧快照里带上 goal 投影，此时补读续行状态。
+      void this.refreshGoalActivation(sessionId)
       // 重连时正在运行的助手输出：用快照里的 activeAttempt 紧凑记录还原 partial。
       this.liveStreamFor(sessionId).seed(frame.assistantStream)
       const snapshotSlot = this.followSnapshotsBySession.get(sessionId)

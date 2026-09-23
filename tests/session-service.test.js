@@ -219,3 +219,25 @@ test('uploadFile and openWorkspacePath use the 0.1.5 payloads', async () => {
   assert.deepEqual(calls[0], { endpoint: 'fileUploads/upload', args: { agentId: 'session-1', request: { data: 'aGk=', name: 'a.txt' } } })
   assert.deepEqual(calls[1], { endpoint: 'session/openWorkspacePath', args: { request: { path: '/tmp/x', action: 'reveal' } } })
 })
+
+test('cancel: 会话已经不在了（dsh 0.1.5 的 session/not-found）静默成功，其它错误照旧抛出', async () => {
+  const { DshRpcError } = require('../src/wire.js')
+  const failing = (code) => fakeClient(async () => { throw new DshRpcError({ code, message: `boom (${code})` }) })
+
+  // rc.1~rc.3 实测的错误码是带命名空间前缀的 `session/not-found`（旧写法的裸码一并接受）。
+  for (const code of ['session/not-found', 'session-not-found']) {
+    const service = new SessionService(() => failing(code))
+    assert.equal(await service.cancel('session-gone'), undefined, `${code} 应当被吞掉`)
+  }
+
+  const service = new SessionService(() => failing('gateway/internal'))
+  await assert.rejects(() => service.cancel('session-1'), /boom/u)
+})
+
+test('cancel: 正常路径把 request.sessionId 发给 session/cancel', async () => {
+  const calls = []
+  const client = fakeClient(async (endpoint, args) => { calls.push({ endpoint, args }); return { accepted: true } })
+  const service = new SessionService(() => client)
+  await service.cancel('session-9')
+  assert.deepEqual(calls, [{ endpoint: 'session/cancel', args: { request: { sessionId: 'session-9' } } }])
+})

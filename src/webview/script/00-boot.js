@@ -45,6 +45,14 @@
       pendingApproval: null,
       todos: [],
       permissions: null,
+      /** `goal` 投影（当前持久目标，含 phase/objective）；null = 没有进行中的目标。 */
+      goalProjection: null,
+      /** 目标的进程内续行状态：'armed' | 'disarmed' | null（宿主经 goals/get 读到）。 */
+      goalActivation: null,
+      /** 目标变更请求在途：按钮先禁用，等宿主回帧。 */
+      goalPending: false,
+      /** 目标变更失败时的内联错误（与 web 端一致，压在目标条上）。 */
+      goalError: null,
       questionSelections: {},
       /** 每题是否被显式"跳过"（与 web 端一致：跳过的题提交时给 selected: []）。 */
       questionSkipped: {},
@@ -128,6 +136,16 @@
     var modelInfoEl = $('modelInfo');
     var queueDockEl = $('queueDock');
     var todoDockEl = $('todoDock');
+    var goalDockEl = $('goalDock');
+    // 目标条的行内编辑草稿与"是否正在编辑"（编辑期间统计帧不得重建输入框，否则草稿会丢）。
+    var goalEditing = false;
+    var goalEditingId = null;
+    var goalEditBuilt = false;
+    var goalInputEl = null;
+    /** 编辑态的"保存"按钮：草稿为空时禁用（与网页端一致，不允许保存空目标）。 */
+    var goalSaveButton = null;
+    /** 当前目标条上的按钮（pending 期间统一禁用）。 */
+    var goalActionButtons = [];
     var todosCollapsed = false;
     var questionPanelEl = $('questionPanel');
     var approvalPanelEl = $('approvalPanel');

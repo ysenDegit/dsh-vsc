@@ -432,6 +432,193 @@
       }
     }
 
+    /**
+     * 进行中的目标条（与 dsh Web UI 的 composer 目标条同形）：
+     * 目标字形 + 阶段文案 + 目标内容 + 操作（暂停/恢复、编辑、清除）。
+     * 目标来自 `goal` 投影（持久阶段），"是否正在自动续行"由宿主读 `goals/get` 下发
+     * （`state.goalActivation`）——只有 armed 才给暂停按钮，disarmed 与 paused 给恢复。
+     * 已完成的目标、加载中、没有目标：整条不渲染。
+     */
+    function currentGoal() {
+      var projection = state.goalProjection;
+      var goal = projection && projection.goal;
+      if (!goal || typeof goal !== 'object') return null;
+      if (goal.phase === 'complete') return null;
+      return goal;
+    }
+
+    function goalLabelOf(goal) {
+      if (goal.phase === 'paused') return t('goalPhasePaused');
+      if (goal.phase === 'blocked') return t('goalPhaseBlocked');
+      if (state.goalActivation === 'disarmed') return t('goalPhaseDisarmed');
+      return t('goalPhaseActive');
+    }
+
+    /** 目标条上的按钮统一在重建时收集，便于 pending 期间整体禁用。 */
+    function goalButton(cls, glyph, title, onClick) {
+      var button = document.createElement('button');
+      button.className = cls;
+      button.textContent = glyph;
+      button.title = title;
+      button.addEventListener('click', onClick);
+      goalActionButtons.push(button);
+      return button;
+    }
+
+    /** 编辑态草稿（去掉首尾空白；空草稿不允许保存）。 */
+    function goalDraftValue() {
+      return goalInputEl ? String(goalInputEl.value || '').trim() : '';
+    }
+
+    function updateGoalPending() {
+      for (var i = 0; i < goalActionButtons.length; i++) {
+        var button = goalActionButtons[i];
+        // 编辑态下"保存"还要看草稿是否为空（空目标没有意义，网页端同样禁用）。
+        var emptyDraft = button === goalSaveButton && goalDraftValue() === '';
+        button.disabled = state.goalPending === true || emptyDraft;
+      }
+    }
+
+    function postGoalAction(type, extra) {
+      if (state.goalPending) return;
+      state.goalPending = true;
+      state.goalError = null;
+      var message = { type: type, sessionId: state.selectedSessionId };
+      if (extra) {
+        for (var key in extra) {
+          if (Object.prototype.hasOwnProperty.call(extra, key)) message[key] = extra[key];
+        }
+      }
+      post(message);
+      renderGoal();
+    }
+
+    function submitGoalEdit() {
+      var value = goalInputEl ? String(goalInputEl.value || '').trim() : '';
+      if (!value) return;
+      goalEditing = false;
+      goalEditBuilt = false;
+      goalEditingId = null;
+      postGoalAction('goalEdit', { objective: value });
+    }
+
+    function renderGoal() {
+      var goal = currentGoal();
+      if (!goal) {
+        goalEditing = false;
+        goalEditBuilt = false;
+        goalEditingId = null;
+        goalActionButtons = [];
+        goalInputEl = null;
+        goalSaveButton = null;
+        goalDockEl.classList.remove('open');
+        goalDockEl.innerHTML = '';
+        return;
+      }
+      // 目标换了身份（被清除后另建/被改写）：正在编辑的草稿作废，避免写到新目标上。
+      if (goalEditing && goalEditingId !== goal.id) {
+        goalEditing = false;
+        goalEditBuilt = false;
+        goalEditingId = null;
+      }
+      // 编辑中不重建输入框，否则每帧统计都会把用户正在写的草稿冲掉。
+      if (goalEditing && goalEditBuilt) {
+        updateGoalPending();
+        return;
+      }
+      goalActionButtons = [];
+      goalSaveButton = null;
+      goalDockEl.classList.add('open');
+      goalDockEl.innerHTML = '';
+      var bar = document.createElement('div');
+      bar.className = 'goal-bar';
+      if (goal.phase === 'blocked' && goal.blockedReason && goal.blockedReason.message) {
+        bar.title = goal.blockedReason.message;
+      } else {
+        bar.title = goal.objective || '';
+      }
+      var glyph = document.createElement('span');
+      glyph.className = 'goal-glyph';
+      glyph.textContent = '🎯';
+      bar.appendChild(glyph);
+      if (goalEditing) {
+        goalEditingId = goal.id;
+        goalInputEl = document.createElement('input');
+        goalInputEl.className = 'goal-input';
+        goalInputEl.type = 'text';
+        goalInputEl.value = goal.objective || '';
+        goalInputEl.placeholder = t('goalObjectivePlaceholder');
+        goalInputEl.setAttribute('aria-label', t('goalObjectivePlaceholder'));
+        goalInputEl.addEventListener('keydown', function (event) {
+          if (event.isComposing || event.keyCode === 229) return;
+          if (event.key === 'Enter') {
+            if (event.preventDefault) event.preventDefault();
+            submitGoalEdit();
+          } else if (event.key === 'Escape') {
+            goalEditing = false;
+            goalEditBuilt = false;
+            goalEditingId = null;
+            renderGoal();
+          }
+        });
+        // 草稿变化时同步"保存"按钮的可用性。
+        goalInputEl.addEventListener('input', updateGoalPending);
+        bar.appendChild(goalInputEl);
+        goalEditBuilt = true;
+      } else {
+        var label = document.createElement('span');
+        label.className = 'goal-label';
+        label.textContent = goalLabelOf(goal);
+        var text = document.createElement('span');
+        text.className = 'goal-text';
+        text.textContent = goal.objective || '';
+        bar.appendChild(label);
+        bar.appendChild(text);
+      }
+      if (state.goalError) {
+        var error = document.createElement('span');
+        error.className = 'goal-error';
+        error.textContent = state.goalError;
+        bar.appendChild(error);
+      }
+      var actions = document.createElement('span');
+      actions.className = 'goal-actions';
+      if (goalEditing) {
+        goalSaveButton = goalButton('goal-action', '✓', t('goalActionSave'), submitGoalEdit);
+        actions.appendChild(goalSaveButton);
+        actions.appendChild(goalButton('goal-action', '✕', t('goalActionCancel'), function () {
+          goalEditing = false;
+          goalEditBuilt = false;
+          goalEditingId = null;
+          renderGoal();
+        }));
+      } else {
+        // 暂停只在"真的在自动续行"时才有意义；未运行/已暂停的目标给恢复。
+        if (goal.phase === 'active' && state.goalActivation === 'armed') {
+          actions.appendChild(goalButton('goal-action', '⏸', t('goalActionPause'), function () {
+            postGoalAction('goalPause');
+          }));
+        } else if (goal.phase === 'paused' || (goal.phase === 'active' && state.goalActivation === 'disarmed')) {
+          actions.appendChild(goalButton('goal-action', '▶', t('goalActionResume'), function () {
+            postGoalAction('goalResume');
+          }));
+        }
+        actions.appendChild(goalButton('goal-action', '✎', t('goalActionEdit'), function () {
+          goalEditing = true;
+          goalEditBuilt = false;
+          goalEditingId = goal.id;
+          renderGoal();
+          if (goalInputEl && typeof goalInputEl.focus === 'function') goalInputEl.focus();
+        }));
+        actions.appendChild(goalButton('goal-action goal-clear', '🗑', t('goalActionClear'), function () {
+          postGoalAction('goalClear');
+        }));
+      }
+      bar.appendChild(actions);
+      goalDockEl.appendChild(bar);
+      updateGoalPending();
+    }
+
     function renderTodos() {
       var todos = state.todos || [];
       if (!todos.length) {
@@ -1300,6 +1487,7 @@
       if (activeJobs > 0) parts.push(t('stats.jobs', { count: activeJobs }));
       statsTextEl.textContent = parts.join(' | ');
       renderTodos();
+      renderGoal();
       renderPermissions();
       renderSessionBanner(stats);
       renderJobs(stats);

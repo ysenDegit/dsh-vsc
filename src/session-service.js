@@ -301,6 +301,16 @@ class SessionService {
     return await client.callArgs('agentPresets/select', { agentId: sessionId, agentPreset })
   }
 
+  /**
+   * 读取会话当前目标的实时视图（`goals/get`）。
+   * `goal` 投影只含持久阶段，"是否正在自动续行"（armed/disarmed）是进程本地状态，
+   * 只能这样读：返回值含 `{ id, revision, activation }`，没有目标时为 undefined。
+   */
+  async getGoal(sessionId) {
+    const client = this.requireClient()
+    return await client.callArgs('goals/get', { agentId: sessionId })
+  }
+
   async getSession(sessionId) {
     const client = this.requireClient()
     const { items } = await client.callArgs('session/list', { _request: {} })
@@ -395,7 +405,9 @@ class SessionService {
     try {
       return await client.callArgs('session/cancel', { request: { sessionId } })
     } catch (error) {
-      if (error instanceof DshRpcError && error.code === 'session-not-found') return
+      // dsh 0.1.5 的错误码是 `session/not-found`（带命名空间前缀，rc.1~rc.3 实测一致）；
+      // 老版本的 `session-not-found` 一并接受：会话已经被归档/删除时，取消应当静默成功。
+      if (error instanceof DshRpcError && (error.code === 'session/not-found' || error.code === 'session-not-found')) return
       throw error
     }
   }

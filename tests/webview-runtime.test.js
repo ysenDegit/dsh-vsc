@@ -1642,3 +1642,126 @@ test('prompt stash: the take-back button swaps the box with the composer draft',
 
   await new Promise((resolve) => setTimeout(resolve, 250))
 })
+
+test('goal bar: renders the ongoing goal, switches pause/resume by activation, and edits inline', async () => {
+  const script = getBundleScript('goal-nonce')
+  const posted = []
+  const listeners = []
+  const context = vm.createContext(makeFakeDom(posted, listeners))
+  vm.runInContext(script, context, { timeout: 10_000 })
+  const dispatch = (message) => { for (const listener of listeners) listener({ data: message }) }
+
+  dispatch({
+    type: 'hydrate', status: 'ready', workspace: null,
+    sessions: [{ sessionId: 'S-1', displayTitle: 'proj', running: false, updatedAt: 1, archived: false }],
+    selectedSessionId: 'S-1', conversation: [],
+  })
+
+  const dock = context.document.getElementById('goalDock')
+  const partOf = (row, className) => (row.childNodes || [])
+    .find((node) => node && String(node.className || '').split(' ').indexOf(className) >= 0)
+  const bar = () => dock.childNodes[0]
+  const actions = () => partOf(bar(), 'goal-actions')
+  const actionGlyphs = () => (actions().childNodes || []).map((node) => node.textContent)
+  const actionAt = (index) => actions().childNodes[index]
+  const messagesOf = (type) => posted.filter((message) => message && message.type === type)
+  const statsFrame = (goalProjection, goalActivation) => ({
+    type: 'stats', sessionId: 'S-1',
+    stats: { goal: goalProjection, goalActivation },
+  })
+  const goalOf = (over = {}) => ({
+    goal: { id: 'G-1', revision: 3, objective: '让 Bosch16 全量重下按新配置跑完', phase: 'active', maxGoalRounds: 10, ...over },
+    roundsStarted: 1, createdAt: 1, updatedAt: 2,
+  })
+
+  // 没有任何目标：整条不渲染。
+  assert.equal(dock.classList.contains('open'), false)
+  assert.equal(dock.childNodes.length, 0)
+
+  // 进行中且正在自动续行（armed）：标题 + 目标内容 + 暂停/编辑/清除。
+  dispatch(statsFrame(goalOf(), 'armed'))
+  assert.equal(dock.classList.contains('open'), true, 'active goal shows the strip')
+  assert.equal(partOf(bar(), 'goal-label').textContent, '进行中的目标')
+  assert.equal(partOf(bar(), 'goal-text').textContent, '让 Bosch16 全量重下按新配置跑完')
+  assert.equal(bar().title, '让 Bosch16 全量重下按新配置跑完', 'hover shows the full objective')
+  assert.deepEqual(actionGlyphs(), ['⏸', '✎', '🗑'])
+  assert.equal(actionAt(0).title, '暂停目标')
+  assert.equal(actionAt(2).title, '清除目标')
+
+  // 点暂停：把变更交给宿主（带会话 id），请求在途期间按钮禁用。
+  actionAt(0).click()
+  assert.equal(messagesOf('goalPause').length, 1)
+  assert.equal(messagesOf('goalPause')[0].sessionId, 'S-1')
+  assert.equal(actionAt(0).disabled, true, '按钮在宿主回帧前禁用（避免重复提交同一 CAS）')
+
+  // 宿主回来的新统计（已暂停）解除 pending，并把暂停换成恢复。
+  dispatch(statsFrame(goalOf({ phase: 'paused' }), 'disarmed'))
+  assert.equal(partOf(bar(), 'goal-label').textContent, '已暂停的目标')
+  assert.deepEqual(actionGlyphs(), ['▶', '✎', '🗑'])
+  assert.equal(actionAt(0).disabled, false)
+  actionAt(0).click()
+  assert.equal(messagesOf('goalResume').length, 1)
+
+  // active 但未在自动续行（disarmed）：文案与按钮都按"未运行"来（与 Web UI 同口径）。
+  dispatch(statsFrame(goalOf(), 'disarmed'))
+  assert.equal(partOf(bar(), 'goal-label').textContent, '未运行的目标')
+  assert.deepEqual(actionGlyphs(), ['▶', '✎', '🗑'])
+
+  // activation 还没读到（宿主补读在途）：只给编辑/清除，不猜暂停还是恢复。
+  dispatch(statsFrame(goalOf(), null))
+  assert.equal(partOf(bar(), 'goal-label').textContent, '进行中的目标')
+  assert.deepEqual(actionGlyphs(), ['✎', '🗑'])
+
+  // 编辑：行内输入框带原目标；Enter 提交给宿主。
+  dispatch(statsFrame(goalOf(), 'armed'))
+  actionAt(1).click()
+  const input = partOf(bar(), 'goal-input')
+  assert.ok(input, '编辑态在同一行内出现输入框')
+  assert.equal(input.value, '让 Bosch16 全量重下按新配置跑完')
+  assert.deepEqual(actionGlyphs(), ['✓', '✕'])
+  // 草稿为空时"保存"禁用（网页端同样不给保存空目标），写上内容后恢复可点。
+  input.value = '   '
+  input.dispatchEvent({ type: 'input' })
+  assert.equal(actionAt(0).disabled, true, '空草稿不能保存')
+  input.value = '改后的目标'
+  input.dispatchEvent({ type: 'input' })
+  assert.equal(actionAt(0).disabled, false)
+  // 编辑期间来新统计帧：输入框不能重建（否则用户正在写的草稿会被冲掉）。
+  dispatch(statsFrame(goalOf(), 'armed'))
+  assert.equal(partOf(bar(), 'goal-input').value, '改后的目标', '输入草稿必须保住')
+  partOf(bar(), 'goal-input').dispatchEvent({ type: 'keydown', key: 'Enter', preventDefault() {} })
+  assert.equal(messagesOf('goalEdit').length, 1)
+  assert.equal(messagesOf('goalEdit')[0].objective, '改后的目标')
+  assert.equal(messagesOf('goalEdit')[0].sessionId, 'S-1')
+
+  // Escape 取消编辑：回到展示行，且不发 RPC。
+  dispatch(statsFrame(goalOf(), 'armed'))
+  actionAt(1).click()
+  partOf(bar(), 'goal-input').dispatchEvent({ type: 'keydown', key: 'Escape', preventDefault() {} })
+  assert.equal(partOf(bar(), 'goal-label').textContent, '进行中的目标')
+  assert.equal(messagesOf('goalEdit').length, 1, 'Escape 不发变更请求')
+
+  // 宿主拒绝变更：错误内联显示在目标条上，按钮恢复可点。
+  dispatch({ type: 'goalActionError', sessionId: 'S-1', message: 'stale revision (stale-revision)' })
+  assert.equal(partOf(bar(), 'goal-error').textContent, 'stale revision (stale-revision)')
+  assert.equal(actionAt(0).disabled, false)
+
+  // 清除：交给宿主；随后的统计帧里没有目标 → 整条消失（错误也一并清掉）。
+  actionAt(2).click()
+  assert.equal(messagesOf('goalClear').length, 1)
+  dispatch(statsFrame(null, null))
+  assert.equal(dock.classList.contains('open'), false)
+  assert.equal(dock.childNodes.length, 0)
+
+  // 已完成的目标不渲染（与 Web UI 一致）。
+  dispatch(statsFrame(goalOf({ phase: 'complete' }), 'disarmed'))
+  assert.equal(dock.classList.contains('open'), false)
+
+  // 英文界面：文案随语言切换（切换语言要重渲染目标条）。
+  dispatch(statsFrame(goalOf(), 'armed'))
+  dispatch({ type: 'language', value: 'en' })
+  assert.equal(partOf(bar(), 'goal-label').textContent, 'Ongoing Goal')
+  assert.equal(actionAt(0).title, 'Pause goal')
+
+  await new Promise((resolve) => setTimeout(resolve, 250))
+})
