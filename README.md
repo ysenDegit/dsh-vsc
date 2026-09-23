@@ -8,7 +8,7 @@
 
 > 由于本人测试环境有限，陆陆续续发现了很多 BUG；如遇恶性 BUG，请邮件 ysen96@qq.com，我将尽快修复。
 
-> 插件 **1.1.5** 需要 dsh **>= 0.1.5-rc.1**（Typert Remote 协议 + 进程内 assistant-stream + 首次启动 token 认证）；低于 0.1.5-rc.1 的旧版 dsh 不再兼容（命令执行参数、助手实时输出协议均已变化）。dsh alpha 通道的快速破坏性版本暂不对其适配。
+> 插件 **1.1.6** 需要 dsh **>= 0.1.5-rc.1**（Typert Remote 协议 + 进程内 assistant-stream + 首次启动 token 认证）；低于 0.1.5-rc.1 的旧版 dsh 不再兼容（命令执行参数、助手实时输出协议均已变化）。dsh alpha 通道的快速破坏性版本暂不对其适配。
 >
 > 各插件版本与 dsh 版本的对应关系见下文「三、运行环境」中的对应表。
 
@@ -16,7 +16,7 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 > Due to a limited testing environment, bugs have surfaced over time. If you encounter a critical bug, please email ysen96@qq.com and I will fix it as soon as possible.
 
-> Extension **1.1.5 requires dsh >= 0.1.5-rc.1** (Typert Remote protocol with the in-process assistant stream and launch-token authentication); older dsh releases below 0.1.5 are no longer supported (command-execution arguments and live assistant output both changed). Rapid breaking changes on the dsh alpha channel are not adapted for now.
+> Extension **1.1.6 requires dsh >= 0.1.5-rc.1** (Typert Remote protocol with the in-process assistant stream and launch-token authentication); older dsh releases below 0.1.5 are no longer supported (command-execution arguments and live assistant output both changed). Rapid breaking changes on the dsh alpha channel are not adapted for now.
 >
 > See the compatibility table under "3. Requirements" below for the extension ↔ dsh version mapping.
 
@@ -208,13 +208,14 @@ Bring DeepSeek Harness (dsh) into VS Code with a Claude Code-style sidebar and w
 
 - VS Code >= 1.90
 - Node >= 22（扩展宿主需提供全局 `WebSocket`；旧版宿主请确保可加载 `ws` 包）
-- 已安装 `@deepseek-ai/dsh` 且版本 **>= 0.1.5-rc.1**（插件 1.1.5 的最低要求）
+- 已安装 `@deepseek-ai/dsh` 且版本 **>= 0.1.5-rc.1**（插件 1.1.6 的最低要求）
 
 #### 插件版本 ↔ dsh 版本对应关系（1.1.0 起）
 
 | 插件版本 | 最低 dsh 版本 | 主要适配内容 |
 |---|---|---|
-| **1.1.5**（当前） | **0.1.5-rc.1** | 协议要求与 1.1.4 相同（dsh 0.1.5 系列）。界面改动：多问题提问改为**一页一题**（`‹ i/N ›` 翻页 + 跳过本题 + 每题独立草稿，与 dsh Web UI 的分层提问一致）、需要你操作时发 **VS Code 通知**（新配置 `dsh-vsc.notifyPending`，带"打开并回答"），详见 CHANGELOG |
+| **1.1.6**（当前） | **0.1.5-rc.1** | 协议要求与 1.1.5 相同（dsh 0.1.5 系列）；版本号在 1.1.5 发布后提升，暂无改动，后续记录见 CHANGELOG |
+| 1.1.5 | **0.1.5-rc.1** | 协议要求与 1.1.4 相同（dsh 0.1.5 系列）。多问题提问改为**一页一题**（`‹ i/N ›` 翻页 + 跳过本题 + 每题独立草稿，与 dsh Web UI 一致）；需要你操作时发 **VS Code 通知**（`dsh-vsc.notifyPending`，带"打开并回答"）；新增**状态栏入口**（`dsh-vsc.statusBarEntry`，任何窗口状态都在，点击在工作区打开面板）；会话行新增**活动定时任务 ⏰ 徽标**、会话抽屉**默认折叠到 5 条**（+「展开其余」）；修复英文界面残留中文（22 处）、提示词暂存框跨窗口同步在首次激活时失效、以及"暂存框放回输入框"按钮（⇄ 互换）；活动栏/标题按钮图标换回鲸鱼 PNG，详见 CHANGELOG |
 | 1.1.4 | **0.1.5-rc.1** | 协议要求与 1.1.3 相同（dsh 0.1.5 系列）。启动/连接体验（自动启动不再做版本检测、改为启动后提醒升级；离线可用性与 token 手动入口；启动默认打开最近修改的会话）、提示词暂存框改为**按工作区隔离 + 跨窗口实时同步**、提问/审批 `eventId` 静默丢弃修复、计划评审面板加高；会话抽屉新增行状态点（**pending 琥珀点**：等待回答 / 计划待审 / 等待审批，优先级高于运行指示；**已完成绿点**）并整理界面（**平铺列表且不显示子代理会话**、删掉「目标」横幅、选中行文字对比度提升），详见 CHANGELOG |
 | 1.1.3 | **0.1.5-rc.1** | 会话抽屉（最近修改时间排序、归档分组/一键清理、模式标签）、悬浮提示词暂存框（图片暂存、Ctrl+Shift+Enter）、设置 → 赞助页、前后端解耦与 dsh 认证手动入口 |
 | 1.1.2 | **0.1.5** | 实时助手输出改用进程内 assistant-stream（durable 日志不再写 `assistant/chunk`）；`commands/execute` 附件参数改为 `submittedAttachments`；工作模式/模型选择分别以 `agentPreset`、`modelSelection` 投影为准；新增抽屉内容搜索、后台任务提示 |
@@ -433,13 +434,14 @@ vsce package
 
 - VS Code >= 1.90
 - Node >= 22 (the extension host must provide a global `WebSocket`; on older hosts make sure the `ws` package can be loaded)
-- `@deepseek-ai/dsh` installed, version **>= 0.1.5-rc.1** (minimum for extension 1.1.5)
+- `@deepseek-ai/dsh` installed, version **>= 0.1.5-rc.1** (minimum for extension 1.1.6)
 
 #### Extension ↔ dsh version compatibility (since 1.1.0)
 
 | Extension | Minimum dsh | Adaptation highlights |
 |---|---|---|
-| **1.1.5** (current) | **0.1.5-rc.1** | Same protocol requirement as 1.1.4 (the dsh 0.1.5 line). UI changes: multiple questions are now asked **one page at a time** (a `‹ i/N ›` pager, skip, and per-question drafts, matching the dsh Web UI flow) and a **VS Code notification** is raised when dsh needs you (new `dsh-vsc.notifyPending` setting, with "Open and answer") — see CHANGELOG |
+| **1.1.6** (current) | **0.1.5-rc.1** | Same protocol requirement as 1.1.5 (the dsh 0.1.5 line); version bumped after the 1.1.5 release, no changes yet — see CHANGELOG |
+| 1.1.5 | **0.1.5-rc.1** | Same protocol requirement as 1.1.4 (the dsh 0.1.5 line). Multiple questions are now asked **one page at a time** (a `‹ i/N ›` pager, skip, and per-question drafts, matching the dsh Web UI); a **VS Code notification** is raised when dsh needs you (`dsh-vsc.notifyPending`, with "Open and answer"); a new **status bar entry** (`dsh-vsc.statusBarEntry`, present in every window state, click opens the panel in the editor area); an **active-scheduled-task ⏰ badge** on session rows and a session drawer that **collapses to 5 rows** (+ "Show more"); fixes for Chinese leftovers in the English UI (22 spots), for prompt-stash cross-window sync being dead on first activation, and the prompt-stash "swap with composer" button (⇄); the activity bar / title button icons go back to the whale PNG — see CHANGELOG |
 | 1.1.4 | **0.1.5-rc.1** | Same protocol requirement as 1.1.3 (the dsh 0.1.5 line). Startup/connection UX (no version gate on auto-start, upgrade reminder after start, offline usability + manual token entry, most recently modified session opens on startup), prompt stash moved to **per-workspace storage with cross-window sync**, the question/approval `eventId` silent-drop fix, a taller plan-review panel; plus session-drawer row states (**amber pending dots** for waiting-answer / plan-review / approval, outranking the running indicator, and a **green finished dot**) and UI clean-up (a flat list that no longer shows subagent sessions, the goal banner removed, better contrast on the selected row) — see CHANGELOG |
 | 1.1.3 | **0.1.5-rc.1** | Session drawer (last-modified sorting, archived grouping + one-click clear, mode chips), floating prompt stash (image stashing, Ctrl+Shift+Enter), Settings → Sponsor page, offline decoupling and the manual dsh token entry |
 | 1.1.2 | **0.1.5** | Live assistant output moved to the in-process assistant stream (durable logs no longer carry `assistant/chunk`); `commands/execute` attachments renamed to `submittedAttachments`; working mode and model selection now read the `agentPreset` and `modelSelection` projections; drawer content search and background-job indicator |
